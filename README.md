@@ -8,7 +8,7 @@ unix socket; both use the API of [karga-sdk](https://github.com/hasankaradmir/ka
 
 How to use karga (packages, resources, commands): the CLI's
 [README](https://github.com/hasankaradmir/karga#readme) and
-[USAGE.md](https://github.com/hasankaradmir/karga/blob/main/USAGE.md). This repository is about
+[USAGE.md](https://github.com/hasankaradmir/karga/blob/master/USAGE.md). This repository is about
 running the server.
 
 ## Requirements
