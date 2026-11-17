@@ -22,7 +22,7 @@ running the server.
 From a release, checked against the release checksums:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hasankaradmir/karga-server/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/hasankaradmir/karga-server/master/scripts/install.sh | sh
 sudo usermod -aG karga $USER      # then log in again: members of the karga group may use karga
 # KARGA_VERSION=v0.1.0 picks a version, KARGA_BIN_DIR another directory (default /usr/local/bin),
 # KARGA_SYSTEMD=0 installs the binary only
