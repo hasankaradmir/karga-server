@@ -19,7 +19,7 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
-	"github.com/hasankaradmir/karga/internal/ports"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // EnsureImage implements ports.Runtime.

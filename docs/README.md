@@ -1,7 +1,9 @@
 # karga documentation
 
-Start with the [README](../README.md) and [USAGE.md](../USAGE.md): they cover installing and using
-karga. The documents here are for working on karga itself.
+Using karga is covered by the CLI's [README](https://github.com/hasankaradmir/karga#readme) and
+[USAGE.md](https://github.com/hasankaradmir/karga/blob/main/USAGE.md), running the server by this
+repository's [README](../README.md). The documents here are for working on karga itself (the
+server, the CLI and karga-sdk).
 
 | Document | Contents |
 |----------|----------|

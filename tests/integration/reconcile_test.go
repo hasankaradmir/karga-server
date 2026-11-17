@@ -10,9 +10,10 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/packages"
-	"github.com/hasankaradmir/karga/internal/application/reconciler"
-	"github.com/hasankaradmir/karga/internal/application/releases"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/application/reconciler"
+	"github.com/hasankaradmir/karga-server/internal/application/releases"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // TestReconcilerRepairsFromDockerEvents: with the loop running (events only, no timer), a

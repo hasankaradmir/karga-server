@@ -10,8 +10,9 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/packages"
 	"github.com/hasankaradmir/karga-sdk/release"
-	"github.com/hasankaradmir/karga/internal/application/releases"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/application/releases"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // service returns a release service on real Docker and a fresh state directory. Everything the

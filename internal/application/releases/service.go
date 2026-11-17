@@ -21,8 +21,9 @@ import (
 	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
 	"github.com/hasankaradmir/karga-sdk/values"
-	"github.com/hasankaradmir/karga/internal/application/deployment"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/application/deployment"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // Errors callers can check.

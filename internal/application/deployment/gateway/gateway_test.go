@@ -11,10 +11,11 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga/internal/adapters/fakeruntime"
-	"github.com/hasankaradmir/karga/internal/application/deployment/runtimeops"
-	"github.com/hasankaradmir/karga/internal/infrastructure/envoy"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 func testSettings() Settings {

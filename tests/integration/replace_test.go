@@ -9,8 +9,9 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/packages"
 	"github.com/hasankaradmir/karga-sdk/release"
-	"github.com/hasankaradmir/karga/internal/application/releases"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/application/releases"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // startDelay makes the server take 3s to listen: a recreate then has a real outage, a replace must

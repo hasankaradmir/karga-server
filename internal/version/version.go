@@ -6,7 +6,7 @@ import (
 	"runtime/debug"
 )
 
-// Version is set at build time: -ldflags "-X github.com/hasankaradmir/karga/internal/version.Version=v0.1.0".
+// Version is set at build time: -ldflags "-X github.com/hasankaradmir/karga-server/internal/version.Version=v0.1.0".
 var Version = "dev"
 
 // Info describes a build.

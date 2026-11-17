@@ -7,6 +7,11 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 First release.
 
+### Repositories
+- karga is split into three repositories with their history: karga-server (this one), the karga
+  CLI (`github.com/hasankaradmir/karga`) and karga-sdk, the module both use. Each has its own
+  install script; this one installs karga-server as a systemd service, without credentials.
+
 ### Breaking (compared with earlier builds)
 - Workloads no longer expose ports: `hostPort`, `hostIP` and `routes` are gone from the Workload
   (a clear error points to Services). Ports are named, and a `kind: Service` gives a workload a name

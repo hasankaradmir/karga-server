@@ -1,6 +1,6 @@
 package deployment
 
-import "github.com/hasankaradmir/karga/internal/application/deployment/runtimeops"
+import "github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
 
 // Names from runtimeops, which the gateway shares with the executor.
 var (

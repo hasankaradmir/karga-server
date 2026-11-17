@@ -14,7 +14,8 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // A volume backup is a gzipped tar: a manifest entry, then the volume's files below "data/".

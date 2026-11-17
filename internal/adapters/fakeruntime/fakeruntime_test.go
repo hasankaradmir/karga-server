@@ -3,7 +3,7 @@ package fakeruntime
 import (
 	"testing"
 
-	"github.com/hasankaradmir/karga/internal/ports/runtimetest"
+	"github.com/hasankaradmir/karga-server/internal/ports/runtimetest"
 )
 
 func TestContract(t *testing.T) {

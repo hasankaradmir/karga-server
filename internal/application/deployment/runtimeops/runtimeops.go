@@ -13,8 +13,9 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga/internal/infrastructure/envoy"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // RuntimeName is the runtime object name of a release-local resource name.

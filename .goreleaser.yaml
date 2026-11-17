@@ -2,20 +2,9 @@
 # Local check: goreleaser release --snapshot --clean
 version: 2
 
-project_name: karga
+project_name: karga-server
 
 builds:
-  - id: karga
-    main: ./cmd/karga
-    binary: karga
-    env:
-      - CGO_ENABLED=0
-    flags:
-      - -trimpath
-    ldflags:
-      - -s -w -X github.com/hasankaradmir/karga/internal/version.Version={{ .Version }}
-    goos: [linux, darwin]
-    goarch: [amd64, arm64]
   - id: karga-server
     main: ./cmd/karga-server
     binary: karga-server
@@ -24,7 +13,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/hasankaradmir/karga/internal/version.Version={{ .Version }}
+      - -s -w -X github.com/hasankaradmir/karga-server/internal/version.Version={{ .Version }}
     goos: [linux]
     goarch: [amd64, arm64]
 
@@ -33,7 +22,6 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
-      - USAGE.md
       - CHANGELOG.md
       - LICENSE
       - deploy/systemd/karga-server.service

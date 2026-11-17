@@ -25,13 +25,14 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/release"
-	"github.com/hasankaradmir/karga/internal/adapters/docker"
-	"github.com/hasankaradmir/karga/internal/adapters/sqlite"
-	"github.com/hasankaradmir/karga/internal/application/deployment"
-	"github.com/hasankaradmir/karga/internal/application/deployment/gateway"
-	"github.com/hasankaradmir/karga/internal/application/releases"
-	"github.com/hasankaradmir/karga/internal/ports"
-	"github.com/hasankaradmir/karga/internal/ports/runtimetest"
+
+	"github.com/hasankaradmir/karga-server/internal/adapters/docker"
+	"github.com/hasankaradmir/karga-server/internal/adapters/sqlite"
+	"github.com/hasankaradmir/karga-server/internal/application/deployment"
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/releases"
+	"github.com/hasankaradmir/karga-server/internal/ports"
+	"github.com/hasankaradmir/karga-server/internal/ports/runtimetest"
 )
 
 // webPkg is a small HTTP server package; see testdata/web/values.yaml for its knobs.

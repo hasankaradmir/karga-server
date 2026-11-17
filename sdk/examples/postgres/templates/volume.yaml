@@ -1,8 +1,0 @@
-{{- if .Values.storage.enabled }}
-apiVersion: karga.io/v1alpha1
-kind: Volume
-metadata:
-  name: postgres-data
-spec:
-  retention: retain
-{{- end }}

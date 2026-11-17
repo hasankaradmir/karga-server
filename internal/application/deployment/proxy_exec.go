@@ -12,9 +12,10 @@ import (
 	"strings"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga/internal/application/deployment/gateway"
-	"github.com/hasankaradmir/karga/internal/infrastructure/envoy"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // revisionOf reads the revision label of a running workload, so the proxy is pointed at the alias

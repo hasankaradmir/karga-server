@@ -36,12 +36,26 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "e2e tests run on Linux with a local Docker: use make test-linux")
 		os.Exit(1)
 	}
-	karga, kargaServer = filepath.Join(dir, "karga"), filepath.Join(dir, "karga-server")
-	for bin, pkg := range map[string]string{karga: "../../cmd/karga", kargaServer: "../../cmd/karga-server"} {
-		build := exec.Command("go", "build", "-o", bin, pkg)
+	// The CLI comes from KARGA_CLI (a binary) or is built from its repository, KARGA_CLI_SRC
+	// (default: a karga checkout next to this repository).
+	karga, kargaServer = os.Getenv("KARGA_CLI"), filepath.Join(dir, "karga-server")
+	builds := [][2]string{{kargaServer, "../../cmd/karga-server"}}
+	if karga == "" {
+		src := os.Getenv("KARGA_CLI_SRC")
+		if src == "" {
+			src = "../../../karga"
+		}
+		if src, err = filepath.Abs(src); err == nil {
+			karga = filepath.Join(dir, "karga")
+			builds = append(builds, [2]string{karga, src + "/cmd/karga"})
+		}
+	}
+	for _, b := range builds {
+		build := exec.Command("go", "build", "-o", b[0], ".")
+		build.Dir = b[1]
 		build.Stdout, build.Stderr = os.Stdout, os.Stderr
 		if err := build.Run(); err != nil {
-			fmt.Fprintln(os.Stderr, "build", pkg+":", err)
+			fmt.Fprintln(os.Stderr, "build", b[1]+":", err, "(set KARGA_CLI or KARGA_CLI_SRC for the CLI)")
 			os.Exit(1)
 		}
 	}

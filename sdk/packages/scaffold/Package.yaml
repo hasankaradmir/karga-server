@@ -1,7 +1,0 @@
-apiVersion: karga.io/v1alpha1
-name: __NAME__
-version: 0.1.0
-description: A web service packaged with karga
-runtime:
-  supported:
-    - docker

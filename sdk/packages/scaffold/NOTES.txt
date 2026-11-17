@@ -1,5 +1,0 @@
-{{ .Release.Name }} (revision {{ .Release.Revision }}) runs {{ .Values.image.repository }}:{{ .Values.image.tag }}.
-
-Open {{ include "url" . }}
-Logs:   karga logs {{ .Release.Name }} -f
-Shell:  karga exec {{ .Release.Name }} web

@@ -1,5 +1,0 @@
-apiVersion: karga.io/v1alpha1
-name: x
-version: 0.1.0
-runtime: {supported: [docker]}
-chart: oops

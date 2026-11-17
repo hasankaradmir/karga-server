@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hasankaradmir/karga/internal/infrastructure/envoy"
-	"github.com/hasankaradmir/karga/internal/ports"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // Runtime is safe for concurrent use. Set Fail["<Op>:<name>"] to make an operation fail.

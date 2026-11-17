@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hasankaradmir/karga/internal/application/releases"
-	"github.com/hasankaradmir/karga/internal/ports"
+	"github.com/hasankaradmir/karga-server/internal/application/releases"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // Debounce collects the events of a release before it is reconciled (a recreate fires several).

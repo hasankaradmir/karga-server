@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Runs make targets in a Linux VM with Docker, Go and gcc, for the Linux-only parts of karga
+# Runs make targets in a Linux VM with Docker, Go and gcc, for the Linux-only parts of karga-server
 # (gateway, release proxy). Uses OrbStack (orb) when installed, otherwise Lima (limactl).
 #
 #   scripts/linux-vm.sh [make targets...]     default: test-integration test-e2e
 #   KARGA_VM=name   machine name (default karga-linux)
 #
 # The machine is created and provisioned on first use. The working tree (without .git, bin and
-# docs) is copied to ~/karga in the machine before every run.
+# docs) is copied to ~/src/karga-server in the machine before every run, with the karga (CLI, for
+# the e2e tests) and karga-sdk checkouts next to it when they exist.
 set -euo pipefail
 
 vm=${KARGA_VM:-karga-linux}
@@ -19,12 +20,12 @@ if command -v orb >/dev/null; then
   exists() { orb list -q 2>/dev/null | grep -qx "$vm"; }
   create() { orb create ubuntu "$vm"; }
   run() { orb run -m "$vm" bash -lc "$1"; }
-  copy_in() { orb run -m "$vm" bash -c 'rm -rf ~/karga && mkdir -p ~/karga && tar xf - -C ~/karga'; }
+  copy_in() { orb run -m "$vm" bash -c 'rm -rf ~/src && mkdir -p ~/src && tar xf - -C ~/src'; }
 elif command -v limactl >/dev/null; then
   exists() { limactl list -q 2>/dev/null | grep -qx "$vm"; }
   create() { limactl start --name="$vm" --tty=false template://ubuntu; }
   run() { limactl shell "$vm" bash -lc "$1"; }
-  copy_in() { limactl shell "$vm" bash -c 'rm -rf ~/karga && mkdir -p ~/karga && tar xf - -C ~/karga'; }
+  copy_in() { limactl shell "$vm" bash -c 'rm -rf ~/src && mkdir -p ~/src && tar xf - -C ~/src'; }
 else
   echo "needs OrbStack (orb) or Lima (limactl)" >&2
   exit 1
@@ -45,6 +46,9 @@ if [ -z \"\$have\" ] || [ \"\$(printf '%s\\n' $go_version \"\$have\" | sort -V |
   curl -fsSL https://go.dev/dl/go$go_version.linux-\$arch.tar.gz | sudo tar -C /usr/local -xzf - --overwrite
 fi"
 
-cd "$root"
-COPYFILE_DISABLE=1 tar --no-xattrs --exclude=.git --exclude=bin --exclude=docs --exclude=graphify-out -cf - . | copy_in
-run "cd ~/karga && export PATH=\$PATH:/usr/local/go/bin && make ${targets[*]}"
+name=$(basename "$root")
+cd "$(dirname "$root")"
+dirs=("$name")
+for d in karga karga-sdk; do [ -d "$d" ] && dirs+=("$d"); done
+COPYFILE_DISABLE=1 tar --no-xattrs --exclude=.git --exclude=bin --exclude=docs --exclude=graphify-out -cf - "${dirs[@]}" | copy_in
+run "cd ~/src/$name && export PATH=\$PATH:/usr/local/go/bin && make ${targets[*]}"

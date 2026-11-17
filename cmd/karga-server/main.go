@@ -13,10 +13,11 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/api"
-	"github.com/hasankaradmir/karga/internal/adapters/docker"
-	"github.com/hasankaradmir/karga/internal/infrastructure/config"
-	"github.com/hasankaradmir/karga/internal/server"
-	"github.com/hasankaradmir/karga/internal/version"
+
+	"github.com/hasankaradmir/karga-server/internal/adapters/docker"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/config"
+	"github.com/hasankaradmir/karga-server/internal/server"
+	"github.com/hasankaradmir/karga-server/internal/version"
 )
 
 func main() {

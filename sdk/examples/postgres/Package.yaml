@@ -1,9 +1,0 @@
-apiVersion: karga.io/v1alpha1
-name: postgres
-version: 1.0.0
-description: PostgreSQL workload package
-maintainers:
-  - name: karga Maintainers
-runtime:
-  supported:
-    - docker

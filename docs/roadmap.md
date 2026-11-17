@@ -10,8 +10,8 @@ What karga does not do yet, what it does with known limits, and the open questio
 | Lifecycle tasks | Pre/post install and upgrade tasks (e.g. database migrations); needs an execution model. |
 | Automatic certificates | ACME for TLS routes; today certificates come from a Secret. |
 | `karga doctor` | One command checking the Docker version, gateway support, `KARGA_HOME` permissions, ports 80/443 and the Envoy image. |
-| `karga events` | The operation history (already in the state database) as a readable timeline. |
 | Remote management | The API is on a local unix socket only; managing another host means logging in to it. |
+| Cloud service | A hosted service for managing several hosts, in a separate private repository; it would use karga-sdk's API. |
 | Private registries | Image pulls are anonymous today; credentials from the Docker configuration. |
 | Encrypted secret store | Values that are not `writeOnly` are stored as written. |
 | UDP and client IP for TCP | Services carry TCP only; TCP backends do not see the client address (HTTP and HTTPS listeners pass `x-forwarded-for`). |

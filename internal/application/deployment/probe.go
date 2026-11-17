@@ -12,7 +12,8 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // tcp and http health checks are run by karga itself, from the host, so the image needs no tool:

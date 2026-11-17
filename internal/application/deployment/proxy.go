@@ -16,7 +16,8 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga/internal/infrastructure/envoy"
+
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 )
 
 // KindProxy is the derived resource for a release's Envoy proxy (ADR-011). It is not written in

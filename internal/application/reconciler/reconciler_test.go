@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/packages"
-	"github.com/hasankaradmir/karga/internal/adapters/fakeruntime"
-	"github.com/hasankaradmir/karga/internal/adapters/sqlite"
-	"github.com/hasankaradmir/karga/internal/application/deployment"
-	"github.com/hasankaradmir/karga/internal/application/releases"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
+	"github.com/hasankaradmir/karga-server/internal/adapters/sqlite"
+	"github.com/hasankaradmir/karga-server/internal/application/deployment"
+	"github.com/hasankaradmir/karga-server/internal/application/releases"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 func TestEventTriggersRepair(t *testing.T) {

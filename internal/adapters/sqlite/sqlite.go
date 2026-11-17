@@ -20,7 +20,8 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/hasankaradmir/karga-sdk/release"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 //go:embed migrations/*.sql

@@ -1,8 +1,0 @@
-# Demo values.
-image:
-  repository: nginx
-  tag: "1.27"
-port: 8080
-storage:
-  enabled: true
-password: ""

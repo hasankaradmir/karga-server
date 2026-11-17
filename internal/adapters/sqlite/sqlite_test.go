@@ -15,7 +15,8 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/release"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 func open(t *testing.T) (*Store, string) {

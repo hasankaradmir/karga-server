@@ -25,12 +25,22 @@ package marketplace, automatic database migration rollback, platforms other than
 
 ## 2. Architecture
 
-karga is two programs (ADR-0012). **karga-server** owns the state database and the container
+karga is two programs (ADR-0012) in three repositories (ADR-0013): karga-server (this one), the
+karga CLI, and karga-sdk, the Go module both use. **karga-server** owns the state database and the container
 runtime; it serves the release operations on a local unix socket (`/run/karga/karga.sock`, HTTP and
 JSON, no remote API). The **karga** CLI is its client: it packs packages and values files and sends
 them, and streams progress, logs, `exec` (an upgraded connection carrying frames) and backups. Only
-`create`, `lint`, `template` and `show` work without the server. The API is `internal/api`: a
-`Backend` interface that `*releases.Service` implements on the server and `api.Client` in the CLI.
+`create`, `lint`, `template` and `show` work without the server. The API is karga-sdk's `api`: a
+`Backend` interface that `*releases.Service` implements on the server and `api.Client` in the CLI,
+the HTTP handler and the client. Every request carries the API major version (`Karga-Api`); the
+server refuses another one, so the CLI and the server may be of different releases while it is the
+same. The server reads each client's user from the socket (`SO_PEERCRED`) and records it on the
+operations it starts.
+
+**Operations and restarts.** Operations do not depend on the client's connection: a client that goes
+away loses only the progress. On SIGTERM the server stops accepting requests and waits up to 5
+minutes for running operations. When it starts, it resumes the operations it left running before
+it serves repairs (section 5).
 
 **Reconciliation.** Desired state is each release's current revision and its applied resources;
 only install, upgrade and rollback change it. karga-server's reconciler (`internal/application/
@@ -52,22 +62,22 @@ reconciler`, the loop; `releases.Service.Reconcile`, the repairs) brings the run
 - Every repair is an operation of type `reconcile`; `karga events` lists them.
 
 ```
-cmd/karga, cmd/karga-server     entry points
-internal/cli                    cobra commands, output (tables, JSON, progress, colors, completion)
-internal/api                    Backend interface, HTTP server and client over the unix socket
-internal/server                 karga-server: state, runtime, socket
-internal/application/packages   load, lint, render packages; create scaffolds
-internal/application/releases   release lifecycle: install, upgrade, rollback, uninstall, reads
+cmd/karga-server                entry point
+internal/server                 karga-server: state, runtime, socket, peer credentials
+internal/application/releases   release lifecycle: install, upgrade, rollback, uninstall, resume, reads
 internal/application/deployment plan (diff, strategies), execute, release proxy, probes
   .../deployment/gateway        the host gateway
   .../deployment/runtimeops     primitives shared by the executor and the gateway
-internal/domain/{pkg,release,resource}   pure model and validation
 internal/ports                  Runtime and StateStore interfaces; runtime contract suite
 internal/adapters/{docker,sqlite,fakeruntime}
-internal/infrastructure/{renderer,values,envoy,archive,config,logger}
+internal/infrastructure/{envoy,config}
+
+karga-sdk: resource, pkg, release (the model), packages, values, renderer, archive (the package
+engine), plan (plans and diffs as shown), api (types, Backend, client, HTTP handler), logger
 ```
 
-The domain packages depend on nothing else in karga, enforced by `depguard` in `.golangci.yml`.
+The SDK depends on nothing of the CLI or the server, and the server on nothing of the CLI,
+enforced by `depguard` in each repository's `.golangci.yml`.
 The application layer talks to the container runtime and the state only through `ports`. Every
 runtime adapter passes the same contract suite (`internal/ports/runtimetest`); the fake runtime used
 by unit tests passes it too.
@@ -252,4 +262,7 @@ count.
 - Integration tests against Docker on Linux (`make test-integration`, or `make test-linux` in a VM),
   run in parallel with one shared `KARGA_HOME`.
   Zero-loss claims are measured with clients on the host and on the release network.
-- End-to-end tests drive the built binary (`make test-e2e`).
+- End-to-end tests drive the built binaries, karga-server and the karga CLI built from its
+  repository (`make test-e2e`), including a server killed mid-upgrade that resumes it.
+- The CLI's own tests run against a fake `Backend` behind the SDK's HTTP handler; the SDK's tests
+  cover the package engine, plans and the API's version check and detached operations.

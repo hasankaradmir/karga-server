@@ -15,11 +15,12 @@ import (
 	"github.com/hasankaradmir/karga-sdk/packages"
 	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga/internal/adapters/fakeruntime"
-	"github.com/hasankaradmir/karga/internal/adapters/sqlite"
-	"github.com/hasankaradmir/karga/internal/application/deployment"
-	"github.com/hasankaradmir/karga/internal/ports"
-	"github.com/hasankaradmir/karga/internal/ports/runtimetest"
+
+	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
+	"github.com/hasankaradmir/karga-server/internal/adapters/sqlite"
+	"github.com/hasankaradmir/karga-server/internal/application/deployment"
+	"github.com/hasankaradmir/karga-server/internal/ports"
+	"github.com/hasankaradmir/karga-server/internal/ports/runtimetest"
 )
 
 const redisPkg = "../../../tests/testdata/redis"

@@ -1,5 +1,0 @@
-apiVersion: karga.io/v1alpha1
-name: minimal
-version: 0.1.0
-runtime:
-  supported: [docker]

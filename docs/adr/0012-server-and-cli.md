@@ -27,5 +27,5 @@ authentication, certificates or API versioning across hosts.
 
 **Constraints:** The server is always running (about 50 MB resident, mostly the binary; it does
 nothing between events and the 30-second passes). One karga-server per host: the gateway is host-wide. Access to the karga socket is
-as powerful as access to Docker. The CLI and the server should be the same version (`karga version`
-warns otherwise).
+as powerful as access to Docker. The CLI and the server must speak the same API version, checked on every
+request (ADR-0013); `karga version` shows both.

@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // dependentManifest is replaceManifest with workload app depending on Service redis.

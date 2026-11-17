@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hasankaradmir/karga/internal/ports"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 func TestNewUnreachable(t *testing.T) {

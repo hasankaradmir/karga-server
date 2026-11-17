@@ -9,8 +9,9 @@ import (
 	"testing"
 
 	"github.com/hasankaradmir/karga-sdk/packages"
-	"github.com/hasankaradmir/karga/internal/application/releases"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/application/releases"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // Data an image keeps in its own VOLUME path (no karga Volume there) survives an upgrade that

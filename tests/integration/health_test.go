@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/packages"
-	"github.com/hasankaradmir/karga/internal/application/deployment/gateway"
-	"github.com/hasankaradmir/karga/internal/application/releases"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/releases"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // TestKargaHealthChecks: tcp and http health checks need no tool in the image; karga runs them

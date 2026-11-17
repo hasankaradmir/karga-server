@@ -38,3 +38,4 @@ graphify-out/
 # Build output
 bin/
 dist/
+/karga-cli/

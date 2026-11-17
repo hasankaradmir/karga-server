@@ -11,8 +11,9 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/packages"
-	"github.com/hasankaradmir/karga/internal/application/deployment/gateway"
-	"github.com/hasankaradmir/karga/internal/application/releases"
+
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/releases"
 )
 
 // TestServicesAreIsolatedPerRelease: two releases both have a Service web on port 80; each resolves

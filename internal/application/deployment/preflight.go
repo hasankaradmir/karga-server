@@ -7,8 +7,9 @@ import (
 	"slices"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga/internal/application/deployment/gateway"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // Preflight finds problems before anything is created: runtime support, missing capabilities and

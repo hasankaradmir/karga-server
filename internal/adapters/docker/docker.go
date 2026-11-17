@@ -13,7 +13,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 
-	"github.com/hasankaradmir/karga/internal/ports"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // Runtime talks to one Docker Engine. It honours DOCKER_HOST and related variables.

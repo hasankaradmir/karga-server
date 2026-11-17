@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga/internal/ports"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // Config tells the suite which image and commands to use.

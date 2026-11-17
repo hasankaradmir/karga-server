@@ -11,20 +11,13 @@ linters:
   settings:
     depguard:
       rules:
-        # The SDK (domain, package engine, API) is shared by the CLI and the server: it must not
-        # know the runtime or the state database.
-        sdk:
+        # karga-server serves the CLI over the API in karga-sdk; it never imports the CLI.
+        server:
           files:
-            - "**/sdk/**"
+            - "$all"
           deny:
             - pkg: github.com/hasankaradmir/karga/
-              desc: the SDK must not depend on karga-server or the CLI
-            - pkg: github.com/docker
-              desc: domain must not depend on Docker
-            - pkg: github.com/moby
-              desc: domain must not depend on Docker
-            - pkg: modernc.org/sqlite
-              desc: domain must not depend on SQLite
+              desc: karga-server must not depend on the CLI
 
 formatters:
   enable:
@@ -33,4 +26,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/hasankaradmir/karga
+        - github.com/hasankaradmir/karga-server

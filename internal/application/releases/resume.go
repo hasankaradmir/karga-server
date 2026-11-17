@@ -7,7 +7,8 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/pkg"
 	"github.com/hasankaradmir/karga-sdk/release"
-	"github.com/hasankaradmir/karga/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // ResumeOperation is the type of the operation that finishes one karga-server left running when it stopped.
