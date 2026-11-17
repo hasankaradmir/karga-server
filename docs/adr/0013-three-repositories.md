@@ -30,5 +30,4 @@ it import server internals; the split makes the boundary the API.
 **Constraints:** A change to the API is made in karga-sdk first, then required by the server and
 the CLI (Go pseudo-versions until karga-sdk is tagged). The server's e2e tests build the CLI from a
 checkout of its repository (`KARGA_CLI_SRC`, default `../karga`) or take a binary (`KARGA_CLI`).
-The history of each repository is the history of the original one for its files. A later cloud
-service lives in a separate, private repository.
+The history of each repository is the history of the original one for its files.

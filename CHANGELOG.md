@@ -22,7 +22,7 @@ First release.
 - karga-server owns the state and the runtime; the karga CLI is its client on
   `/run/karga/karga.sock` and stops with `karga-server is not running` without it (`create`,
   `lint`, `template`, `show` work alone). The service runs as the `karga` user with its state in
-  `/var/lib/karga`; install with `KARGA_SYSTEMD=1`. The CLI's `--home` is gone (`--socket` instead).
+  `/var/lib/karga`; karga-server's install script sets up the service. The CLI's `--home` is gone (`--socket` instead).
 - `dependsOn` on a workload: it starts only once the Services it names are ready behind the release
   proxy; a failed dependency keeps it from starting.
 - karga-server repairs releases on its own (Docker events and every 30 seconds): removed or
