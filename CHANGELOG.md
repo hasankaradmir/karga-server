@@ -32,6 +32,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- `volume backup --stop` kept the workloads stopped and the release held for as long as the client
+  took to read the backup; the copy now goes to a temporary file under `$KARGA_HOME/tmp` (as large
+  as the backup), the workloads run again, and the file is sent after.
 - Waiting for the gateway's lock (another release changing what it exposes) could not be
   interrupted; it ends with the operation's context now.
 - Revisions were pruned to `--history-max` only after a deployment that succeeded: an upgrade
