@@ -49,12 +49,12 @@ func TestOrder(t *testing.T) {
 		t.Fatalf("order:\n got %s\nwant %s", names(got), want)
 	}
 	// Input order must not matter.
-	rev, err := Order(Reverse(rs))
+	rev, err := Order(reverse(rs))
 	if err != nil || names(rev) != want {
 		t.Fatalf("not deterministic: %s %v", names(rev), err)
 	}
-	if names(Reverse(got)) != "Workload/web,Workload/api,Secret/creds,Config/unused,Volume/data,Network/front" {
-		t.Fatalf("reverse: %s", names(Reverse(got)))
+	if names(reverse(got)) != "Workload/web,Workload/api,Secret/creds,Config/unused,Volume/data,Network/front" {
+		t.Fatalf("reverse: %s", names(reverse(got)))
 	}
 }
 

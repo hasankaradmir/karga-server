@@ -20,7 +20,7 @@ import (
 )
 
 func testSettings() Settings {
-	return Settings{Listen: []string{"127.0.0.1", "10.0.0.5"}, Listeners: append(DefaultListeners(),
+	return Settings{Listen: []string{"127.0.0.1", "10.0.0.5"}, Listeners: append(defaultListeners(),
 		Listener{Name: "pg", Port: 5432, Protocol: ProtocolTCP}, Listener{Name: "unused", Port: 8080, Protocol: ProtocolHTTP})}
 }
 
@@ -103,7 +103,7 @@ func proxyOf(t *testing.T, rt *fakeruntime.Runtime, home, rel string, ps []Port,
 		ports.LabelManaged: "true", ports.LabelRelease: rel, ports.LabelName: "proxy", LabelPorts: string(label)}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteExpose(home, rel, routes); err != nil {
+	if err := writeExpose(home, rel, routes); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -112,7 +112,7 @@ func TestCheckExposures(t *testing.T) {
 	h := testHost(true)
 	ctx := context.Background()
 	home := t.TempDir()
-	if err := WriteSettings(home, Settings{Listeners: append(DefaultListeners(), Listener{Name: "pg", Port: 5432, Protocol: ProtocolTCP})}); err != nil {
+	if err := WriteSettings(home, Settings{Listeners: append(defaultListeners(), Listener{Name: "pg", Port: 5432, Protocol: ProtocolTCP})}); err != nil {
 		t.Fatal(err)
 	}
 	rt := fakeruntime.New("img")
@@ -153,7 +153,7 @@ func TestCheckExposures(t *testing.T) {
 func TestSettings(t *testing.T) {
 	home := t.TempDir()
 	s, err := ReadSettings(home)
-	if err != nil || !slices.Equal(s.Listen, []string{"127.0.0.1"}) || !slices.Equal(s.Listeners, DefaultListeners()) {
+	if err != nil || !slices.Equal(s.Listen, []string{"127.0.0.1"}) || !slices.Equal(s.Listeners, defaultListeners()) {
 		t.Fatalf("defaults: %+v %v", s, err)
 	}
 	s.Listeners = append(s.Listeners, Listener{Name: "alt", Port: 80, Protocol: ProtocolHTTP})
@@ -240,7 +240,7 @@ func TestExposeChecksUnderTheLock(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already routed to other/web") {
 		t.Fatalf("Expose: %v", err)
 	}
-	if routes, _ := ReadExpose(home, "mine"); routes != nil {
+	if routes, _ := readExpose(home, "mine"); routes != nil {
 		t.Fatalf("a refused exposure was written: %+v", routes)
 	}
 }

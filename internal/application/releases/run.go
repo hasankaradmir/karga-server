@@ -59,7 +59,7 @@ func (s *core) restoreSecrets(rel string, revision int, rs []resource.Resource) 
 		for k := range sec.Values {
 			b, err := os.ReadFile(filepath.Join(dir, "secrets", r.Metadata.Name, k))
 			if err != nil {
-				return fmt.Errorf("revision %d: secret %q is no longer available (%v); it may have been pruned", revision, r.Metadata.Name, err)
+				return fmt.Errorf("revision %d: secret %q is no longer available (it may have been pruned): %w", revision, r.Metadata.Name, err)
 			}
 			values[k] = string(b)
 		}
@@ -306,7 +306,7 @@ func (s *core) run(ctx context.Context, rt ports.Runtime, op *release.Operation,
 			// Left behind by an operation that begin just aborted.
 			rel.Status = release.StatusFailed
 		}
-		if in.Type != "install" {
+		if in.Type != release.OpInstall {
 			target = release.StatusUpgrading
 		}
 	}

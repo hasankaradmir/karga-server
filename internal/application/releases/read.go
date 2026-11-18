@@ -58,8 +58,8 @@ func (s *core) revisionOrCurrent(ctx context.Context, name string, number int) (
 	return s.store.GetRevision(ctx, name, number)
 }
 
-// GetValues returns the user overrides of a revision (0 = current), or with all the merged values.
-func (s *Reads) GetValues(ctx context.Context, name string, revision int, all bool) (map[string]any, error) {
+// Values returns the user overrides of a revision (0 = current), or with all the merged values.
+func (s *Reads) Values(ctx context.Context, name string, revision int, all bool) (map[string]any, error) {
 	rev, err := s.c.revisionOrCurrent(ctx, name, revision)
 	if err != nil {
 		return nil, err
@@ -70,9 +70,9 @@ func (s *Reads) GetValues(ctx context.Context, name string, revision int, all bo
 	return rev.Values, nil
 }
 
-// GetManifest returns a revision's resources with secret values shown as <redacted>.
-// GetNotes returns the rendered NOTES.txt of a revision (0: the current one), "" if the package has none.
-func (s *Reads) GetNotes(ctx context.Context, name string, revision int) (string, error) {
+// Manifest returns a revision's resources with secret values shown as <redacted>.
+// Notes returns the rendered NOTES.txt of a revision (0: the current one), "" if the package has none.
+func (s *Reads) Notes(ctx context.Context, name string, revision int) (string, error) {
 	rev, err := s.c.revisionOrCurrent(ctx, name, revision)
 	if err != nil {
 		return "", err
@@ -80,7 +80,7 @@ func (s *Reads) GetNotes(ctx context.Context, name string, revision int) (string
 	return rev.Notes, nil
 }
 
-func (s *Reads) GetManifest(ctx context.Context, name string, revision int) ([]resource.Resource, error) {
+func (s *Reads) Manifest(ctx context.Context, name string, revision int) ([]resource.Resource, error) {
 	rev, err := s.c.revisionOrCurrent(ctx, name, revision)
 	if err != nil {
 		return nil, err

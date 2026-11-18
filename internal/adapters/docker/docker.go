@@ -84,15 +84,15 @@ func wrap(err error, what string) error {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "permission denied"):
-		return fmt.Errorf("%s: %v (is your user allowed to use the Docker socket?): %w", what, err, ports.ErrPermission)
+		return fmt.Errorf("%s: %w (is your user allowed to use the Docker socket?): %w", what, err, ports.ErrPermission)
 	case client.IsErrConnectionFailed(err):
-		return fmt.Errorf("%s: %v (is the Docker daemon running?): %w", what, err, ports.ErrUnavailable)
+		return fmt.Errorf("%s: %w (is the Docker daemon running?): %w", what, err, ports.ErrUnavailable)
 	case cerrdefs.IsNotFound(err):
 		return fmt.Errorf("%s: %w", what, ports.ErrNotFound)
 	case cerrdefs.IsConflict(err) || cerrdefs.IsAlreadyExists(err):
 		return fmt.Errorf("%s: %w", what, ports.ErrConflict)
 	case strings.Contains(msg, "port is already allocated") || strings.Contains(msg, "address already in use"):
-		return fmt.Errorf("%s: %v: %w", what, err, ports.ErrPortInUse)
+		return fmt.Errorf("%s: %w: %w", what, err, ports.ErrPortInUse)
 	default:
 		return fmt.Errorf("%s: %w", what, err)
 	}

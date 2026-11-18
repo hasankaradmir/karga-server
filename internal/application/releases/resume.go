@@ -12,7 +12,7 @@ import (
 )
 
 // ResumeOperation is the type of the operation that finishes one karga-server left running when it stopped.
-const ResumeOperation = "resume"
+const ResumeOperation = release.OpResume
 
 // Resume finishes the operations a stopped karga-server left running. Install, upgrade and rollback
 // deploy their revision again: the executor skips what is already done. Uninstall runs again. Each
@@ -63,9 +63,9 @@ func (s *Lifecycle) resume(ctx context.Context, rel release.Release, op release.
 	// Deploys and uninstalls abort the interrupted operation when they begin (Force): if they cannot
 	// begin (no container runtime yet), it stays running and the next start tries again.
 	switch op.Type {
-	case "install", "upgrade", "rollback", ResumeOperation:
+	case release.OpInstall, release.OpUpgrade, release.OpRollback, ResumeOperation:
 		return s.redeploy(ctx, rel, op)
-	case "uninstall":
+	case release.OpUninstall:
 		_, err := s.uninstallRelease(ctx, UninstallRequest{Name: rel.Name, Force: true,
 			KeepHistory: op.Options.KeepHistory, DeleteVolumes: op.Options.DeleteVolumes})
 		return err

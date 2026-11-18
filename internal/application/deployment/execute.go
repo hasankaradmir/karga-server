@@ -93,7 +93,7 @@ func volumeRetention(spec []byte) string {
 	var v struct {
 		Spec resource.VolumeSpec `json:"spec"`
 	}
-	_ = json.Unmarshal(spec, &v)
+	_ = json.Unmarshal(spec, &v) // a spec karga stored; unreadable keeps the volume (retention "")
 	return v.Spec.Retention
 }
 

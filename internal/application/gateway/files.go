@@ -16,13 +16,13 @@ import (
 // Dir holds the gateway's configuration and admin socket.
 func Dir(home string) string { return filepath.Join(home, "gateway") }
 
-// ExposeFile lists what a release exposes ([]Route). It lives in the release proxy's directory, so
+// exposeFile lists what a release exposes ([]Route). It lives in the release proxy's directory, so
 // changing a host or path rewrites a file instead of recreating the proxy container.
-func ExposeFile(home, rel string) string { return filepath.Join(home, "proxies", rel, "expose.yaml") }
+func exposeFile(home, rel string) string { return filepath.Join(home, "proxies", rel, "expose.yaml") }
 
-// ReadExpose reads what a release exposes; a release without the file exposes nothing.
-func ReadExpose(home, rel string) ([]Route, error) {
-	data, err := os.ReadFile(ExposeFile(home, rel))
+// readExpose reads what a release exposes; a release without the file exposes nothing.
+func readExpose(home, rel string) ([]Route, error) {
+	data, err := os.ReadFile(exposeFile(home, rel))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -31,15 +31,15 @@ func ReadExpose(home, rel string) ([]Route, error) {
 	}
 	var out []Route
 	if err := yaml.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("%s: %w", ExposeFile(home, rel), err)
+		return nil, fmt.Errorf("%s: %w", exposeFile(home, rel), err)
 	}
 	return out, nil
 }
 
-// WriteExpose stores what a release exposes (none removes the file).
-func WriteExpose(home, rel string, routes []Route) error {
+// writeExpose stores what a release exposes (none removes the file).
+func writeExpose(home, rel string, routes []Route) error {
 	if len(routes) == 0 {
-		if err := os.Remove(ExposeFile(home, rel)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(exposeFile(home, rel)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		return nil
@@ -48,10 +48,10 @@ func WriteExpose(home, rel string, routes []Route) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(ExposeFile(home, rel)), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(exposeFile(home, rel)), 0o700); err != nil {
 		return err
 	}
-	return writeFile(ExposeFile(home, rel), data)
+	return writeFile(exposeFile(home, rel), data)
 }
 
 // syncCerts copies the certificates of the targets' HTTPS routes into the gateway directory and
@@ -147,7 +147,7 @@ func ReadSettings(home string) (Settings, error) {
 		s.Listen = []string{DefaultListen}
 	}
 	if s.Listeners == nil { // never set (an empty list is the administrator's choice)
-		s.Listeners = DefaultListeners()
+		s.Listeners = defaultListeners()
 	}
 	return s, nil
 }

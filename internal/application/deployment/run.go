@@ -285,7 +285,7 @@ func (r *run) expose(ctx context.Context) error {
 
 // deleteRemoved deletes the networks and volumes (retention: delete) the plan removes, last first.
 func (r *run) deleteRemoved(ctx context.Context) error {
-	for _, c := range Reverse(r.req.Plan.Changes) {
+	for _, c := range reverse(r.req.Plan.Changes) {
 		if c.Action != ActionDelete || c.Kind == resource.KindWorkload || c.Kind == KindProxy {
 			continue
 		}

@@ -96,8 +96,8 @@ func pause(ctx context.Context, rt ports.Runtime, ms []mounter) (func() error, e
 	return resume, nil
 }
 
-// BackupVolume writes req.Volume to w.
-func (s *Volumes) BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) (err error) {
+// Backup writes req.Volume to w.
+func (s *Volumes) Backup(ctx context.Context, req VolumeBackupRequest, w io.Writer) (err error) {
 	// A live copy only reads: it holds nothing, so a slow client never blocks the release. A copy
 	// with --stop stops workloads and holds the release, as an operation, until they run again.
 	if req.Stop {
@@ -157,8 +157,8 @@ func (s *Volumes) BackupVolume(ctx context.Context, req VolumeBackupRequest, w i
 	return gz.Close()
 }
 
-// RestoreVolume writes the backup read from r into req.Volume.
-func (s *Volumes) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader) (err error) {
+// Restore writes the backup read from r into req.Volume.
+func (s *Volumes) Restore(ctx context.Context, req VolumeRestoreRequest, r io.Reader) (err error) {
 	unlock, err := s.c.locks.lock(ctx, req.Release)
 	if err != nil {
 		return err

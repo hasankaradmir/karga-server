@@ -32,7 +32,7 @@ var sample = Config{
 }
 
 func TestConfigGolden(t *testing.T) {
-	boot, err := Bootstrap("web", 0o600)
+	boot, err := bootstrap("web", 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestAdmin(t *testing.T) {
 	  "health_status":{"eds_health_status":"HEALTHY","failed_active_health_check":true},"stats":[{"name":"cx_active"}]}]}]}`
 	clusters, total := healthy, "3"
 	dir := fakeAdmin(t, func() string { return clusters }, func() string { return "cluster.p8080.upstream_cx_active: " + total })
-	a := NewAdmin(dir)
+	a := newAdmin(dir)
 	ctx := context.Background()
 
 	if ok, err := a.Ready(ctx, map[string]string{"p8080": "karga-web-r2"}); err != nil || !ok {
@@ -240,7 +240,7 @@ func TestAccessLogAndHealth(t *testing.T) {
 	}
 
 	dir := fakeAdmin(t, func() string { return `{"cluster_statuses":[]}` }, func() string { return "" })
-	a := NewAdmin(dir)
+	a := newAdmin(dir)
 	if live, err := a.Live(context.Background()); err != nil || !live {
 		t.Fatalf("live: %v %v", live, err)
 	}

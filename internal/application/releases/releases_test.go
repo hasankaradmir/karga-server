@@ -186,11 +186,11 @@ func TestUpgradeReuseValues(t *testing.T) {
 	must[*Result](t)(e.install("config.maxmemory=64mb"))
 	must[*Result](t)(e.svc.Lifecycle.Upgrade(context.Background(), UpgradeRequest{CommonOptions: common(), Name: "cache", Package: redisPkg,
 		Values: Values{Sets: packages.Sets([]string{"image.tag=7.2"}...)}, ReuseValues: true}, nil))
-	vals := must[map[string]any](t)(e.svc.Reads.GetValues(context.Background(), "cache", 0, false))
+	vals := must[map[string]any](t)(e.svc.Reads.Values(context.Background(), "cache", 0, false))
 	if vals["config"].(map[string]any)["maxmemory"] != "64mb" || vals["image"].(map[string]any)["tag"] != "7.2" {
 		t.Fatalf("reused values: %#v", vals)
 	}
-	all := must[map[string]any](t)(e.svc.Reads.GetValues(context.Background(), "cache", 0, true))
+	all := must[map[string]any](t)(e.svc.Reads.Values(context.Background(), "cache", 0, true))
 	if all["image"].(map[string]any)["repository"] != "redis" {
 		t.Fatalf("all values: %#v", all)
 	}
@@ -312,7 +312,7 @@ func TestManifestAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rs := must[[]resource.Resource](t)(e.svc.Reads.GetManifest(ctx, "db", 0))
+	rs := must[[]resource.Resource](t)(e.svc.Reads.Manifest(ctx, "db", 0))
 	for _, r := range rs {
 		if s, ok := r.Spec.(*resource.SecretSpec); ok && s.Values["password"] != "<redacted>" {
 			t.Fatalf("manifest secret: %v", s.Values)
@@ -433,7 +433,7 @@ func TestWriteOnlyValuesNotStored(t *testing.T) {
 			t.Fatalf("stored values: %#v", v)
 		}
 	}
-	shown := must[map[string]any](t)(e.svc.Reads.GetValues(ctx, "db", 0, true))
+	shown := must[map[string]any](t)(e.svc.Reads.Values(ctx, "db", 0, true))
 	if shown["database"].(map[string]any)["password"] != "<redacted>" {
 		t.Fatalf("get values --all: %#v", shown)
 	}
@@ -455,7 +455,7 @@ func TestWriteOnlyValuesNotStored(t *testing.T) {
 		Values: Values{Sets: packages.Sets([]string{"database.password=hunter3"}...)}}, nil); err != nil {
 		t.Fatalf("reuse with password: %v", err)
 	}
-	vals := must[map[string]any](t)(e.svc.Reads.GetValues(ctx, "db", 0, false))
+	vals := must[map[string]any](t)(e.svc.Reads.Values(ctx, "db", 0, false))
 	if vals["service"].(map[string]any)["enabled"] == nil {
 		t.Fatalf("reused values lost: %#v", vals)
 	}

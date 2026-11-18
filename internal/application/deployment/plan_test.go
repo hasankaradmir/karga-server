@@ -13,7 +13,7 @@ import (
 
 func appliedFrom(t *testing.T, rs []resource.Resource) []release.AppliedResource {
 	t.Helper()
-	specs, err := testEnv.Specs(rs)
+	specs, err := testEnv.specs(rs)
 	if err != nil {
 		t.Fatal(err)
 	}

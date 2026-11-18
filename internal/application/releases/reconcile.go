@@ -33,7 +33,7 @@ import (
 // up on it until the user acts on the release or runs karga reconcile.
 
 // ReconcileOperation is the operation type of reconciliation.
-const ReconcileOperation = "reconcile"
+const ReconcileOperation = release.OpReconcile
 
 // Repair backoff.
 const (

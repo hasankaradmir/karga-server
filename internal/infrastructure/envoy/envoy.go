@@ -104,25 +104,25 @@ func (Proxies) Endpoints(dir string) (map[string]string, error) { return Endpoin
 
 // WaitReady implements ports.ProxyControl.
 func (Proxies) WaitReady(ctx context.Context, dir string, want map[string]string, timeout time.Duration) error {
-	return NewAdmin(dir).WaitReady(ctx, want, timeout)
+	return newAdmin(dir).WaitReady(ctx, want, timeout)
 }
 
 // WaitDrained implements ports.ProxyControl.
 func (Proxies) WaitDrained(ctx context.Context, dir string, clusters []string, timeout time.Duration) (bool, error) {
-	return NewAdmin(dir).WaitDrained(ctx, clusters, timeout)
+	return newAdmin(dir).WaitDrained(ctx, clusters, timeout)
 }
 
 // Live implements ports.ProxyControl.
-func (Proxies) Live(ctx context.Context, dir string) (bool, error) { return NewAdmin(dir).Live(ctx) }
+func (Proxies) Live(ctx context.Context, dir string) (bool, error) { return newAdmin(dir).Live(ctx) }
 
 // Version implements ports.ProxyControl.
 func (Proxies) Version(ctx context.Context, dir string) (string, error) {
-	return NewAdmin(dir).Version(ctx)
+	return newAdmin(dir).Version(ctx)
 }
 
-// Bootstrap is the static part: an admin API on a unix socket and file-based LDS/CDS. socketMode is
+// bootstrap is the static part: an admin API on a unix socket and file-based LDS/CDS. socketMode is
 // the admin socket's permission; the proxy directory (0700) is what keeps other users out.
-func Bootstrap(node string, socketMode int) ([]byte, error) {
+func bootstrap(node string, socketMode int) ([]byte, error) {
 	source := func(file string) map[string]any {
 		return map[string]any{
 			"resource_api_version": "V3",
@@ -189,7 +189,7 @@ func Write(dir, node string, socketMode int, cfg Config) error {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
-	boot, err := Bootstrap(node, socketMode)
+	boot, err := bootstrap(node, socketMode)
 	if err != nil {
 		return err
 	}
@@ -225,7 +225,7 @@ func waitClusters(dir string, clusters []Cluster, timeout time.Duration) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	a := NewAdmin(dir)
+	a := newAdmin(dir)
 	for {
 		hosts, err := a.hosts(ctx)
 		if err == nil && !slices.ContainsFunc(clusters, func(c Cluster) bool { _, ok := hosts[c.Name]; return !ok }) {
@@ -334,8 +334,8 @@ var adminTransport = &http.Transport{
 
 type adminSocketKey struct{}
 
-// NewAdmin returns a client for the proxy whose directory is dir.
-func NewAdmin(dir string) *Admin {
+// newAdmin returns a client for the proxy whose directory is dir.
+func newAdmin(dir string) *Admin {
 	return &Admin{sock: filepath.Join(dir, adminSocket), client: &http.Client{Timeout: 2 * time.Second, Transport: adminTransport}}
 }
 

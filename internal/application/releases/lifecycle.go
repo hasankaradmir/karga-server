@@ -86,7 +86,7 @@ func (s *Lifecycle) install(ctx context.Context, req InstallRequest, progress fu
 		cur := existing.CurrentRevision
 		return &Result{Release: req.Name, Revision: cur, From: cur, Status: string(existing.Status), NoOp: true}, nil
 	}
-	in.CommonOptions, in.Type, in.Description, in.Existing, in.Progress = req.CommonOptions, "install", "Install complete", existing, progress
+	in.CommonOptions, in.Type, in.Description, in.Existing, in.Progress = req.CommonOptions, release.OpInstall, "Install complete", existing, progress
 	return s.c.deploy(ctx, in)
 }
 
@@ -135,7 +135,7 @@ func (s *Lifecycle) Upgrade(ctx context.Context, req UpgradeRequest, progress fu
 	if err != nil {
 		return nil, err
 	}
-	in.CommonOptions, in.Type, in.Description, in.Existing = req.CommonOptions, "upgrade", "Upgrade complete", existing
+	in.CommonOptions, in.Type, in.Description, in.Existing = req.CommonOptions, release.OpUpgrade, "Upgrade complete", existing
 	in.Strategy, in.Progress = req.Strategy, progress
 	return s.c.deploy(ctx, in)
 }
@@ -180,7 +180,7 @@ func (s *Lifecycle) Rollback(ctx context.Context, req RollbackRequest, progress 
 	}
 	p := packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
 	return s.c.deploy(ctx, deployInput{
-		CommonOptions: req.CommonOptions, Progress: progress, Name: req.Name, Type: "rollback", Description: fmt.Sprintf("Rollback to %d", target),
+		CommonOptions: req.CommonOptions, Progress: progress, Name: req.Name, Type: release.OpRollback, Description: fmt.Sprintf("Rollback to %d", target),
 		Package: p, PackageDigest: rev.PackageDigest, Overrides: rev.Values, Values: rev.ValuesAll,
 		Resources: rs, Revision: number, Existing: existing, Strategy: req.Strategy, Notes: rev.Notes,
 	})
@@ -233,7 +233,7 @@ func (s *Lifecycle) uninstallRelease(ctx context.Context, req UninstallRequest) 
 		res.Plan, err = s.c.env.DeletePlan(ctx, rt, req.Name, req.DeleteVolumes)
 		return res, err
 	}
-	op, err := s.c.begin(ctx, req.Name, "uninstall", existing.CurrentRevision, req.Force,
+	op, err := s.c.begin(ctx, req.Name, release.OpUninstall, existing.CurrentRevision, req.Force,
 		release.Options{DeleteVolumes: req.DeleteVolumes, KeepHistory: req.KeepHistory})
 	if err != nil {
 		return nil, err

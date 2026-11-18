@@ -85,7 +85,7 @@ func findTargets(ctx context.Context, rt Runtime, home string) ([]Target, error)
 	var out []Target
 	for _, o := range objs {
 		rel := o.Labels[ports.LabelRelease]
-		routes, err := ReadExpose(home, rel)
+		routes, err := readExpose(home, rel)
 		if err != nil {
 			return nil, err
 		}
@@ -118,7 +118,7 @@ func Expose(ctx context.Context, rt Runtime, h *proxyops.Host, home, rel string,
 	if _, err := Check(ctx, rt, h, home, rel, rs); err != nil {
 		return nil, err
 	}
-	if err := WriteExpose(home, rel, routes); err != nil {
+	if err := writeExpose(home, rel, routes); err != nil {
 		return nil, err
 	}
 	return syncLocked(ctx, rt, h, home)

@@ -96,17 +96,17 @@ func (b Backend) History(ctx context.Context, req api.ReleaseRequest) ([]api.Rev
 
 // Values implements api.Backend.
 func (b Backend) Values(ctx context.Context, req api.ValuesRequest) (map[string]any, error) {
-	return b.reads.GetValues(ctx, req.Name, req.Revision, req.All)
+	return b.reads.Values(ctx, req.Name, req.Revision, req.All)
 }
 
 // Notes implements api.Backend.
 func (b Backend) Notes(ctx context.Context, req api.RevisionRequest) (string, error) {
-	return b.reads.GetNotes(ctx, req.Name, req.Revision)
+	return b.reads.Notes(ctx, req.Name, req.Revision)
 }
 
 // Manifest implements api.Backend.
 func (b Backend) Manifest(ctx context.Context, req api.RevisionRequest) ([]resource.Resource, error) {
-	return b.reads.GetManifest(ctx, req.Name, req.Revision)
+	return b.reads.Manifest(ctx, req.Name, req.Revision)
 }
 
 // Status implements api.Backend.
@@ -163,12 +163,12 @@ func (b Backend) Exec(ctx context.Context, req api.ExecRequest) (int, error) {
 
 // BackupVolume implements api.Backend.
 func (b Backend) BackupVolume(ctx context.Context, req api.VolumeBackupRequest, w io.Writer) error {
-	return b.volumes.BackupVolume(ctx, releases.VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Stop: req.Stop}, w)
+	return b.volumes.Backup(ctx, releases.VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Stop: req.Stop}, w)
 }
 
 // RestoreVolume implements api.Backend.
 func (b Backend) RestoreVolume(ctx context.Context, req api.VolumeRestoreRequest, r io.Reader) error {
-	return b.volumes.RestoreVolume(ctx, releases.VolumeRestoreRequest{Release: req.Release, Volume: req.Volume, Force: req.Force, Name: req.Name}, r)
+	return b.volumes.Restore(ctx, releases.VolumeRestoreRequest{Release: req.Release, Volume: req.Volume, Force: req.Force, Name: req.Name}, r)
 }
 
 // Reconcile implements api.Backend.

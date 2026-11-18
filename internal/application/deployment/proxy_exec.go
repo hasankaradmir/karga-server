@@ -171,7 +171,7 @@ func (e *Env) createProxy(ctx context.Context, rt ports.Runtime, req ExecRequest
 // joins a network, so each changed network is left and joined again.
 func reconnectProxy(ctx context.Context, rt ports.Runtime, rel string, c Change) error {
 	var old ProxySpec
-	_ = json.Unmarshal(c.Applied.Spec, &old)
+	_ = json.Unmarshal(c.Applied.Spec, &old) // stored by karga; unreadable reconnects every network
 	for _, n := range changedNetworks(old, *c.Proxy) {
 		if err := rt.DisconnectNetwork(ctx, c.RuntimeName, proxyops.RuntimeName(rel, n)); err != nil {
 			return err

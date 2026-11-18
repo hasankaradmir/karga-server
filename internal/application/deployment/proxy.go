@@ -185,7 +185,7 @@ func (e *Env) proxyChange(releaseName string, svcs services, current map[Key]rel
 		c.Action, c.Applied = ActionUpdate, &have
 		c.Fields = fieldChanges(KindProxy, have.Spec, want.Spec)
 		var old ProxySpec
-		_ = json.Unmarshal(have.Spec, &old)
+		_ = json.Unmarshal(have.Spec, &old) // stored by karga; unreadable reads as changed: recreate
 		if old.Image != spec.Image || old.Limits != spec.Limits || !reflect.DeepEqual(old.Published, spec.Published) {
 			c.Strategy, c.StrategyReason = proxyRecreate, "image, limits or exposed ports changed: brief interruption"
 		} else {
