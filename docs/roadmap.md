@@ -7,11 +7,17 @@ What karga does not do yet, what it does with known limits, and the open questio
 
 | Feature | Notes |
 |---------|-------|
-| Lifecycle tasks | Pre/post install and upgrade tasks (e.g. database migrations); needs an execution model. |
+| Lifecycle tasks | A `Task` kind: one-off containers that run before or after an install or upgrade (database migrations), must exit 0, and stop the operation when they fail; their output is kept with the operation. Today migrations run in the application's entrypoint. |
+| Replicas | `replicas: N` for stateless workloads (no read-write volume); the release proxy balances across them. Today a workload is one container. |
 | Automatic certificates | ACME for TLS routes; today certificates come from a Secret. |
+| Certificate expiry warning | `karga status` and `gateway status` show when each certificate expires and warn 14 days before; today renewal is an upgrade with the new Secret, and nothing reminds you. |
+| Repair notifications | Tell someone (a webhook) when the reconciler gives up on a resource; today `karga status` exits 6 and can be polled by a monitor. |
+| Scheduled tasks | Periodic jobs and volume backups run by karga; today a systemd timer on the host runs `karga volume backup`. |
+| Gateway options | Per exposure: request timeout, body size limit, rate limit, HSTS, compression. Today routes have no deadline and close after 5 idle minutes. |
+| Log shipping | A Docker log driver per workload (journald, syslog, fluentd); today logs rotate in json-file and are read with `karga logs`. |
 | `karga doctor` | One command checking the Docker version, gateway support, `KARGA_HOME` permissions, ports 80/443 and the Envoy image. |
 | Remote management | The API is on a local unix socket only; managing another host means logging in to it. |
-| Private registries | Image pulls are anonymous today; credentials from the Docker configuration. |
+| Private registries | Image pulls are anonymous today. Credentials would come from the server user's Docker login (`sudo -u karga docker login <host>`) and be passed with each pull. |
 | Encrypted secret store | Values that are not `writeOnly` are stored as written. |
 | UDP and client IP for TCP | Services carry TCP only; TCP backends do not see the client address (HTTP and HTTPS listeners pass `x-forwarded-for`). |
 | Network policy | Workloads of a release on the same network can reach each other by IP; only Service names are resolved. |
@@ -42,8 +48,8 @@ What karga does not do yet, what it does with known limits, and the open questio
   names and keeps the others.
 - **Anonymous volumes** (image `VOLUME` paths no Volume covers) move to the new container on
   upgrades, but `uninstall` deletes them and `volume backup` cannot reach them; karga warns.
-- **State backup** does not include `state.key`; without it, Secrets are applied once more after a
-  restore.
+- **Backups** of the state are copies of `$KARGA_HOME` with the server stopped; copy `state.key`
+  with it, or every Secret is applied once more after a restore.
 - **Secrets** that are not marked `writeOnly` in the schema are stored as written in the state.
 - **Images** are pulled anonymously.
 - **Package format** `karga.io/v1alpha1` may still change.
@@ -61,6 +67,9 @@ What karga does not do yet, what it does with known limits, and the open questio
 
 ## Open questions
 
+- Should a failed upgrade roll back by itself (`--atomic`)? Today a recreated workload that does
+  not become ready is stopped (its logs can be read), the release is `failed`, and the operator
+  fixes it with another upgrade or `karga rollback`; `replace` avoids the outage where it applies.
 - How lifecycle tasks run: as one-off workloads, inside an existing container, or on the host.
 - Podman through its API or through Quadlet units.
 - How packages are distributed and signed.
