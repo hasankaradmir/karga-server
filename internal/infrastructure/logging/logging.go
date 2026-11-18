@@ -14,8 +14,8 @@ const redacted = "[REDACTED]"
 
 // Redactor removes registered secret values from every log record.
 // shortcut: plain substring match, so a short secret also masks unrelated text that contains it.
-// shortcut: secrets are never removed (uninstalled releases' too), and the set starts empty after a
-// restart until each release is applied again; add reference counting and a startup load if that matters.
+// karga-server registers the current revisions' Secret values when it starts.
+// shortcut: secrets are never removed (uninstalled releases' too); add reference counting if that matters.
 type Redactor struct {
 	mu      sync.RWMutex
 	secrets map[string]struct{}

@@ -1,12 +1,15 @@
 package releases
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 )
 
 // digestJSON is the keyed digest of v's JSON: values and manifests may hold secret material.
@@ -89,4 +92,29 @@ func syncDir(dir string) error {
 	}
 	defer func() { _ = d.Close() }() // read-only
 	return d.Sync()
+}
+
+// RegisterSecrets gives the log redactor the Secret values of every release's current revision,
+// as Materialize wrote them. karga-server calls it when it starts, so values are masked before
+// any release is applied again. A revision without secret files (none, or pruned) is skipped.
+func (s *Core) RegisterSecrets(ctx context.Context) {
+	rels, err := s.Store.ListReleases(ctx)
+	if err != nil {
+		s.Log.Warn("register secrets: list releases", "error", err)
+		return
+	}
+	for _, rel := range rels {
+		if rel.CurrentRevision == 0 {
+			continue
+		}
+		files, _ := filepath.Glob(filepath.Join(deployment.RevisionDir(s.Home, rel.Name, rel.CurrentRevision), "secrets", "*", "*"))
+		for _, f := range files {
+			b, err := os.ReadFile(f)
+			if err != nil {
+				s.Log.Warn("register secrets: read", "release", rel.Name, "file", f, "error", err)
+				continue
+			}
+			s.Redact(string(b))
+		}
+	}
 }

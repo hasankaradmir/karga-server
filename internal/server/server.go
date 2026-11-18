@@ -164,6 +164,8 @@ func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration)
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context { return releases.WithActor(ctx, peerUser(c)) }}
 	// Operations a stopped karga-server left running are finished before requests are served, so a
 	// command never meets one half done; clients wait for it. Then the reconciler starts.
+	// Secret values are masked in the log from the start, not only once a release is applied again.
+	s.Service.RegisterSecrets(ctx)
 	s.Service.Lifecycle.Resume(context.WithoutCancel(ctx))
 	errc := make(chan error, 1)
 	go func() { errc <- hs.Serve(l) }()

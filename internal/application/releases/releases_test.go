@@ -710,3 +710,28 @@ func changed(plan []deployment.Summary) bool {
 	}
 	return false
 }
+
+// A restarted server masks the Secret values of the releases it has before applying any of them.
+func TestRegisterSecretsAfterRestart(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if _, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "db", Package: "../../../tests/testdata/postgres",
+		Values: Values{Set: []string{"service.enabled=false", "database.password=hunter2-restart"}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	restarted := New(e.svc.Store, e.svc.Runtime, e.svc.Deploy.Host, e.svc.Home, func(v string) { got = append(got, v) }, nil)
+	restarted.RegisterSecrets(ctx)
+	if !slices.Contains(got, "hunter2-restart") {
+		t.Fatalf("registered %d values, not the password", len(got))
+	}
+	// A release whose revision directory is gone (pruned, or a copied state) is skipped.
+	if err := os.RemoveAll(filepath.Join(e.svc.Home, "releases")); err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+	restarted.RegisterSecrets(ctx)
+	if len(got) != 0 {
+		t.Fatalf("registered %v without secret files", got)
+	}
+}

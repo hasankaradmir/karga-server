@@ -16,6 +16,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- After a restart the server did not mask Secret values in its log until each release was
+  applied again; it now registers the current revisions' values when it starts.
 - The gateway cut every HTTP request after 15 seconds (Envoy's default route timeout) and refused
   WebSocket upgrades. Requests now run until done, upgrades pass through, and a stream idle for
   5 minutes is closed.
