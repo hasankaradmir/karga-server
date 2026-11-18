@@ -175,6 +175,10 @@ func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 		default:
 			hint += fmt.Sprintf("; fix the problem and run 'karga install' again, or remove the failed release with 'karga uninstall %s'", in.Name)
 		}
+		// Failed revisions count against the history too, or retrying a broken upgrade fills the disk.
+		if perr := s.prune(context.WithoutCancel(ctx), in.Name, historyMax(in.HistoryMax)); perr != nil && !errors.Is(perr, ports.ErrNotFound) {
+			s.log.Warn("prune history", "release", in.Name, "error", perr)
+		}
 		return res, fmt.Errorf("%w\n%s", err, hint)
 	}
 	res.Status = string(release.StatusDeployed)

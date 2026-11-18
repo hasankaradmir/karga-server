@@ -82,6 +82,14 @@ func Open(home string) (*Store, error) {
 	case v.Version > formatVersion:
 		return nil, fmt.Errorf("state written by a newer karga-server (format %d, this one knows %d); upgrade karga-server", v.Version, formatVersion)
 	}
+	// Under the store's mutex: no write of this process is in progress (another process may not use
+	// the home: karga-server's lock file).
+	s.mu.Lock()
+	err := removeTemporary(root)
+	s.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -218,6 +226,17 @@ func (s *Store) commit(name string, data []byte) error {
 		return err
 	}
 	return fsutil.WriteFile(p, data, 0o600)
+}
+
+// removeTemporary removes the temporary files a crash left in the state: a file is written beside
+// itself (fsutil.WriteFile) and renamed, so one whose rename did not happen is never read again.
+func removeTemporary(root string) error {
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasPrefix(d.Name(), ".") || !strings.Contains(d.Name(), ".tmp-") {
+			return err
+		}
+		return os.Remove(p)
+	})
 }
 
 // read returns the file name, as the transaction sees it.

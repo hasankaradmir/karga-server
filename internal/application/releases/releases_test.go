@@ -817,3 +817,27 @@ func TestLockWaitEndsWithTheClient(t *testing.T) {
 		t.Fatal("the command kept waiting for the lock after its client went away")
 	}
 }
+
+// Failed upgrades are pruned too: a pipeline retrying a broken image must not fill the disk.
+func TestPruneAfterFailures(t *testing.T) {
+	e := newEnv(t)
+	must[*Result](t)(e.install())
+	e.rt.Fail["StartWorkload:cache-redis"] = errors.New("boom")
+	for _, tag := range []string{"7.0", "7.1", "7.2", "7.3", "7.4.1"} {
+		if _, err := e.svc.Lifecycle.Upgrade(context.Background(), UpgradeRequest{
+			CommonOptions: CommonOptions{Timeout: time.Second, HistoryMax: new(2)}, Name: "cache", Package: redisPkg, Values: e.opts("image.tag=" + tag)}, nil); err == nil {
+			t.Fatal("the upgrade did not fail")
+		}
+	}
+	hist := must[[]release.Revision](t)(e.svc.Reads.History(context.Background(), "cache"))
+	if len(hist) > 3 { // the 2 newest, and revision 1 that is still applied
+		t.Fatalf("%d revisions kept after failures, history max 2", len(hist))
+	}
+	for _, r := range hist {
+		if r.Number > 1 && r.Number < 5 {
+			if _, err := os.Stat(deployment.RevisionDir(e.svc.c.home, "cache", r.Number)); err == nil && r.Number < 4 {
+				t.Fatalf("revision %d's files kept", r.Number)
+			}
+		}
+	}
+}

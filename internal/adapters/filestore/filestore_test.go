@@ -2,6 +2,7 @@ package filestore
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,5 +175,25 @@ func TestStoresOnOneHome(t *testing.T) {
 	s, _ := Open(home)
 	if ops, _ := s.ListOperations(ctx, "web", 0, 1000); len(ops) != 40 {
 		t.Fatalf("%d operations kept, want 40", len(ops))
+	}
+}
+
+// Temporary files a crash left are removed when the state is opened again.
+func TestOpenRemovesTemporaryFiles(t *testing.T) {
+	home := t.TempDir()
+	s, err := Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	left := filepath.Join(home, "state", "releases", ".release.yaml.tmp-123")
+	if err := os.WriteFile(left, []byte("half"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(home); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(left); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temporary file left: %v", err)
 	}
 }

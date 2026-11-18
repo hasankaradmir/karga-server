@@ -32,6 +32,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- Revisions were pruned to `--history-max` only after a deployment that succeeded: an upgrade
+  failing again and again kept every revision and its files. Failed deployments prune too. Temporary
+  files a crash left in the state are removed when karga-server starts.
 - A repair waited up to 5 minutes for a container that did not come up, holding every other
   release's repairs that long, and the reconciler's queue dropped releases beyond 256. Repairs wait
   at most a minute and are tried again with growing pauses; the queue keeps every release once
