@@ -11,6 +11,8 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/fsutil"
 )
 
 // Dir holds the gateway's configuration and admin socket.
@@ -105,11 +107,7 @@ func writeFile(path string, data []byte) error {
 	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
 		return nil
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fsutil.WriteFile(path, data, 0o600)
 }
 
 // Lock serializes gateway updates of releases deployed at once (release locks are per release).

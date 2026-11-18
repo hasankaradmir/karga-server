@@ -34,6 +34,7 @@ import (
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
+	"github.com/hasankaradmir/karga-server/internal/fsutil"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -150,6 +151,9 @@ func (s *Store) apply(o *overlay) error {
 		if err := os.RemoveAll(s.path(d)); err != nil {
 			return err
 		}
+		if err := fsutil.SyncDir(filepath.Dir(s.path(d))); err != nil {
+			return err
+		}
 	}
 	names := append([]string(nil), o.order...)
 	sort.SliceStable(names, func(i, j int) bool { return !isReleaseFile(names[i]) && isReleaseFile(names[j]) })
@@ -193,7 +197,10 @@ func (s *Store) remove(name string, dir bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if dir {
-		return os.RemoveAll(s.path(name))
+		if err := os.RemoveAll(s.path(name)); err != nil {
+			return err
+		}
+		return fsutil.SyncDir(filepath.Dir(s.path(name)))
 	}
 	return s.commit(name, nil)
 }
@@ -205,40 +212,12 @@ func (s *Store) commit(name string, data []byte) error {
 		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-		return syncDir(filepath.Dir(p))
+		return fsutil.SyncDir(filepath.Dir(p))
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(p), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }() // gone after the rename
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp.Name(), p); err != nil {
-		return err
-	}
-	return syncDir(filepath.Dir(p))
-}
-
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }() // read-only
-	return d.Sync()
+	return fsutil.WriteFile(p, data, 0o600)
 }
 
 // read returns the file name, as the transaction sees it.

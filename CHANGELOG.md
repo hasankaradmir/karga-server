@@ -32,6 +32,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- The gateway's and the proxies' files (settings, routes, certificates, Envoy's configuration) were
+  replaced without being synced, through a fixed temporary name: a power loss could leave Envoy an
+  empty file. Every file karga-server writes now goes through one helper that syncs the file and its
+  directory; the state syncs its directory after a removal too.
 - karga-server answered no request until it had resumed every operation it left running, each up to
   its timeout, and a resume that met Docker not up yet failed and left its release interrupted for
   good. It now serves at once: commands on a release being resumed wait for it, and a resume waits
