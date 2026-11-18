@@ -48,7 +48,7 @@ if [ "${KARGA_SKIP_SIGNATURE:-0}" != 1 ] && command -v cosign >/dev/null; then
     --certificate-identity-regexp "^https://github.com/$repo/.github/workflows/release.yml@refs/tags/" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com "$tmp/checksums.txt" >/dev/null 2>&1 \
     || { echo "the signature of checksums.txt does not verify" >&2; exit 1; }
-else
+elif [ "${KARGA_SKIP_SIGNATURE:-0}" != 1 ]; then
   echo "note: install cosign to also verify the release signature" >&2
 fi
 

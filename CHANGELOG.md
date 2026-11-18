@@ -6,6 +6,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- `make dist` builds the release archives and `checksums.txt` without a release; `install.sh`
+  installs them from `file://`. With `KARGA_SKIP_SIGNATURE=1` it no longer suggests cosign.
 - Workloads take variables from Secrets (`environmentFrom`): the state keeps the reference, the
   value is set when the container is created, and a new value recreates the container.
 

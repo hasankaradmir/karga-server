@@ -33,8 +33,10 @@ group runs it, its state is `/var/lib/karga`, and it listens on `/run/karga/karg
 0660, group `karga`). Then install the CLI:
 [karga](https://github.com/hasankaradmir/karga-cli#install).
 
-From source: `make build` produces `bin/karga-server`; the unit file is
-`deploy/systemd/karga-server.service`.
+From source, without a published release: `make dist` builds the release archives and
+`checksums.txt` in `dist/` and prints the line that installs them with this script
+(`KARGA_DOWNLOAD_URL=file://…`, `KARGA_SKIP_SIGNATURE=1`). `make build` alone produces
+`bin/karga-server`; the unit file is `deploy/systemd/karga-server.service`.
 
 ```console
 $ systemctl status karga-server
