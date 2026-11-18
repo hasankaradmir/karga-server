@@ -6,6 +6,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Changed
+- karga-server refuses an uninstall, a volume restore, removing a gateway listener, listening on
+  an address other than loopback, and an upgrade or rollback deleting volumes unless the client
+  says the user agreed: another client of the API cannot skip `karga`'s question.
 - API 3.0 (karga-sdk): karga CLIs of API 2 are refused with a message to upgrade them. Every
   request is checked before it reaches the service: a release name must be a DNS label that does
   not start with `karga`, for every operation (a name like `../x` could reach a path outside the
