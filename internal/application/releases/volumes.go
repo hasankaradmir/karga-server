@@ -143,7 +143,10 @@ func (s *Volumes) BackupVolume(ctx context.Context, req VolumeBackupRequest, w i
 		return err
 	}
 	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(rt.ExportPath(ctx, src.runtime, src.path, pw)) }()
+	exported := make(chan struct{})
+	go func() { defer close(exported); pw.CloseWithError(rt.ExportPath(ctx, src.runtime, src.path, pw)) }()
+	// The export ends before this returns: closing the reader makes a write it is blocked on fail.
+	defer func() { _ = pr.Close(); <-exported }()
 	if err := retar(tar.NewReader(pr), tw, path.Base(src.path), backupRoot); err != nil {
 		_ = pr.CloseWithError(err)
 		return fmt.Errorf("copy volume %s: %w", req.Volume, err)
@@ -210,7 +213,11 @@ func (s *Volumes) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r
 	}
 	target := ms[dst]
 	pr, pw := io.Pipe()
+	converted := make(chan struct{})
+	// The conversion ends before this returns, even if the import stopped reading early.
+	defer func() { _ = pr.Close(); <-converted }()
 	go func() {
+		defer close(converted)
 		tw := tar.NewWriter(pw)
 		err := retar(tr, tw, backupRoot, path.Base(target.path))
 		if err == nil {

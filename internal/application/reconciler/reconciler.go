@@ -101,7 +101,18 @@ func New(q *Queue, list Lister, repair Repairer, events EventSource, o Options) 
 // Run reconciles until ctx is done: every release at start (after a reboot, say), after events
 // of a release's containers, and every Interval.
 func (l *Loop) Run(ctx context.Context) {
-	go l.watch(ctx)
+	// Run owns what it starts: the event watch ends and the retry timers stop before it returns.
+	var wg sync.WaitGroup
+	wg.Go(func() { l.watch(ctx) })
+	defer func() {
+		l.mu.Lock()
+		for name, t := range l.retries {
+			t.Stop()
+			delete(l.retries, name)
+		}
+		l.mu.Unlock()
+		wg.Wait()
+	}()
 	var tick <-chan time.Time
 	if l.interval > 0 {
 		t := time.NewTicker(l.interval)
