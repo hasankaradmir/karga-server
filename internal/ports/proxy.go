@@ -65,6 +65,11 @@ type ProxyContainer struct {
 	Image     string
 	Command   []string
 	MountPath string
+	// Limits of the container.
+	MemoryBytes, MilliCPU, Pids int64
+	// Source names what the container is made from (image and limits): a proxy whose recorded
+	// source differs is recreated.
+	Source string
 }
 
 // ProxyControl writes a proxy's configuration into its directory and reads its state, for the

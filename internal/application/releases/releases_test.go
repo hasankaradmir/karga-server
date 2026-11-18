@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
+
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 
 	"github.com/hasankaradmir/karga-sdk/api"
 
@@ -30,7 +32,6 @@ import (
 const redisPkg = "../../../tests/testdata/redis"
 
 // Tests run without Envoy: proxy and gateway configuration is written, readiness is assumed.
-func init() { runtimeops.Proxies = fakeruntime.Proxies{} }
 
 type env struct {
 	t    *testing.T
@@ -48,7 +49,7 @@ func newEnv(t *testing.T) *env {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	rt := fakeruntime.New().WithGateway()
-	svc := New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, home, nil, nil)
+	svc := New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, home, nil, nil)
 	return &env{t: t, svc: svc, rt: rt, port: strconv.Itoa(runtimetest.FreePort(t))}
 }
 
@@ -466,14 +467,15 @@ func TestStateKeyAndKeyedDigests(t *testing.T) {
 		t.Fatalf("values digest not keyed: %q %v", rev.ValuesDigest, err)
 	}
 	// Another key gives another digest; the same key the same one.
-	a := deployment.Digest([]byte("pw"))
-	deployment.SetDigestKey([]byte("another-key-of-16b"))
-	if deployment.Digest([]byte("pw")) == a {
+	d := e.svc.Deploy
+	a := d.Digest([]byte("pw"))
+	d.DigestKey = []byte("another-key-of-16b")
+	if d.Digest([]byte("pw")) == a {
 		t.Fatal("digest does not depend on the key")
 	}
 	key, _ := os.ReadFile(keyPath)
-	deployment.SetDigestKey(key)
-	if deployment.Digest([]byte("pw")) != a {
+	d.DigestKey = key
+	if d.Digest([]byte("pw")) != a {
 		t.Fatal("same key, different digest")
 	}
 }
@@ -483,7 +485,7 @@ func TestStateKeyCreatedOnceUnderConcurrency(t *testing.T) {
 	errs := make(chan error, 8)
 	for range 8 {
 		go func() {
-			s := &Service{Home: home}
+			s := &Service{Home: home, Deploy: &deployment.Env{}}
 			errs <- s.loadKey()
 		}()
 	}

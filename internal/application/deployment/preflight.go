@@ -7,11 +7,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
-
 	"github.com/hasankaradmir/karga-sdk/resource"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -20,7 +18,7 @@ import (
 // hold). What the same release already holds is allowed (an upgrade keeps it).
 // allowedCaps are the capabilities, besides resource.DefaultCaps, the host administrator allows
 // packages to add.
-func Preflight(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, home, release string, supported []string, rs []resource.Resource, allowedCaps []string) error {
+func (e *Env) Preflight(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, home, release string, supported []string, rs []resource.Resource, allowedCaps []string) error {
 	var errs []error
 	if !slices.Contains(supported, info.Name) {
 		errs = append(errs, fmt.Errorf("package does not support runtime %q (runtime.supported: %v)", info.Name, supported))
@@ -57,8 +55,8 @@ func Preflight(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, ho
 		}
 	}
 
-	if runtimeops.Supported.Load() {
-		errs = append(errs, gateway.Check(ctx, rt, home, release, rs)...)
+	if e.Supported() {
+		errs = append(errs, gateway.Check(ctx, rt, e.Host, home, release, rs)...)
 	}
 	return errors.Join(errs...)
 }

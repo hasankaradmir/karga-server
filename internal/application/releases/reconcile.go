@@ -10,8 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
-
 	"github.com/hasankaradmir/karga-sdk/packages"
 
 	"github.com/hasankaradmir/karga-sdk/api"
@@ -20,7 +18,7 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -275,7 +273,7 @@ func (s *Service) Reconcile(ctx context.Context, name string, force bool) (*Reco
 			if err != nil || !ok || w.HealthCheck == nil || w.HealthCheck.Type == resource.HealthExec {
 				continue
 			}
-			if deployment.ProbeHealth(ctx, st, w) == ports.HealthUnhealthy {
+			if s.Deploy.ProbeHealth(ctx, st, w) == ports.HealthUnhealthy {
 				retries := w.HealthCheck.Retries
 				if retries == 0 {
 					retries = 3
@@ -331,7 +329,7 @@ func (s *Service) Reconcile(ctx context.Context, name string, force bool) (*Reco
 			}
 			step(p, err)
 		case "sync":
-			_, err := gateway.Sync(ctx, rt, runtimeops.Proxies, s.Home)
+			_, err := gateway.Sync(ctx, rt, s.Deploy.Host, s.Home)
 			step(p, err)
 		case "create":
 			steps, err := s.recreate(ctx, rt, &op, rel, present)
@@ -366,7 +364,7 @@ func (s *Service) recreate(ctx context.Context, rt ports.Runtime, op *release.Op
 	if err != nil {
 		return nil, err
 	}
-	plan, err := deployment.Diff(rel.Name, rs, present, "", anon)
+	plan, err := s.Deploy.Diff(rel.Name, rs, present, "", anon)
 	if err != nil {
 		return nil, err
 	}
@@ -379,7 +377,7 @@ func (s *Service) recreate(ctx context.Context, rt ports.Runtime, op *release.Op
 		Package: pkgOf(rev), Existing: &rel}
 	in.Timeout = api.Duration(deployment.DefaultTimeout)
 	start := len(op.Steps)
-	err = deployment.Execute(ctx, rt, deployment.ExecRequest{
+	err = s.Deploy.Execute(ctx, rt, deployment.ExecRequest{
 		Home: s.Home, Release: rel.Name, Revision: rel.CurrentRevision, Supported: rev.RuntimeSupported,
 		Resources: rs, Plan: plan, Redact: s.Redact, Timeout: time.Duration(in.Timeout), AllowedCaps: s.AllowedCaps,
 		OnStep: func(c deployment.Change, st release.Step) error { return s.record(ctx, op, in, c, st) },

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
@@ -18,7 +17,7 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -53,7 +52,7 @@ func (f *fakeProxies) Write(dir, node string, mode int, cfg ports.ProxyConfig) e
 	if err := envoy.Write(dir, node, mode, cfg); err != nil {
 		return err
 	}
-	eps, _ := runtimeops.Proxies.Endpoints(dir)
+	eps, _ := testEnv.Proxies.Endpoints(dir)
 	f.log("Write:" + f.kind(dir) + ":" + endpoints(eps))
 	return nil
 }
@@ -81,7 +80,8 @@ func newProxyRequest(t *testing.T) (*request, *fakeProxies) {
 	}
 	r.req.Resources = exposedManifest(r.port())
 	px := &fakeProxies{rt: r.rt, home: r.req.Home, notReady: map[string]bool{}}
-	r.req.Proxies, r.req.ProxyUser = px, "1000:1000"
+	r.req.ProxyUser = "1000:1000"
+	withProxies(t, px)
 	return r, px
 }
 
@@ -135,7 +135,7 @@ func TestProxyAndGatewayInstall(t *testing.T) {
 	proxy := r.rt.Workloads["cache-karga-proxy"]
 	pr := proxy.Request
 	if !slices.Equal(pr.Aliases, []string{"redis"}) || !slices.Equal(pr.Networks, []string{"cache-net"}) || pr.User != "1000:1000" ||
-		pr.Sysctls["net.ipv4.ip_unprivileged_port_start"] != "0" || pr.Mounts[0].Target != runtimeops.Proxies.Container().MountPath {
+		pr.Sysctls["net.ipv4.ip_unprivileged_port_start"] != "0" || pr.Mounts[0].Target != testEnv.Proxies.Container().MountPath {
 		t.Fatalf("proxy request: %+v", pr)
 	}
 	gp := gateway.ParseLabel(pr.Labels)
@@ -164,7 +164,7 @@ func TestProxyAndGatewayInstall(t *testing.T) {
 	before(t, c, "WaitReady:proxy:karga-redis-r1", "Write:gateway:"+upstream(t, proxy))
 	before(t, c, "Write:gateway:", "CreateWorkload:"+gateway.ContainerName)
 	before(t, c, "StartWorkload:"+gateway.ContainerName, "WaitReady:gateway:"+upstream(t, proxy))
-	cfgEps, _ := runtimeops.Proxies.Endpoints(gateway.Dir(r.req.Home))
+	cfgEps, _ := testEnv.Proxies.Endpoints(gateway.Dir(r.req.Home))
 	if cfgEps[gateway.Cluster("cache", "redis", port)] != upstream(t, proxy) {
 		t.Fatalf("gateway endpoints: %v", cfgEps)
 	}
@@ -212,7 +212,7 @@ func TestReplaceRevertsWhenProxyNotReady(t *testing.T) {
 	if slices.Contains(r.rt.Calls, "StopWorkload:cache-redis") {
 		t.Fatalf("old container stopped although the proxy never got ready: %v", r.rt.Calls)
 	}
-	if eps, _ := runtimeops.Proxies.Endpoints(ProxyDir(r.req.Home, "cache")); eps[proxyCluster("redis", r.port())] != "karga-redis-r1:"+strconv.Itoa(r.port()) {
+	if eps, _ := testEnv.Proxies.Endpoints(ProxyDir(r.req.Home, "cache")); eps[proxyCluster("redis", r.port())] != "karga-redis-r1:"+strconv.Itoa(r.port()) {
 		t.Fatalf("old backend not restored: %v", eps)
 	}
 	if n := r.rt.Workloads["cache-redis-next"]; n == nil || n.State != ports.StateExited {
@@ -236,13 +236,13 @@ func TestGatewayGoesWithTheLastRelease(t *testing.T) {
 	if err := r.run(); err != nil {
 		t.Fatal(err)
 	}
-	if err := Delete(context.Background(), r.rt, r.req.Home, "cache", false); err != nil {
+	if err := testEnv.Delete(context.Background(), r.rt, r.req.Home, "cache", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := r.rt.Workloads[gateway.ContainerName]; ok {
 		t.Fatal("gateway still exists")
 	}
-	if eps, _ := runtimeops.Proxies.Endpoints(gateway.Dir(r.req.Home)); len(eps) != 0 {
+	if eps, _ := testEnv.Proxies.Endpoints(gateway.Dir(r.req.Home)); len(eps) != 0 {
 		t.Fatalf("gateway config left: %v", eps)
 	}
 }
@@ -266,7 +266,7 @@ func TestReconcileKeepsWhatTheProxyRoutesTo(t *testing.T) {
 	if err := envoy.Write(ProxyDir(home, "web"), "web", 0o600, cfg); err != nil {
 		t.Fatal(err)
 	}
-	repaired, err := Reconcile(ctx, rt, home, "web", applied)
+	repaired, err := testEnv.Reconcile(ctx, rt, home, "web", applied)
 	if err != nil {
 		t.Fatal(err)
 	}

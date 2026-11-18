@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
@@ -65,15 +65,15 @@ func TestWaitReadyProbes(t *testing.T) {
 	ctx := context.Background()
 
 	// Failing after the start period: unhealthy once retries are used up.
-	if _, err := waitReady(ctx, rt, []readyTarget{{"w", httpSpec(hp, "")}}, 5*time.Second); err == nil || !strings.Contains(err.Error(), "is unhealthy") {
+	if _, err := testEnv.waitReady(ctx, rt, []readyTarget{{"w", httpSpec(hp, "")}}, 5*time.Second); err == nil || !strings.Contains(err.Error(), "is unhealthy") {
 		t.Fatalf("want unhealthy, got %v", err)
 	}
 	// Failures during the start period do not count; the server recovers within it.
 	time.AfterFunc(150*time.Millisecond, func() { status.Store(http.StatusOK) })
-	if notReady, err := waitReady(ctx, rt, []readyTarget{{"w", httpSpec(hp, "1s")}}, 5*time.Second); err != nil || len(notReady) != 0 {
+	if notReady, err := testEnv.waitReady(ctx, rt, []readyTarget{{"w", httpSpec(hp, "1s")}}, 5*time.Second); err != nil || len(notReady) != 0 {
 		t.Fatalf("want ready, got %v %v", notReady, err)
 	}
-	if got := ProbeHealth(ctx, mustStatus(t, rt, "w"), httpSpec(hp, "")); got != ports.HealthHealthy {
+	if got := testEnv.ProbeHealth(ctx, mustStatus(t, rt, "w"), httpSpec(hp, "")); got != ports.HealthHealthy {
 		t.Fatalf("status health: %s", got)
 	}
 
@@ -85,11 +85,11 @@ func TestWaitReadyProbes(t *testing.T) {
 	tp := probedWorkload(t, rt, "t", l.Addr().String())
 	tcp := &resource.WorkloadSpec{Ports: []resource.Port{{Name: "t", ContainerPort: tp, Protocol: "tcp"}},
 		HealthCheck: &resource.HealthCheck{Type: resource.HealthTCP, Port: tp, Interval: "10ms", Retries: 1}}
-	if _, err := waitReady(ctx, rt, []readyTarget{{"t", tcp}}, 5*time.Second); err != nil {
+	if _, err := testEnv.waitReady(ctx, rt, []readyTarget{{"t", tcp}}, 5*time.Second); err != nil {
 		t.Fatalf("tcp open: %v", err)
 	}
 	_ = l.Close()
-	if got := ProbeHealth(ctx, mustStatus(t, rt, "t"), tcp); got != ports.HealthUnhealthy {
+	if got := testEnv.ProbeHealth(ctx, mustStatus(t, rt, "t"), tcp); got != ports.HealthUnhealthy {
 		t.Fatalf("tcp closed: %s", got)
 	}
 }
@@ -107,11 +107,11 @@ func TestProbeNeedsLinux(t *testing.T) {
 	withProxySupport(t, false)
 	rs := manifest(6379)
 	rs[0].Spec.(*resource.WorkloadSpec).HealthCheck = &resource.HealthCheck{Type: resource.HealthTCP, Port: 6379}
-	if _, err := Diff("cache", rs, nil, "", nil); err == nil || !strings.Contains(err.Error(), "needs Linux with a local, rootful Docker") {
+	if _, err := testEnv.Diff("cache", rs, nil, "", nil); err == nil || !strings.Contains(err.Error(), "needs Linux with a local, rootful Docker") {
 		t.Fatalf("want unreachable error, got %v", err)
 	}
 	// Behind the proxy Envoy checks the same path.
-	if got := runtimeops.HTTPHealthPath(httpSpec(8080, ""), 8080); got != "/health" {
+	if got := proxyops.HTTPHealthPath(httpSpec(8080, ""), 8080); got != "/health" {
 		t.Fatalf("envoy health path: %q", got)
 	}
 }

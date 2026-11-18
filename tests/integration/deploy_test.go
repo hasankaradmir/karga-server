@@ -11,13 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
-
 	"github.com/hasankaradmir/karga-sdk/packages"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -47,8 +45,8 @@ func deploy(t *testing.T, rt ports.Runtime, example, release string, sets ...str
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimeops.UseProxies(info)
-	plan, err := deployment.Diff(release, rs, nil, "", nil)
+	hostEnv.UseRuntime(info)
+	plan, err := hostEnv.Diff(release, rs, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,11 +55,11 @@ func deploy(t *testing.T, rt ports.Runtime, example, release string, sets ...str
 		Supported: []string{"docker"}, Resources: rs, Plan: plan, Timeout: 3 * time.Minute,
 	}
 	t.Cleanup(func() {
-		if err := deployment.Delete(context.Background(), rt, req.Home, release, true); err != nil {
+		if err := hostEnv.Delete(context.Background(), rt, req.Home, release, true); err != nil {
 			t.Errorf("cleanup %s: %v", release, err)
 		}
 	})
-	return req, deployment.Execute(context.Background(), rt, req)
+	return req, hostEnv.Execute(context.Background(), rt, req)
 }
 
 func managed(t *testing.T, rt ports.Runtime, release string) []ports.Object {
@@ -112,7 +110,7 @@ func TestRedis(t *testing.T) {
 	}
 
 	// Delete keeps the data volume by default (retention: retain).
-	if err := deployment.Delete(ctx, rt, req.Home, release, false); err != nil {
+	if err := hostEnv.Delete(ctx, rt, req.Home, release, false); err != nil {
 		t.Fatal(err)
 	}
 	objs := managed(t, rt, release)

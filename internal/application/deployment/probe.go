@@ -6,12 +6,9 @@ import (
 	"fmt"
 	"maps"
 	"net"
-	"net/http"
 	"slices"
 	"strconv"
 	"time"
-
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
@@ -32,18 +29,18 @@ func kargaProbes(s *resource.WorkloadSpec) bool {
 }
 
 // probeReachable says why karga could not reach the health check port of s, or "".
-func probeReachable(s *resource.WorkloadSpec) string {
-	if !kargaProbes(s) || runtimeops.Supported.Load() {
+func (e *Env) probeReachable(s *resource.WorkloadSpec) string {
+	if !kargaProbes(s) || e.Supported() {
 		return ""
 	}
 	return fmt.Sprintf("healthCheck type %s needs Linux with a local, rootful Docker (karga checks the container's address); use type exec", s.HealthCheck.Type)
 }
 
 // probeAddr is where karga reaches the health check port of a running container.
-func probeAddr(st ports.WorkloadStatus, s *resource.WorkloadSpec) (string, error) {
+func (e *Env) probeAddr(st ports.WorkloadStatus, s *resource.WorkloadSpec) (string, error) {
 	port := s.HealthCheck.Port
-	if !runtimeops.Supported.Load() {
-		return "", errors.New(probeReachable(s))
+	if !e.Supported() {
+		return "", errors.New(e.probeReachable(s))
 	}
 	for _, n := range slices.Sorted(maps.Keys(st.IPs)) {
 		return net.JoinHostPort(st.IPs[n], strconv.Itoa(port)), nil
@@ -58,43 +55,21 @@ func durationOr(s string, def time.Duration) time.Duration {
 	return def
 }
 
-// probe runs one tcp or http check against addr.
-func probe(ctx context.Context, hc *resource.HealthCheck, addr string) error {
-	timeout := durationOr(hc.Timeout, 2*time.Second)
-	if hc.Type == resource.HealthTCP {
-		c, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp", addr)
-		if err != nil {
-			return err
-		}
-		return c.Close()
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+hc.Path, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
-	if err != nil {
-		return err
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-		return fmt.Errorf("GET %s: %s", hc.Path, resp.Status)
-	}
-	return nil
+// probe runs one tcp or http check against addr, from the host.
+func (e *Env) probe(ctx context.Context, hc *resource.HealthCheck, addr string) error {
+	return e.Net.Probe(ctx, ports.Probe{Type: hc.Type, Addr: addr, Path: hc.Path, Timeout: durationOr(hc.Timeout, 2*time.Second)})
 }
 
 // ProbeHealth checks a running workload once: "healthy", "unhealthy" or "unknown" (unreachable).
-func ProbeHealth(ctx context.Context, st ports.WorkloadStatus, s *resource.WorkloadSpec) string {
+func (e *Env) ProbeHealth(ctx context.Context, st ports.WorkloadStatus, s *resource.WorkloadSpec) string {
 	if !kargaProbes(s) || st.State != ports.StateRunning {
 		return st.Health
 	}
-	addr, err := probeAddr(st, s)
+	addr, err := e.probeAddr(st, s)
 	if err != nil {
 		return "unknown"
 	}
-	if probe(ctx, s.HealthCheck, addr) != nil {
+	if e.probe(ctx, s.HealthCheck, addr) != nil {
 		return ports.HealthUnhealthy
 	}
 	return ports.HealthHealthy
@@ -112,7 +87,7 @@ type probeState struct {
 // http), or running without a health check. A karga check is tried every interval once the
 // container runs; after startPeriod, retries failures in a row make it unhealthy. It returns the
 // targets that did not become ready.
-func waitReady(ctx context.Context, rt ports.Runtime, targets []readyTarget, timeout time.Duration) ([]string, error) {
+func (e *Env) waitReady(ctx context.Context, rt ports.Runtime, targets []readyTarget, timeout time.Duration) ([]string, error) {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	pending := slices.Clone(targets)
@@ -128,7 +103,7 @@ func waitReady(ctx context.Context, rt ports.Runtime, targets []readyTarget, tim
 	start, lastReport := time.Now(), time.Now()
 	for {
 		var still []readyTarget
-		report := time.Since(lastReport) >= waitEvery
+		report := time.Since(lastReport) >= e.waitEvery()
 		if report {
 			lastReport = time.Now()
 		}
@@ -143,7 +118,7 @@ func waitReady(ctx context.Context, rt ports.Runtime, targets []readyTarget, tim
 			case st.Health == ports.HealthUnhealthy:
 				return names(pending), fmt.Errorf("workload %s is unhealthy", t.name)
 			case st.State == ports.StateRunning && kargaProbes(t.spec):
-				ready, err := checkProbe(ctx, st, t.spec, probes, t.name)
+				ready, err := e.checkProbe(ctx, st, t.spec, probes, t.name)
 				if err != nil {
 					return names(pending), err
 				}
@@ -177,12 +152,12 @@ func waitReady(ctx context.Context, rt ports.Runtime, targets []readyTarget, tim
 				return names(pending), fmt.Errorf("workload %s not ready after %s: %w", last.Name, timeout, ps.lastErr)
 			}
 			return names(pending), fmt.Errorf("workload %s not ready after %s (state %q, health %q)", last.Name, timeout, last.State, last.Health)
-		case <-time.After(pollInterval):
+		case <-time.After(e.pollInterval()):
 		}
 	}
 }
 
-func checkProbe(ctx context.Context, st ports.WorkloadStatus, s *resource.WorkloadSpec, probes map[string]*probeState, name string) (bool, error) {
+func (e *Env) checkProbe(ctx context.Context, st ports.WorkloadStatus, s *resource.WorkloadSpec, probes map[string]*probeState, name string) (bool, error) {
 	hc := s.HealthCheck
 	now := time.Now()
 	ps := probes[name]
@@ -194,11 +169,11 @@ func checkProbe(ctx context.Context, st ports.WorkloadStatus, s *resource.Worklo
 		return false, nil
 	}
 	ps.next = now.Add(durationOr(hc.Interval, 2*time.Second))
-	addr, err := probeAddr(st, s)
+	addr, err := e.probeAddr(st, s)
 	if err != nil {
 		return false, err
 	}
-	if ps.lastErr = probe(ctx, hc, addr); ps.lastErr == nil {
+	if ps.lastErr = e.probe(ctx, hc, addr); ps.lastErr == nil {
 		return true, nil
 	}
 	if now.Sub(ps.runningSince) < durationOr(hc.StartPeriod, 0) {

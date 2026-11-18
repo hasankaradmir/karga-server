@@ -3,7 +3,7 @@ package releases
 import (
 	"github.com/hasankaradmir/karga-sdk/api"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )

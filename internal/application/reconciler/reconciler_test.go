@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
+
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 
 	"github.com/hasankaradmir/karga-sdk/api"
 
@@ -16,8 +18,6 @@ import (
 )
 
 func TestEventTriggersRepair(t *testing.T) {
-	Debounce = 50 * time.Millisecond
-	runtimeops.Proxies = fakeruntime.Proxies{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	home := t.TempDir()
@@ -28,12 +28,13 @@ func TestEventTriggersRepair(t *testing.T) {
 	defer func() { _ = store.Close() }()
 	rt := fakeruntime.New().WithGateway()
 	rt.EventsC = make(chan ports.RuntimeEvent)
-	svc := releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, home, nil, nil)
+	svc := releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, home, nil, nil)
 	if _, err := svc.Install(ctx, releases.InstallRequest{CommonOptions: releases.CommonOptions{Timeout: api.Duration(time.Second)},
 		Name: "cache", Package: "../../../tests/testdata/redis", Values: api.ValuesInput{Set: []string{"service.enabled=false"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	loop := New(svc, 0, nil) // events only
+	loop.Debounce = 50 * time.Millisecond
 	stopped := make(chan struct{})
 	go func() { loop.Run(ctx); close(stopped) }()
 	// The repair records its operation after the container is back: let it finish before the

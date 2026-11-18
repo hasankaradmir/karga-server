@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 
 	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
@@ -16,7 +16,7 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -160,17 +160,17 @@ func (s *Service) Status(ctx context.Context, name string) (*StatusReport, error
 				st.Actual, st.Health, st.Restarts, st.OOMKilled = ws.State, ws.Health, ws.RestartCount, ws.OOMKilled
 				if r, derr := resource.DecodeStored(a.Spec); a.Kind == resource.KindWorkload && derr == nil {
 					if w, ok := r.Spec.(*resource.WorkloadSpec); ok {
-						st.Health = deployment.ProbeHealth(ctx, ws, w) // tcp/http checks are karga's
+						st.Health = s.Deploy.ProbeHealth(ctx, ws, w) // tcp/http checks are karga's
 					}
 				}
 			}
 			if a.Kind == deployment.KindProxy {
-				st.Backend = backends(deployment.ProxyDir(s.Home, name), "")
+				st.Backend = s.backends(deployment.ProxyDir(s.Home, name), "")
 			}
 		case resource.KindService:
 			// A Service has no container: it is routed when the release proxy sends its ports somewhere.
 			st.Actual = "not routed"
-			if b := backends(deployment.ProxyDir(s.Home, name), a.Name+"-p"); b != "" {
+			if b := s.backends(deployment.ProxyDir(s.Home, name), a.Name+"-p"); b != "" {
 				st.Actual, st.Backend = "routed", b
 			}
 		case resource.KindNetwork, resource.KindVolume:
@@ -199,8 +199,8 @@ func (s *Service) Status(ctx context.Context, name string) (*StatusReport, error
 
 // backends lists the aliases a release proxy routes to, e.g. "karga-api-r2, karga-web-r3", for the
 // clusters whose name starts with prefix.
-func backends(dir, prefix string) string {
-	eps, _ := runtimeops.Proxies.Endpoints(dir)
+func (s *Service) backends(dir, prefix string) string {
+	eps, _ := s.Deploy.Proxies.Endpoints(dir)
 	var out []string
 	for cluster, ep := range eps {
 		if !strings.HasPrefix(cluster, prefix) {
@@ -242,7 +242,7 @@ func (s *Service) GatewayHealth(ctx context.Context) (gateway.State, error) {
 	if err != nil {
 		return gateway.State{}, err
 	}
-	return gateway.Health(ctx, rt, s.Home)
+	return gateway.Health(ctx, rt, s.Deploy.Host, s.Home)
 }
 
 // SetGatewayAccessLog stores the access log setting and applies it to a running gateway.
@@ -316,7 +316,7 @@ func (s *Service) updateGateway(ctx context.Context, change func(*gateway.Settin
 	if _, err := rt.GetWorkload(ctx, gateway.ContainerName); errors.Is(err, ports.ErrNotFound) {
 		return nil // applied when a release next exposes something
 	}
-	targets, err := gateway.Sync(ctx, rt, runtimeops.Proxies, s.Home)
+	targets, err := gateway.Sync(ctx, rt, s.Deploy.Host, s.Home)
 	if err != nil {
 		return err
 	}
@@ -324,7 +324,7 @@ func (s *Service) updateGateway(ctx context.Context, change func(*gateway.Settin
 	if len(want) == 0 {
 		return nil
 	}
-	return runtimeops.Proxies.WaitReady(ctx, gateway.Dir(s.Home), want, runtimeops.ProxyReadyTimeout)
+	return s.Deploy.Proxies.WaitReady(ctx, gateway.Dir(s.Home), want, proxyops.ProxyReadyTimeout)
 }
 
 // Exec runs a command in a running workload of a release and returns its exit code.

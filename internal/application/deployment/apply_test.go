@@ -10,17 +10,11 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
-
-func init() {
-	pollInterval = time.Millisecond
-	runtimeops.Proxies = fakeruntime.Proxies{}
-}
 
 func manifest(port int) []resource.Resource {
 	return []resource.Resource{
@@ -96,13 +90,13 @@ func newRequest(t *testing.T, port int) *request {
 // run plans r.req.Resources against the tracked state and executes it.
 func (r *request) run() error {
 	r.t.Helper()
-	plan, err := Diff("cache", r.req.Resources, r.tr.list(), r.strategy, nil)
+	plan, err := testEnv.Diff("cache", r.req.Resources, r.tr.list(), r.strategy, nil)
 	if err != nil {
 		return err
 	}
 	r.req.Plan = plan
 	r.req.OnStep = r.tr.onStep(r.req.Revision)
-	return Execute(context.Background(), r.rt, r.req)
+	return testEnv.Execute(context.Background(), r.rt, r.req)
 }
 
 func TestExecuteInstall(t *testing.T) {
@@ -293,7 +287,7 @@ func TestDelete(t *testing.T) {
 			t.Fatal(err)
 		}
 		rt := r.rt
-		if err := Delete(ctx, rt, r.req.Home, r.req.Release, deleteVolumes); err != nil {
+		if err := testEnv.Delete(ctx, rt, r.req.Home, r.req.Release, deleteVolumes); err != nil {
 			t.Fatal(err)
 		}
 		if len(rt.Workloads) != 0 || len(rt.Networks) != 0 {
@@ -432,7 +426,7 @@ func TestReconcile(t *testing.T) {
 	// Both present: the unfinished new container is removed.
 	create("web-app")
 	create("web-app-next")
-	repaired, err := Reconcile(ctx, rt, t.TempDir(), "web", applied)
+	repaired, err := testEnv.Reconcile(ctx, rt, t.TempDir(), "web", applied)
 	if err != nil || len(repaired) != 0 || rt.Workloads["web-app-next"] != nil || rt.Workloads["web-app"] == nil {
 		t.Fatalf("both present: %v %v %v", repaired, err, rt.Workloads)
 	}
@@ -442,7 +436,7 @@ func TestReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	create("web-app-next")
-	repaired, err = Reconcile(ctx, rt, t.TempDir(), "web", applied)
+	repaired, err = testEnv.Reconcile(ctx, rt, t.TempDir(), "web", applied)
 	if err != nil || len(repaired) != 1 || repaired[0].Digest != "" || rt.Workloads["web-app"] == nil {
 		t.Fatalf("only -next: %v %v %v", repaired, err, rt.Workloads)
 	}

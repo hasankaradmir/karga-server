@@ -23,7 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
+
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 
 	"github.com/hasankaradmir/karga-sdk/api"
@@ -31,7 +33,7 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/adapters/docker"
 	"github.com/hasankaradmir/karga-server/internal/adapters/filestore"
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 	"github.com/hasankaradmir/karga-server/internal/ports/runtimetest"
@@ -167,12 +169,12 @@ func serviceIn(t *testing.T, home, name string) (*releases.Service, ports.Runtim
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := deployment.Delete(context.Background(), rt, home, name, true); err != nil {
+		if err := hostEnv.Delete(context.Background(), rt, home, name, true); err != nil {
 			t.Errorf("cleanup %s: %v", name, err)
 		}
 		_ = store.Close()
 	})
-	return releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, home, nil, nil), rt
+	return releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, hostEnv.Host, home, nil, nil), rt
 }
 
 // listener adds a gateway listener of protocol on a free port to the shared KARGA_HOME, as the
@@ -322,5 +324,5 @@ func (p *netPinger) results() []pingResult {
 // result is the result of a pinger with one URL.
 func (p *netPinger) result() pingResult { return p.results()[0] }
 
-// The real proxies, set once: tests run in parallel.
-func init() { runtimeops.Proxies = envoy.Proxies{} }
+// hostEnv is the host every test deploys on: Envoy, the host's network.
+var hostEnv = &deployment.Env{Host: &proxyops.Host{Proxies: envoy.Proxies{}, Net: hostnet.Net{}}}

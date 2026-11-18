@@ -22,7 +22,7 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -139,7 +139,7 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 	ctx := context.Background()
 	a, b := releaseName("it-gw-a"), releaseName("it-gw-b")
 	s, rt := service(t, a)
-	t.Cleanup(func() { _ = deployment.Delete(context.Background(), rt, s.Home, b, true) })
+	t.Cleanup(func() { _ = hostEnv.Delete(context.Background(), rt, s.Home, b, true) })
 	l, port := listener(t, gateway.ProtocolHTTP)
 	install := func(rel, host, content string) error {
 		_, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: rel, Package: webPkg,

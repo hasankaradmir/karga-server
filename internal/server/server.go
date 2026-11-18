@@ -15,8 +15,9 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/logging"
 
@@ -101,7 +102,9 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 	if cfg.Redactor != nil {
 		redact = cfg.Redactor.Add
 	}
-	svc := releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, cfg.Home, redact, cfg.Log)
+	// The composition root: Envoy runs the proxies, the host's network runs probes and port tests.
+	host := &proxyops.Host{Proxies: envoy.Proxies{}, Net: hostnet.Net{}}
+	svc := releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, host, cfg.Home, redact, cfg.Log)
 	svc.AllowedCaps = cfg.AllowedCaps
 	info, err := rt.Info(ctx)
 	if err != nil {
@@ -109,10 +112,7 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 		unlock()
 		return nil, err
 	}
-	runtimeops.UseProxies(info)
-	if runtimeops.Proxies == nil {
-		runtimeops.Proxies = envoy.Proxies{}
-	}
+	host.UseRuntime(info)
 	s := &Server{cfg: cfg, Service: svc, store: store, unlock: unlock}
 	if cfg.ReconcileInterval >= 0 {
 		s.Loop = reconciler.New(svc, cfg.ReconcileInterval, cfg.Log)

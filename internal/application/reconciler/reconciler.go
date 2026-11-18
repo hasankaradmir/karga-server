@@ -13,9 +13,6 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
-// Debounce collects the events of a release before it is reconciled (a recreate fires several).
-var Debounce = 2 * time.Second
-
 // Loop reconciles releases one at a time, so it costs nothing while all is well.
 type Loop struct {
 	Svc *releases.Service
@@ -24,6 +21,8 @@ type Loop struct {
 	Log      *slog.Logger
 	// Only, if set, limits the loop to the releases it accepts (tests sharing a host).
 	Only func(release string) bool
+	// Debounce collects the events of a release before it is reconciled (a recreate fires several).
+	Debounce time.Duration
 
 	mu      sync.Mutex
 	pending map[string]*time.Timer
@@ -36,7 +35,7 @@ func New(svc *releases.Service, interval time.Duration, log *slog.Logger) *Loop 
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Loop{Svc: svc, Interval: interval, Log: log, pending: map[string]*time.Timer{}, retries: map[string]*time.Timer{}, queue: make(chan string, 256)}
+	return &Loop{Svc: svc, Interval: interval, Log: log, Debounce: 2 * time.Second, pending: map[string]*time.Timer{}, retries: map[string]*time.Timer{}, queue: make(chan string, 256)}
 }
 
 // Notify asks for a reconciliation of release name after Debounce ("" means every release).
@@ -44,10 +43,10 @@ func (l *Loop) Notify(name string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if t, ok := l.pending[name]; ok {
-		t.Reset(Debounce)
+		t.Reset(l.Debounce)
 		return
 	}
-	l.pending[name] = time.AfterFunc(Debounce, func() {
+	l.pending[name] = time.AfterFunc(l.Debounce, func() {
 		l.mu.Lock()
 		delete(l.pending, name)
 		l.mu.Unlock()

@@ -3,20 +3,43 @@ package deployment
 import (
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
+	"github.com/hasankaradmir/karga-server/internal/ports"
+
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )
 
+// testEnv is where the tests deploy: fake proxies, the host's network, a short poll interval.
+var testEnv = &Env{Host: &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, PollInterval: time.Millisecond}
+
 // withProxySupport pretends to run on Linux (or not) for the duration of a test.
 func withProxySupport(t *testing.T, on bool) {
 	t.Helper()
-	old := runtimeops.Supported.Load()
-	runtimeops.Supported.Store(on)
-	t.Cleanup(func() { runtimeops.Supported.Store(old) })
+	old := testEnv.Supported()
+	set := func(on bool) {
+		var caps []string
+		if on {
+			caps = []string{ports.CapHostGateway}
+		}
+		testEnv.UseRuntime(ports.RuntimeInfo{Capabilities: caps})
+	}
+	set(on)
+	t.Cleanup(func() { set(old) })
+}
+
+// withProxies controls the proxies with px for the duration of a test.
+func withProxies(t *testing.T, px proxyops.ProxyControl) {
+	t.Helper()
+	old := testEnv.Proxies
+	testEnv.Proxies = px
+	t.Cleanup(func() { testEnv.Proxies = old })
 }
 
 // replaceManifest is manifest() with a replaceable workload and Service redis on port.
@@ -58,7 +81,7 @@ func changeOf(t *testing.T, p Plan, kind, name string) Change {
 // appliedWithProxy is the applied state after installing rs, proxy rows included.
 func appliedWithProxy(t *testing.T, rs []resource.Resource) []release.AppliedResource {
 	t.Helper()
-	p, err := Diff("cache", rs, nil, "", nil)
+	p, err := testEnv.Diff("cache", rs, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +96,7 @@ func TestProxyPlan(t *testing.T) {
 	withProxySupport(t, true)
 
 	// Fresh install: one release proxy answering for the service.
-	p, err := Diff("cache", replaceManifest(6379), nil, "", nil)
+	p, err := testEnv.Diff("cache", replaceManifest(6379), nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +108,7 @@ func TestProxyPlan(t *testing.T) {
 
 	// A workload no service targeted gets its backend alias with a recreate.
 	plain := appliedFrom(t, replaceManifest(6379)[:5])
-	p, err = Diff("cache", replaceManifest(6379), plain, "", nil)
+	p, err = testEnv.Diff("cache", replaceManifest(6379), plain, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +121,7 @@ func TestProxyPlan(t *testing.T) {
 	v2 := replaceManifest(6379)
 	v2[0].Spec.(*resource.WorkloadSpec).Image = "redis:7.2"
 	for override, want := range map[string]string{"": "replace", "recreate": "recreate"} {
-		p, err = Diff("cache", v2, applied, override, nil)
+		p, err = testEnv.Diff("cache", v2, applied, override, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +134,7 @@ func TestProxyPlan(t *testing.T) {
 	}
 
 	// A second service on the network reconnects the proxy with its alias.
-	p, err = Diff("cache", withWorkload(replaceManifest(6379), "web", 8080), applied, "", nil)
+	p, err = testEnv.Diff("cache", withWorkload(replaceManifest(6379), "web", 8080), applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +145,7 @@ func TestProxyPlan(t *testing.T) {
 	// Exposing a port publishes it on the proxy container: a recreate.
 	exposed := replaceManifest(6379)
 	exposed[len(exposed)-1].Spec.(*resource.ServiceSpec).Expose = []resource.Exposure{{Port: "p", Listener: "pg"}}
-	p, err = Diff("cache", exposed, applied, "", nil)
+	p, err = testEnv.Diff("cache", exposed, applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +154,7 @@ func TestProxyPlan(t *testing.T) {
 	}
 
 	// Without services the proxy goes and the workload loses its alias.
-	p, err = Diff("cache", replaceManifest(6379)[:5], applied, "", nil)
+	p, err = testEnv.Diff("cache", replaceManifest(6379)[:5], applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

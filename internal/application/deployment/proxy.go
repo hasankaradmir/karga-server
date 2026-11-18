@@ -12,8 +12,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
-
 	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
@@ -126,8 +124,8 @@ func (s services) published() map[string][]int {
 	return out
 }
 
-func proxySpecFor(s services) ProxySpec {
-	spec := ProxySpec{Image: runtimeops.Proxies.Container().Image, Limits: runtimeops.EnvoyLimits, Networks: map[string][]string{}, Published: s.published()}
+func (e *Env) proxySpecFor(s services) ProxySpec {
+	spec := ProxySpec{Image: e.Proxies.Container().Image, Limits: e.Proxies.Container().Source, Networks: map[string][]string{}, Published: s.published()}
 	for _, n := range s.names() {
 		if w := s.wl[s.svc[n].Workload]; w != nil {
 			for _, net := range w.Networks {
@@ -172,8 +170,8 @@ const (
 // proxyChange plans the release proxy. Docker cannot change a running container's image or
 // aliases: an image change recreates it, an alias change reconnects it to the affected networks.
 // Both briefly interrupt the proxied connections of what they touch.
-func proxyChange(releaseName string, svcs services, current map[Key]release.AppliedResource) (Change, error) {
-	spec := proxySpecFor(svcs)
+func (e *Env) proxyChange(releaseName string, svcs services, current map[Key]release.AppliedResource) (Change, error) {
+	spec := e.proxySpecFor(svcs)
 	want, err := proxyApplied(releaseName, spec)
 	if err != nil {
 		return Change{}, err

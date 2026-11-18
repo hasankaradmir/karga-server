@@ -8,9 +8,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync/atomic"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 
 	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
@@ -66,17 +65,11 @@ const (
 	ActionUnchanged = api.ActionUnchanged
 )
 
-// digestKey keys the digests of secret material (R7): without it a weak secret could be guessed
-// offline from the state database. The release service sets it from $KARGA_HOME/state.key.
-var digestKey atomic.Pointer[[]byte]
-
-// SetDigestKey sets the key for Digest.
-func SetDigestKey(key []byte) { digestKey.Store(&key) }
-
-// Digest is "hmac-sha256:<hex>" of data under the digest key, or "sha256:<hex>" without one (tests).
-func Digest(data []byte) string {
-	if k := digestKey.Load(); k != nil && len(*k) > 0 {
-		m := hmac.New(sha256.New, *k)
+// Digest is "hmac-sha256:<hex>" of data under the digest key, or "sha256:<hex>" without one (tests;
+// karga-server always sets the key from $KARGA_HOME/state.key before it plans).
+func (e *Env) Digest(data []byte) string {
+	if len(e.DigestKey) > 0 {
+		m := hmac.New(sha256.New, e.DigestKey)
 		m.Write(data)
 		return "hmac-sha256:" + hex.EncodeToString(m.Sum(nil))
 	}
@@ -85,17 +78,17 @@ func Digest(data []byte) string {
 }
 
 // redactedSecret marks secret values in stored specs; only a keyed digest of the value is kept.
-func redactedSecret(v string) string { return Digest([]byte(v)) }
+func (e *Env) redactedSecret(v string) string { return e.Digest([]byte(v)) }
 
 // Redacted returns r with secret values replaced by digests, for storage and display.
-func Redacted(r resource.Resource) resource.Resource {
+func (e *Env) Redacted(r resource.Resource) resource.Resource {
 	s, ok := r.Spec.(*resource.SecretSpec)
 	if !ok {
 		return r
 	}
 	masked := &resource.SecretSpec{Values: map[string]string{}}
 	for k, v := range s.Values {
-		masked.Values[k] = redactedSecret(v)
+		masked.Values[k] = e.redactedSecret(v)
 	}
 	r.Spec = masked
 	return r
@@ -115,7 +108,7 @@ func withoutStrategy(r resource.Resource) resource.Resource {
 // Specs returns the canonical redacted JSON and digest of every resource. A workload's digest also
 // covers the Config and Secret resources it mounts, and a Service's the Secrets it serves TLS with,
 // so changing their content applies them again.
-func Specs(rs []resource.Resource) (map[Key]release.AppliedResource, error) {
+func (e *Env) Specs(rs []resource.Resource) (map[Key]release.AppliedResource, error) {
 	out := map[Key]release.AppliedResource{}
 	behind := servicesOf(rs).wl
 	pass := func(r resource.Resource) int {
@@ -133,7 +126,7 @@ func Specs(rs []resource.Resource) (map[Key]release.AppliedResource, error) {
 				continue
 			}
 			w, isWorkload := r.Spec.(*resource.WorkloadSpec)
-			js, err := json.Marshal(withoutStrategy(Redacted(r)))
+			js, err := json.Marshal(withoutStrategy(e.Redacted(r)))
 			if err != nil {
 				return nil, err
 			}
@@ -170,11 +163,11 @@ type Anonymous map[string][]string
 // Diff compares the desired manifest with what is applied. Changing a Network or Volume is refused:
 // it would mean recreating it, which breaks attached workloads or destroys data. strategy overrides
 // the workloads' updateStrategy when not empty.
-func Diff(releaseName string, desired []resource.Resource, applied []release.AppliedResource, strategy string, anon Anonymous) (Plan, error) {
+func (e *Env) Diff(releaseName string, desired []resource.Resource, applied []release.AppliedResource, strategy string, anon Anonymous) (Plan, error) {
 	if strategy != "" && strategy != resource.StrategyRecreate && strategy != resource.StrategyReplace {
 		return Plan{}, fmt.Errorf("unknown strategy %q (want recreate or replace)", strategy)
 	}
-	specs, err := Specs(desired)
+	specs, err := e.Specs(desired)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -192,7 +185,7 @@ func Diff(releaseName string, desired []resource.Resource, applied []release.App
 
 	var plan Plan
 	var errs []string
-	if !runtimeops.Supported.Load() && len(svcs.svc) > 0 {
+	if !e.Supported() && len(svcs.svc) > 0 {
 		errs = append(errs, fmt.Sprintf("services %s need karga's gateway and release proxy (Linux with a local, rootful Docker)", strings.Join(svcs.names(), ", ")))
 	}
 	for _, r := range ordered {
@@ -200,7 +193,7 @@ func Diff(releaseName string, desired []resource.Resource, applied []release.App
 		if !ok {
 			continue
 		}
-		if why := probeReachable(w); why != "" {
+		if why := e.probeReachable(w); why != "" {
 			errs = append(errs, fmt.Sprintf("workload %q: %s", r.Metadata.Name, why))
 		}
 	}
@@ -208,7 +201,7 @@ func Diff(releaseName string, desired []resource.Resource, applied []release.App
 		r := r
 		k := keyOf(r)
 		want := specs[k]
-		c := Change{Change: api.Change{Kind: k.Kind, Name: k.Name}, Resource: &r, Spec: want.Spec, Digest: want.Digest, RuntimeName: runtimeops.RuntimeName(releaseName, k.Name)}
+		c := Change{Change: api.Change{Kind: k.Kind, Name: k.Name}, Resource: &r, Spec: want.Spec, Digest: want.Digest, RuntimeName: proxyops.RuntimeName(releaseName, k.Name)}
 		if k.Kind == resource.KindService {
 			c.RuntimeName = ProxyName(releaseName) // a Service has no container; the release proxy serves it
 		}
@@ -240,7 +233,7 @@ func Diff(releaseName string, desired []resource.Resource, applied []release.App
 		delete(current, k)
 	}
 	if len(svcs.svc) > 0 {
-		c, err := proxyChange(releaseName, svcs, current)
+		c, err := e.proxyChange(releaseName, svcs, current)
 		if err != nil {
 			return Plan{}, err
 		}

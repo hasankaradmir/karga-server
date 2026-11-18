@@ -3,7 +3,6 @@ package deployment
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/hasankaradmir/karga-sdk/api"
 )
@@ -40,6 +39,3 @@ func progress(ctx context.Context, kind, name, phase, format string, args ...any
 		fn(Event{Kind: kind, Name: name, Phase: phase, Detail: fmt.Sprintf(format, args...)})
 	}
 }
-
-// waitEvery is how often a long wait reports that it is still waiting.
-var waitEvery = 2 * time.Second

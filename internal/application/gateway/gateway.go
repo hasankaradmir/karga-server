@@ -25,7 +25,7 @@ import (
 	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -180,7 +180,7 @@ type use struct {
 // address. A listener nobody uses is not opened. Conflicts are refused by Check; if one slips
 // through anyway (two releases applied at once) the first release in name order wins. A host
 // served on an https listener also gets a redirect on the http listeners of port 80.
-func buildConfig(settings Settings, targets []Target) ports.ProxyConfig {
+func buildConfig(settings Settings, targets []Target, mountPath string) ports.ProxyConfig {
 	var cfg ports.ProxyConfig
 	uses := map[string]*use{}
 	for _, t := range targets {
@@ -208,7 +208,7 @@ func buildConfig(settings Settings, targets []Target) ports.ProxyConfig {
 				u.seen[r.Host+r.Path] = true
 				u.routes = append(u.routes, ports.ProxyRoute{Host: r.Host, Path: r.Path, Cluster: cluster})
 				if _, ok := u.certs[r.Host]; l.Protocol == ProtocolHTTPS && !ok {
-					n := runtimeops.Proxies.Container().MountPath + "/certs/" + certName(t.Release, l.Name, r.Host, r.CertDir)
+					n := mountPath + "/certs/" + certName(t.Release, l.Name, r.Host, r.CertDir)
 					u.certs[r.Host] = ports.ProxyCert{Chain: n + ".crt", Key: n + ".key"}
 				}
 			}
@@ -366,18 +366,18 @@ func Lock(home string) (func(), error) {
 // means it must be recreated.
 const labelSource = "io.karga.gateway-source"
 
-func source(dir string) string {
-	return dir + " " + runtimeops.EnvoyLimits + " " + runtimeops.Proxies.Container().Image
+func source(c ports.ProxyContainer, dir string) string {
+	return dir + " " + c.Source
 }
 
-func request(dir string) ports.WorkloadRequest {
+func request(c ports.ProxyContainer, dir string) ports.WorkloadRequest {
 	return ports.WorkloadRequest{
 		Name:   ContainerName,
-		Labels: map[string]string{ports.LabelManaged: "true", LabelComponent: "gateway", labelSource: source(dir)},
-		Image:  runtimeops.Proxies.Container().Image,
+		Labels: map[string]string{ports.LabelManaged: "true", LabelComponent: "gateway", labelSource: source(c, dir)},
+		Image:  c.Image,
 		// Root only to bind low ports in the host namespace (Docker grants no ambient capabilities
 		// to other users); every capability but those two is dropped.
-		Command:         runtimeops.Proxies.Container().Command,
+		Command:         c.Command,
 		User:            "0:0",
 		Env:             map[string]string{"ENVOY_UID": "0"},
 		HostNetwork:     true,
@@ -385,10 +385,10 @@ func request(dir string) ports.WorkloadRequest {
 		CapAdd:          []string{"NET_BIND_SERVICE", "DAC_OVERRIDE"},
 		NoNewPrivileges: true,
 		RestartPolicy:   "always",
-		Mounts:          []ports.Mount{{Type: ports.MountBind, Source: dir, Target: runtimeops.Proxies.Container().MountPath}},
-		MemoryBytes:     runtimeops.EnvoyMemory,
-		MilliCPU:        runtimeops.EnvoyMilliCPU,
-		PidsLimit:       runtimeops.EnvoyPids,
+		Mounts:          []ports.Mount{{Type: ports.MountBind, Source: dir, Target: c.MountPath}},
+		MemoryBytes:     c.MemoryBytes,
+		MilliCPU:        c.MilliCPU,
+		PidsLimit:       c.Pids,
 		LogMaxSize:      resource.DefaultLogMaxSize,
 		LogMaxFiles:     resource.DefaultLogMaxFiles,
 	}
@@ -396,25 +396,25 @@ func request(dir string) ports.WorkloadRequest {
 
 // Sync rewrites the gateway from the settings and every release's proxy, and creates or removes
 // the gateway container as needed. It returns the targets it routes to.
-func Sync(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyControl, home string) ([]Target, error) {
+func Sync(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home string) ([]Target, error) {
 	unlock, err := Lock(home)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	return syncLocked(ctx, rt, px, home)
+	return syncLocked(ctx, rt, h, home)
 }
 
 // Expose records what release rel exposes and syncs the gateway, checking again under the gateway
 // lock that no other release took the same listeners, hosts or paths since the pre-flight.
-func Expose(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyControl, home, rel string, rs []resource.Resource, routes []Route) ([]Target, error) {
+func Expose(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home, rel string, rs []resource.Resource, routes []Route) ([]Target, error) {
 	unlock, err := Lock(home)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
 	var errs []error
-	for _, err := range Check(ctx, rt, home, rel, rs) {
+	for _, err := range Check(ctx, rt, h, home, rel, rs) {
 		if !IsWarning(err) {
 			errs = append(errs, err)
 		}
@@ -425,7 +425,7 @@ func Expose(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyControl, h
 	if err := WriteExpose(home, rel, routes); err != nil {
 		return nil, err
 	}
-	return syncLocked(ctx, rt, px, home)
+	return syncLocked(ctx, rt, h, home)
 }
 
 // Warning is a problem Check found that does not stop a deployment.
@@ -439,7 +439,8 @@ func IsWarning(err error) bool {
 	return errors.As(err, &w)
 }
 
-func syncLocked(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyControl, home string) ([]Target, error) {
+func syncLocked(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home string) ([]Target, error) {
+	c := h.Proxies.Container()
 	targets, err := findTargets(ctx, rt, home)
 	if err != nil {
 		return nil, err
@@ -447,7 +448,7 @@ func syncLocked(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyContro
 	dir := Dir(home)
 	exposed := slices.ContainsFunc(targets, func(t Target) bool { return len(t.Routes) > 0 })
 	if !exposed {
-		if err := runtimeops.RemoveWorkload(ctx, rt, ContainerName); err != nil && !errors.Is(err, ports.ErrNotFound) {
+		if err := proxyops.RemoveWorkload(ctx, rt, ContainerName); err != nil && !errors.Is(err, ports.ErrNotFound) {
 			return nil, err
 		}
 		return nil, os.RemoveAll(dir)
@@ -463,28 +464,28 @@ func syncLocked(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyContro
 	if err := syncCerts(dir, targets, false); err != nil {
 		return nil, err
 	}
-	cfg := buildConfig(settings, targets)
+	cfg := buildConfig(settings, targets, c.MountPath)
 	cfg.AccessLog = settings.AccessLog
 	// The socket is created by root in the 0700 directory, which keeps other users out.
-	if err := px.Write(dir, "gateway", 0o666, cfg); err != nil {
+	if err := h.Proxies.Write(dir, "gateway", 0o666, cfg); err != nil {
 		return nil, err
 	}
 	if err := syncCerts(dir, targets, true); err != nil {
 		return nil, err
 	}
 	st, err := rt.GetWorkload(ctx, ContainerName)
-	if err == nil && st.Labels[labelSource] != source(dir) {
-		if err := runtimeops.RemoveWorkload(ctx, rt, ContainerName); err != nil {
+	if err == nil && st.Labels[labelSource] != source(c, dir) {
+		if err := proxyops.RemoveWorkload(ctx, rt, ContainerName); err != nil {
 			return nil, err
 		}
 		err = fmt.Errorf("gateway %w", ports.ErrNotFound)
 	}
 	switch {
 	case errors.Is(err, ports.ErrNotFound):
-		if err := rt.EnsureImage(ctx, runtimeops.Proxies.Container().Image, "if-not-present"); err != nil {
+		if err := rt.EnsureImage(ctx, c.Image, "if-not-present"); err != nil {
 			return nil, err
 		}
-		if err := rt.CreateWorkload(ctx, request(dir)); err != nil {
+		if err := rt.CreateWorkload(ctx, request(c, dir)); err != nil {
 			return nil, err
 		}
 		err = rt.StartWorkload(ctx, ContainerName)
@@ -495,12 +496,12 @@ func syncLocked(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyContro
 }
 
 // Wait waits until the gateway routes to every exposed port of release rel.
-func Wait(ctx context.Context, px runtimeops.ProxyControl, home, rel string, targets []Target) error {
+func Wait(ctx context.Context, h *proxyops.Host, home, rel string, targets []Target) error {
 	want := Want(targets, func(t Target) bool { return t.Release == rel && len(t.Routes) > 0 })
 	if len(want) == 0 {
 		return nil
 	}
-	return px.WaitReady(ctx, Dir(home), want, runtimeops.ProxyReadyTimeout)
+	return h.Proxies.WaitReady(ctx, Dir(home), want, proxyops.ProxyReadyTimeout)
 }
 
 // Listener protocols.
@@ -577,7 +578,7 @@ func WriteSettings(home string, s Settings) error {
 type State = api.State
 
 // Health reads the gateway container and Envoy's admin API.
-func Health(ctx context.Context, rt ports.Runtime, home string) (State, error) {
+func Health(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home string) (State, error) {
 	settings, err := ReadSettings(home)
 	if err != nil {
 		return State{}, err
@@ -595,11 +596,11 @@ func Health(ctx context.Context, rt ports.Runtime, home string) (State, error) {
 	if src := ws.Labels[labelSource]; strings.Contains(src, " ") {
 		st.Image = src[strings.LastIndex(src, " ")+1:]
 	}
-	if st.Ready, err = runtimeops.Proxies.Live(ctx, Dir(home)); err != nil {
+	if st.Ready, err = h.Proxies.Live(ctx, Dir(home)); err != nil {
 		st.Error = err.Error()
 		return st, nil
 	}
-	st.Version, _ = runtimeops.Proxies.Version(ctx, Dir(home))
+	st.Version, _ = h.Proxies.Version(ctx, Dir(home))
 	return st, nil
 }
 
@@ -661,7 +662,7 @@ func Users(ctx context.Context, rt ports.Runtime, home string) (map[string][]str
 // Check refuses exposures of release rel that the gateway cannot serve: an unknown listener, a
 // listener of another protocol, or a tcp listener, host and path or certificate another release
 // already holds. It binds a listener nobody uses yet once, to see that no other process holds it.
-func Check(ctx context.Context, rt ports.Runtime, home, rel string, rs []resource.Resource) []error {
+func Check(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home, rel string, rs []resource.Resource) []error {
 	settings, err := ReadSettings(home)
 	if err != nil {
 		return []error{err}
@@ -732,7 +733,7 @@ func Check(ctx context.Context, rt ports.Runtime, home, rel string, rs []resourc
 			if !inUse[l.Name] && !tested[l.Name] {
 				tested[l.Name] = true
 				for _, ip := range settings.Listen {
-					switch taken, err := runtimeops.PortTaken("tcp", ip, l.Port); {
+					switch taken, err := h.Net.PortTaken("tcp", ip, l.Port); {
 					case taken:
 						errs = append(errs, fmt.Errorf("%s: %s:%d is taken by another process on this host: %w", where, ip, l.Port, ports.ErrPortInUse))
 					case err != nil:

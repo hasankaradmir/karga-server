@@ -1,15 +1,12 @@
-// Package runtimeops holds what the deployment executor, the release proxy and the host gateway
+// Package proxyops holds what the deployment executor, the release proxy and the host gateway
 // share: runtime object names and removal, host port checks, and control of karga's Envoys.
-package runtimeops
+package proxyops
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
-	"strconv"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
@@ -61,45 +58,24 @@ func IPOverlap(a, b string) bool {
 	return unspecified(a) || unspecified(b)
 }
 
-// PortTaken test-binds a host port: taken when another process holds it. err says the port could
-// not be tested: karga-server runs without privileges, and binding a port below 1024 needs them
-// (Docker binds the gateway's ports as root).
-func PortTaken(protocol, ip string, port int) (taken bool, err error) {
-	addr := net.JoinHostPort(ip, strconv.Itoa(port))
-	if protocol == "udp" {
-		var c net.PacketConn
-		if c, err = net.ListenPacket("udp", addr); err == nil {
-			_ = c.Close()
-		}
-	} else {
-		var l net.Listener
-		if l, err = net.Listen("tcp", addr); err == nil {
-			_ = l.Close()
-		}
-	}
-	switch {
-	case errors.Is(err, syscall.EADDRINUSE):
-		return true, nil
-	case errors.Is(err, syscall.EACCES):
-		return false, err
-	}
-	return false, nil
-}
-
-// Supported is set by UseProxies: karga's proxies rely on bind-mounted unix sockets, inotify
-// and (the gateway) the host network namespace, so only a local Docker daemon on Linux has them.
-var Supported atomic.Bool
-
-// UseProxies turns the gateway and release proxies on when the runtime supports them. The
-// release service calls it once it knows the runtime, before planning.
-func UseProxies(info ports.RuntimeInfo) { Supported.Store(info.Has(ports.CapHostGateway)) }
-
 // ProxyControl writes karga's proxies' configuration and reads their state.
 type ProxyControl = ports.ProxyControl
 
-// Proxies controls the release proxies and the gateway: Envoy, set by karga-server at start; tests
-// substitute a fake. A request may name another (deployment.ExecRequest.Proxies).
-var Proxies ProxyControl
+// Host is what karga's proxies and probes need from the host: the proxies' control, the host's
+// network, and whether the runtime can run the proxies. karga-server makes one and passes it down.
+type Host struct {
+	Proxies ProxyControl
+	Net     ports.HostNet
+	// supported says whether the runtime can run karga's proxies: they rely on bind-mounted unix
+	// sockets, inotify and (the gateway) the host network namespace (a local, rootful Docker on Linux).
+	supported atomic.Bool
+}
+
+// UseRuntime records whether the runtime described by info can run karga's proxies.
+func (h *Host) UseRuntime(info ports.RuntimeInfo) { h.supported.Store(info.Has(ports.CapHostGateway)) }
+
+// Supported reports whether the runtime can run karga's proxies.
+func (h *Host) Supported() bool { return h.supported.Load() }
 
 // ProxyReadyTimeout bounds how long a proxy may take to route to a new backend.
 const ProxyReadyTimeout = 30 * time.Second
@@ -111,14 +87,3 @@ func HTTPHealthPath(w *resource.WorkloadSpec, port int) string {
 	}
 	return ""
 }
-
-// Limits of karga's Envoys: one worker uses about 15MB; the rest is headroom for connections.
-const (
-	EnvoyMemory   = 128 << 20
-	EnvoyMilliCPU = 500
-	EnvoyPids     = 256
-)
-
-// EnvoyLimits names the limits in what decides whether an Envoy container must be recreated.
-var EnvoyLimits = fmt.Sprintf("mem=%d,cpu=%dm,pids=%d,log=%sx%d", EnvoyMemory, EnvoyMilliCPU, EnvoyPids,
-	resource.DefaultLogMaxSize, resource.DefaultLogMaxFiles)

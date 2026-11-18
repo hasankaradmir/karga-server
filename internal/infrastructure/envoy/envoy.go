@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hasankaradmir/karga-sdk/resource"
+
 	"go.yaml.in/yaml/v3"
 
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -80,8 +82,17 @@ var _ ports.ProxyControl = Proxies{}
 
 // Container implements ports.ProxyControl.
 func (Proxies) Container() ports.ProxyContainer {
-	return ports.ProxyContainer{Image: Image(), Command: Command(), MountPath: MountPath}
+	return ports.ProxyContainer{Image: Image(), Command: Command(), MountPath: MountPath,
+		MemoryBytes: Memory, MilliCPU: MilliCPU, Pids: Pids,
+		Source: fmt.Sprintf("mem=%d,cpu=%dm,pids=%d,log=%sx%d %s", Memory, MilliCPU, Pids, resource.DefaultLogMaxSize, resource.DefaultLogMaxFiles, Image())}
 }
+
+// Limits of karga's Envoys: one worker uses about 15MB; the rest is headroom for connections.
+const (
+	Memory   = 128 << 20
+	MilliCPU = 500
+	Pids     = 256
+)
 
 // Write implements ports.ProxyControl.
 func (Proxies) Write(dir, node string, socketMode int, cfg Config) error {

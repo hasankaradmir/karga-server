@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 
 	"github.com/hasankaradmir/karga-sdk/packages"
 
@@ -61,8 +61,10 @@ type Service struct {
 	// lets packages add (karga-server --allow-capabilities).
 	AllowedCaps []string
 	Store       ports.StateStore
-	Runtime     func(context.Context) (ports.Runtime, error)
-	Home        string
+	// Deploy plans and applies deployments on this host.
+	Deploy  *deployment.Env
+	Runtime func(context.Context) (ports.Runtime, error)
+	Home    string
 	// Redact registers secret values with the log redactor.
 	Redact   func(string)
 	Log      *slog.Logger
@@ -105,15 +107,15 @@ func (s *Service) lock(ctx context.Context, rel string, try bool) (func(), error
 }
 
 // New returns a Service with process defaults filled in.
-func New(store ports.StateStore, rt func(context.Context) (ports.Runtime, error), home string, redact func(string), log *slog.Logger) *Service {
-	host, _ := os.Hostname()
+func New(store ports.StateStore, rt func(context.Context) (ports.Runtime, error), host *proxyops.Host, home string, redact func(string), log *slog.Logger) *Service {
+	hostname, _ := os.Hostname()
 	if redact == nil {
 		redact = func(string) {}
 	}
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{Store: store, Runtime: rt, Home: home, Redact: redact, Log: log, Now: time.Now, PID: os.Getpid(), Hostname: host}
+	return &Service{Store: store, Deploy: &deployment.Env{Host: host}, Runtime: rt, Home: home, Redact: redact, Log: log, Now: time.Now, PID: os.Getpid(), Hostname: hostname}
 }
 
 // CommonOptions is shared with the CLI (karga-sdk/api).
@@ -195,12 +197,12 @@ func (s *Service) finish(ctx context.Context, op release.Operation, err error) {
 }
 
 // digestJSON is the keyed digest of v's JSON: values and manifests may hold secret material.
-func digestJSON(v any) (string, []byte, error) {
+func (s *Service) digestJSON(v any) (string, []byte, error) {
 	js, err := json.Marshal(v)
 	if err != nil {
 		return "", nil, err
 	}
-	return deployment.Digest(js), js, nil
+	return s.Deploy.Digest(js), js, nil
 }
 
 // keyFile holds the key of the state database's digests of secret material (R7).
@@ -231,9 +233,7 @@ func (s *Service) loadKey() error {
 		}
 		s.key = key
 	}
-	// shortcut: the digest key is process-wide; services of different homes in one process must
-	// not plan concurrently (karga-server runs one). Pass the key down if that changes.
-	deployment.SetDigestKey(s.key)
+	s.Deploy.DigestKey = s.key
 	return nil
 }
 
@@ -279,12 +279,12 @@ func syncDir(dir string) error {
 }
 
 // encodeManifest stores resources as a JSON array with secret values replaced by digests.
-func encodeManifest(rs []resource.Resource) (json.RawMessage, string, error) {
+func (s *Service) encodeManifest(rs []resource.Resource) (json.RawMessage, string, error) {
 	redacted := make([]resource.Resource, len(rs))
 	for i, r := range rs {
-		redacted[i] = deployment.Redacted(r)
+		redacted[i] = s.Deploy.Redacted(r)
 	}
-	d, js, err := digestJSON(redacted)
+	d, js, err := s.digestJSON(redacted)
 	return js, d, err
 }
 
@@ -379,7 +379,7 @@ func (s *Service) runtime(ctx context.Context) (ports.Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	runtimeops.UseProxies(info)
+	s.Deploy.UseRuntime(info)
 	return rt, nil
 }
 
@@ -406,7 +406,7 @@ func (s *Service) deploy(ctx context.Context, in deployInput) (*Result, error) {
 			return nil, err
 		}
 	}
-	plan, err := deployment.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
+	plan, err := s.Deploy.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
 	if err != nil {
 		return nil, err
 	}
@@ -498,7 +498,7 @@ func anonymousVolumes(ctx context.Context, rt ports.Runtime, name string, rs []r
 		if r.Kind != resource.KindWorkload {
 			continue
 		}
-		st, err := rt.GetWorkload(ctx, runtimeops.RuntimeName(name, r.Metadata.Name))
+		st, err := rt.GetWorkload(ctx, proxyops.RuntimeName(name, r.Metadata.Name))
 		if errors.Is(err, ports.ErrNotFound) {
 			continue
 		}
@@ -552,7 +552,7 @@ func existing(ctx context.Context, rt ports.Runtime, name string, applied []rele
 }
 
 func (s *Service) reconcile(ctx context.Context, rt ports.Runtime, in deployInput, applied []release.AppliedResource, plan deployment.Plan) (deployment.Plan, error) {
-	repaired, err := deployment.Reconcile(ctx, rt, s.Home, in.Name, applied)
+	repaired, err := s.Deploy.Reconcile(ctx, rt, s.Home, in.Name, applied)
 	if err != nil || len(repaired) == 0 {
 		return plan, err
 	}
@@ -572,7 +572,7 @@ func (s *Service) reconcile(ctx context.Context, rt ports.Runtime, in deployInpu
 	if err != nil {
 		return plan, err
 	}
-	return deployment.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
+	return s.Deploy.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
 }
 
 func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operation, in deployInput, plan deployment.Plan) error {
@@ -595,11 +595,11 @@ func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operati
 	}
 	previous := rel.Status
 	rel.Status, rel.UpdatedAt = target, now
-	manifest, manifestDigest, err := encodeManifest(in.Resources)
+	manifest, manifestDigest, err := s.encodeManifest(in.Resources)
 	if err != nil {
 		return err
 	}
-	valuesDigest, _, err := digestJSON(in.Values)
+	valuesDigest, _, err := s.digestJSON(in.Values)
 	if err != nil {
 		return err
 	}
@@ -623,7 +623,7 @@ func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operati
 		return err
 	}
 
-	execErr := deployment.Execute(ctx, rt, deployment.ExecRequest{
+	execErr := s.Deploy.Execute(ctx, rt, deployment.ExecRequest{
 		Home: s.Home, Release: in.Name, Revision: in.Revision, Supported: in.Package.Runtime.Supported,
 		Resources: in.Resources, Plan: plan, Redact: s.Redact, Timeout: time.Duration(in.Timeout), AllowedCaps: s.AllowedCaps,
 		OnStep:     func(c deployment.Change, st release.Step) error { return s.record(ctx, op, in, c, st) },
@@ -672,7 +672,7 @@ func (s *Service) record(ctx context.Context, op *release.Operation, in deployIn
 	}
 	runtimeName := c.RuntimeName
 	if runtimeName == "" {
-		runtimeName = runtimeops.RuntimeName(in.Name, c.Name)
+		runtimeName = proxyops.RuntimeName(in.Name, c.Name)
 	}
 	applied := release.AppliedResource{Kind: c.Kind, Name: c.Name, Revision: in.Revision,
 		RuntimeName: runtimeName, Spec: c.Spec, Digest: c.Digest}

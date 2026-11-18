@@ -67,12 +67,12 @@ reconciler`, the loop; `releases.Service.Reconcile`, the repairs) brings the run
 cmd/karga-server                entry point
 internal/server                 karga-server: state, runtime, socket, peer credentials
 internal/application/releases   release lifecycle: install, upgrade, rollback, uninstall, resume, reads
-internal/application/deployment plan (diff, strategies), execute, release proxy, probes
-  .../deployment/gateway        the host gateway
-  .../deployment/runtimeops     primitives shared by the executor and the gateway
-internal/ports                  Runtime, StateStore and ProxyControl interfaces; runtime contract suite
+internal/application/deployment plan (diff, strategies), execute, release proxy, probes (deployment.Env)
+internal/application/gateway    the host gateway: settings, exposures, its Envoy
+internal/application/proxyops   what both share: runtime names and removal, the proxy Host
+internal/ports                  Runtime, StateStore, ProxyControl and HostNet; contract suites
 internal/adapters/{docker,filestore,fakeruntime}
-internal/infrastructure/{envoy,config}
+internal/infrastructure/{envoy,hostnet,logging,config}
 
 karga-sdk: api (the wire contract: types, error kinds, version, Backend, client, HTTP handler),
 packages (the package engine and metadata), resource (the resource kinds); values, templates and
@@ -82,10 +82,11 @@ maps it to the api views.
 
 The SDK depends on nothing of the CLI or the server, and the server on nothing of the CLI,
 enforced by `depguard` in each repository's `.golangci.yml`.
-The application layer talks to the container runtime, the state and the proxies only through
-`ports` (`Runtime`, `StateStore`, `ProxyControl` with the proxy configuration model); the
-composition root (`internal/server`) picks the adapters: Docker, the file store and Envoy. `depguard`
-enforces it. Every
+The application layer talks to the container runtime, the state, the proxies and the host's network
+only through `ports` (`Runtime`, `StateStore`, `ProxyControl` with the proxy configuration model,
+`HostNet` for health probes and port tests); the composition root (`internal/server`) picks the
+adapters: Docker, the file store, Envoy and the host network, and passes them down (no package
+holds mutable state of its own). `depguard` enforces it. Every
 runtime adapter passes the same contract suite (`internal/ports/runtimetest`); the fake runtime used
 by unit tests passes it too.
 

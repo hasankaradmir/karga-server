@@ -10,10 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
+
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
-	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
@@ -37,7 +39,7 @@ func TestGatewayConfigListenersAndRedirects(t *testing.T) {
 				{Service: "web", Port: 80, Listener: "web", Host: "both.example", Path: "/"},
 			}},
 	}
-	cfg := buildConfig(testSettings(), targets)
+	cfg := buildConfig(testSettings(), targets, "/etc/karga-proxy")
 	if len(cfg.Clusters) != 3 || cfg.Clusters[0].Name != "a_shop_p80" || cfg.Clusters[0].Port != 4001 {
 		t.Fatalf("clusters: %+v", cfg.Clusters)
 	}
@@ -108,7 +110,7 @@ func proxyOf(t *testing.T, rt *fakeruntime.Runtime, home, rel string, ps []Port,
 }
 
 func TestCheckExposures(t *testing.T) {
-	withProxySupport(t, true)
+	h := testHost(true)
 	ctx := context.Background()
 	home := t.TempDir()
 	if err := WriteSettings(home, Settings{Listeners: append(DefaultListeners(), Listener{Name: "pg", Port: 5432, Protocol: ProtocolTCP})}); err != nil {
@@ -122,7 +124,7 @@ func TestCheckExposures(t *testing.T) {
 	check := func(e resource.Exposure) string {
 		svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
 			Workload: "w", Ports: []resource.ServicePort{{Name: "p", Port: 80, TargetPort: "p"}}, Expose: []resource.Exposure{e}}}
-		return errorsText(Check(ctx, rt, home, "mine", []resource.Resource{svc}))
+		return errorsText(Check(ctx, rt, h, home, "mine", []resource.Resource{svc}))
 	}
 	tls := &resource.ExposureTLS{Secret: "mycert"}
 	for _, tt := range []struct {
@@ -179,20 +181,19 @@ func TestSettings(t *testing.T) {
 }
 
 func TestSyncFollowsExposures(t *testing.T) {
-	withProxySupport(t, true)
+	h := testHost(true)
 	ctx := context.Background()
 	home := t.TempDir()
 	rt := fakeruntime.New("img", envoy.Image())
-	px := &fakeProxies{}
 	proxyOf(t, rt, home, "a", nil, nil)
-	if _, err := Sync(ctx, rt, px, home); err != nil {
+	if _, err := Sync(ctx, rt, h, home); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.GetWorkload(ctx, ContainerName); err == nil {
 		t.Fatal("gateway started with nothing exposed")
 	}
 	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "web", Host: "b.example", Path: "/"}})
-	targets, err := Sync(ctx, rt, px, home)
+	targets, err := Sync(ctx, rt, h, home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,12 +206,13 @@ func TestSyncFollowsExposures(t *testing.T) {
 	}
 }
 
-// withProxySupport pretends to run on Linux (or not) for the duration of a test.
-func withProxySupport(t *testing.T, on bool) {
-	t.Helper()
-	old := runtimeops.Supported.Load()
-	runtimeops.Supported.Store(on)
-	t.Cleanup(func() { runtimeops.Supported.Store(old) })
+// testHost is a host whose runtime can run karga's proxies (or not), with fake proxies.
+func testHost(supported bool) *proxyops.Host {
+	h := &proxyops.Host{Proxies: &fakeProxies{}, Net: hostnet.Net{}}
+	if supported {
+		h.UseRuntime(ports.RuntimeInfo{Capabilities: []string{ports.CapHostGateway}})
+	}
+	return h
 }
 
 // fakeProxies writes real configuration files and reports every proxy ready and drained.
@@ -228,12 +230,10 @@ func (f *fakeProxies) WaitDrained(context.Context, string, []string, time.Durati
 	return true, nil
 }
 
-func init() { runtimeops.Proxies = fakeruntime.Proxies{} }
-
 // Expose checks again under the gateway lock: what another release took meanwhile is refused and
 // nothing is written.
 func TestExposeChecksUnderTheLock(t *testing.T) {
-	withProxySupport(t, true)
+	h := testHost(true)
 	ctx := context.Background()
 	home := t.TempDir()
 	rt := fakeruntime.New("img")
@@ -243,7 +243,7 @@ func TestExposeChecksUnderTheLock(t *testing.T) {
 	svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
 		Workload: "w", Ports: []resource.ServicePort{{Name: "p", Port: 80, TargetPort: "p"}},
 		Expose: []resource.Exposure{{Port: "p", Listener: "web", Host: "a.example", Path: "/"}}}}
-	_, err := Expose(ctx, rt, &fakeProxies{}, home, "mine", []resource.Resource{svc},
+	_, err := Expose(ctx, rt, h, home, "mine", []resource.Resource{svc},
 		[]Route{{Service: "s", Port: 80, Listener: "web", Host: "a.example", Path: "/"}})
 	if err == nil || !strings.Contains(err.Error(), "already routed to other/web") {
 		t.Fatalf("Expose: %v", err)

@@ -11,7 +11,6 @@ import (
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
-	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -95,7 +94,7 @@ func (s *Service) install(ctx context.Context, req InstallRequest, progress func
 			if err := s.loadKey(); err != nil {
 				return nil, err
 			}
-			valuesDigest, _, err := digestJSON(in.Values)
+			valuesDigest, _, err := s.digestJSON(in.Values)
 			if err != nil {
 				return nil, err
 			}
@@ -255,7 +254,7 @@ func (s *Service) uninstallRelease(ctx context.Context, req UninstallRequest) (*
 	res := &Result{Release: req.Name, Revision: existing.CurrentRevision, From: existing.CurrentRevision, DryRun: req.DryRun}
 	if req.DryRun {
 		res.Status = string(existing.Status)
-		res.Plan, err = deployment.DeletePlan(ctx, rt, req.Name, req.DeleteVolumes)
+		res.Plan, err = s.Deploy.DeletePlan(ctx, rt, req.Name, req.DeleteVolumes)
 		return res, err
 	}
 	op, err := s.begin(ctx, req.Name, "uninstall", existing.CurrentRevision, req.Force,
@@ -284,7 +283,7 @@ func (s *Service) uninstall(ctx context.Context, rt ports.Runtime, rel release.R
 		return err
 	}
 	bg := context.WithoutCancel(ctx)
-	if err := deployment.Delete(ctx, rt, s.Home, req.Name, req.DeleteVolumes); err != nil {
+	if err := s.Deploy.Delete(ctx, rt, s.Home, req.Name, req.DeleteVolumes); err != nil {
 		rel.Status = release.StatusFailed
 		return errors.Join(err, s.Store.SaveRelease(bg, rel))
 	}
