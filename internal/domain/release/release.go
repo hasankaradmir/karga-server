@@ -42,16 +42,16 @@ func Transition(from, to Status) error {
 
 // Release is an installed instance of a package.
 type Release struct {
-	Name           string `json:"name"`
-	PackageName    string `json:"package"`
-	PackageVersion string `json:"version"`
+	Name           string
+	PackageName    string
+	PackageVersion string
 	// CurrentRevision is the last successfully deployed revision; 0 if none.
-	CurrentRevision int       `json:"revision"`
-	Status          Status    `json:"status"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	CurrentRevision int
+	Status          Status
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 	// Paused releases are left alone by the reconciler.
-	Paused bool `json:"paused,omitempty"`
+	Paused bool
 }
 
 // RevisionStatus is the outcome of one revision.
@@ -66,25 +66,25 @@ const (
 
 // Revision is one immutable desired configuration of a release.
 type Revision struct {
-	Release        string `json:"release"`
-	Number         int    `json:"revision"`
-	PackageName    string `json:"package"`
-	PackageVersion string `json:"version"`
+	Release        string
+	Number         int
+	PackageName    string
+	PackageVersion string
 	// RuntimeSupported is the package's runtime.supported, needed to re-check a rollback.
-	RuntimeSupported []string `json:"-"`
-	PackageDigest    string   `json:"packageDigest"`
-	ValuesDigest     string   `json:"valuesDigest"`
-	ManifestDigest   string   `json:"manifestDigest"`
+	RuntimeSupported []string
+	PackageDigest    string
+	ValuesDigest     string
+	ManifestDigest   string
 	// Values are the user overrides (-f, --set); ValuesAll is the merged result used to render.
-	Values    map[string]any `json:"-"`
-	ValuesAll map[string]any `json:"-"`
+	Values    map[string]any
+	ValuesAll map[string]any
 	// Manifest is the rendered resources as a JSON array, with secret values replaced by digests.
-	Manifest json.RawMessage `json:"-"`
+	Manifest json.RawMessage
 	// Notes is the package's rendered NOTES.txt (writeOnly values redacted).
-	Notes       string         `json:"-"`
-	Status      RevisionStatus `json:"status"`
-	Description string         `json:"description"`
-	CreatedAt   time.Time      `json:"createdAt"`
+	Notes       string
+	Status      RevisionStatus
+	Description string
+	CreatedAt   time.Time
 }
 
 // AppliedResource is what is currently applied on the runtime for one resource of a release.
@@ -138,9 +138,9 @@ type Options struct {
 
 // Step is one runtime action of an operation.
 type Step struct {
-	Kind   string `json:"kind"`
-	Name   string `json:"name"`
-	Action string `json:"action"`
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	Kind   string
+	Name   string
+	Action string
+	Status string
+	Error  string
 }

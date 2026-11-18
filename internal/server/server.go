@@ -1,4 +1,4 @@
-// Package server runs karga-server: it owns the state database and the container runtime and
+// Package server runs karga-server: it owns the state and the container runtime and
 // serves the release operations to the karga CLI on a unix socket.
 package server
 
