@@ -34,16 +34,12 @@ func (s *Core) render(ctx context.Context, name, path string, opts packages.Opti
 	if err != nil {
 		return deployInput{}, invalid{err}
 	}
-	digest, err := packages.Digest(path)
-	if err != nil {
-		return deployInput{}, err
-	}
 	opts.ReleaseName, opts.Revision = name, revision
 	m, err := packages.Render(p, opts)
 	if err != nil {
 		return deployInput{}, invalid{err}
 	}
-	return deployInput{Name: name, Package: p.Metadata, PackageDigest: digest, Overrides: m.Overrides,
+	return deployInput{Name: name, Package: p.Metadata, PackageDigest: p.Digest, Overrides: m.Overrides,
 		Values: m.Values, Resources: m.Resources(), Revision: revision, SecretPaths: m.SecretPaths, Notes: m.Notes}, nil
 }
 
