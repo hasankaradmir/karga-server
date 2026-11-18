@@ -49,7 +49,11 @@ func start(t *testing.T, home string) *api.Client {
 }
 
 func withValues(sets ...string) api.ValuesInput {
-	return api.ValuesInput{Set: append([]string{"service.enabled=false"}, sets...)}
+	in := api.ValuesInput{Sets: []api.Set{{Expr: "service.enabled=false"}}}
+	for _, s := range sets {
+		in.Sets = append(in.Sets, api.Set{Expr: s})
+	}
+	return in
 }
 
 // The API reaches the release service through the composition root, and the service's errors
@@ -67,7 +71,7 @@ func TestServeThroughTheAPI(t *testing.T) {
 	if err != nil || len(rels) != 1 || rels[0].Name != "cache" || rels[0].Status != api.StatusDeployed {
 		t.Fatalf("list: %+v %v", rels, err)
 	}
-	rep, err := c.Status(ctx, "cache")
+	rep, err := c.Status(ctx, api.ReleaseRequest{Name: "cache"})
 	if err != nil || len(rep.Resources) == 0 {
 		t.Fatalf("status: %+v %v", rep, err)
 	}
@@ -77,7 +81,7 @@ func TestServeThroughTheAPI(t *testing.T) {
 		call func() error
 		want error
 	}{
-		{"status of a missing release", func() error { _, err := c.Status(ctx, "nope"); return err }, api.ErrNotFound},
+		{"status of a missing release", func() error { _, err := c.Status(ctx, api.ReleaseRequest{Name: "nope"}); return err }, api.ErrNotFound},
 		{"install over a different deployed release", func() error {
 			_, err := c.Install(ctx, api.InstallRequest{CommonOptions: opts, Name: "cache", Package: redisPkg, Values: withValues("image.tag=7.2")}, nil)
 			return err

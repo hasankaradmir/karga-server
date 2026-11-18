@@ -3,6 +3,8 @@ package releases
 import (
 	"time"
 
+	"github.com/hasankaradmir/karga-sdk/packages"
+
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )
@@ -25,9 +27,9 @@ type CommonOptions struct {
 
 // Values are what a user gives an install or upgrade, applied in this order onto the defaults.
 type Values struct {
-	Files          [][]byte // contents of values files
-	Set, SetString []string // --set and --set-string expressions
-	Strict         bool     // reject values the schema does not declare
+	Files  [][]byte       // contents of values files
+	Sets   []packages.Set // --set and --set-string expressions, in the order given
+	Strict bool           // reject values the schema does not declare
 }
 
 // InstallRequest installs the package at Package (a directory or .tgz on this host).

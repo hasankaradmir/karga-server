@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/api"
+	"github.com/hasankaradmir/karga-sdk/packages"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
@@ -26,7 +27,11 @@ func common(o api.CommonOptions) releases.CommonOptions {
 }
 
 func values(v api.ValuesInput) releases.Values {
-	return releases.Values{Files: v.Files, Set: v.Set, SetString: v.SetString, Strict: v.Strict}
+	out := releases.Values{Files: v.Files, Strict: v.Strict}
+	for _, s := range v.Sets {
+		out.Sets = append(out.Sets, packages.Set{Expr: s.Expr, String: s.String})
+	}
+	return out
 }
 
 func events(progress func(api.Event)) func(deployment.Event) {
@@ -73,29 +78,29 @@ func (b Backend) List(ctx context.Context) ([]api.Release, error) {
 }
 
 // History implements api.Backend.
-func (b Backend) History(ctx context.Context, name string) ([]api.Revision, error) {
-	revs, err := b.S.Reads.History(ctx, name)
+func (b Backend) History(ctx context.Context, req api.ReleaseRequest) ([]api.Revision, error) {
+	revs, err := b.S.Reads.History(ctx, req.Name)
 	return wireAll(revs, wireRevision), err
 }
 
-// GetValues implements api.Backend.
-func (b Backend) GetValues(ctx context.Context, name string, revision int, all bool) (map[string]any, error) {
-	return b.S.Reads.GetValues(ctx, name, revision, all)
+// Values implements api.Backend.
+func (b Backend) Values(ctx context.Context, req api.ValuesRequest) (map[string]any, error) {
+	return b.S.Reads.GetValues(ctx, req.Name, req.Revision, req.All)
 }
 
-// GetNotes implements api.Backend.
-func (b Backend) GetNotes(ctx context.Context, name string, revision int) (string, error) {
-	return b.S.Reads.GetNotes(ctx, name, revision)
+// Notes implements api.Backend.
+func (b Backend) Notes(ctx context.Context, req api.RevisionRequest) (string, error) {
+	return b.S.Reads.GetNotes(ctx, req.Name, req.Revision)
 }
 
-// GetManifest implements api.Backend.
-func (b Backend) GetManifest(ctx context.Context, name string, revision int) ([]resource.Resource, error) {
-	return b.S.Reads.GetManifest(ctx, name, revision)
+// Manifest implements api.Backend.
+func (b Backend) Manifest(ctx context.Context, req api.RevisionRequest) ([]resource.Resource, error) {
+	return b.S.Reads.GetManifest(ctx, req.Name, req.Revision)
 }
 
 // Status implements api.Backend.
-func (b Backend) Status(ctx context.Context, name string) (*api.StatusReport, error) {
-	rep, err := b.S.Reads.Status(ctx, name)
+func (b Backend) Status(ctx context.Context, req api.ReleaseRequest) (*api.StatusReport, error) {
+	rep, err := b.S.Reads.Status(ctx, req.Name)
 	if rep == nil {
 		return nil, err
 	}
@@ -111,8 +116,8 @@ func (b Backend) Status(ctx context.Context, name string) (*api.StatusReport, er
 }
 
 // Diff implements api.Backend.
-func (b Backend) Diff(ctx context.Context, name string, from, to int) (*api.RevisionDiff, error) {
-	d, err := b.S.Reads.Diff(ctx, name, from, to)
+func (b Backend) Diff(ctx context.Context, req api.DiffRequest) (*api.RevisionDiff, error) {
+	d, err := b.S.Reads.Diff(ctx, req.Name, req.From, req.To)
 	if d == nil {
 		return nil, err
 	}
@@ -125,8 +130,8 @@ func (b Backend) Diff(ctx context.Context, name string, from, to int) (*api.Revi
 }
 
 // Resources implements api.Backend.
-func (b Backend) Resources(ctx context.Context, name string) ([]api.AppliedResource, error) {
-	rs, err := b.S.Reads.Resources(ctx, name)
+func (b Backend) Resources(ctx context.Context, req api.ReleaseRequest) ([]api.AppliedResource, error) {
+	rs, err := b.S.Reads.Resources(ctx, req.Name)
 	return wireAll(rs, func(a release.AppliedResource) api.AppliedResource {
 		return api.AppliedResource{Kind: a.Kind, Name: a.Name, Revision: a.Revision, RuntimeName: a.RuntimeName}
 	}), err
@@ -139,8 +144,9 @@ func (b Backend) Logs(ctx context.Context, req api.LogsRequest, w io.Writer) err
 }
 
 // Exec implements api.Backend.
-func (b Backend) Exec(ctx context.Context, rel, workload string, o api.ExecOptions) (int, error) {
-	return b.S.Reads.Exec(ctx, rel, workload, ports.ExecOptions{Cmd: o.Cmd, TTY: o.TTY, Stdin: o.Stdin, Stdout: o.Stdout, Stderr: o.Stderr,
+func (b Backend) Exec(ctx context.Context, req api.ExecRequest) (int, error) {
+	o := req.ExecOptions
+	return b.S.Reads.Exec(ctx, req.Release, req.Workload, ports.ExecOptions{Cmd: o.Cmd, TTY: o.TTY, Stdin: o.Stdin, Stdout: o.Stdout, Stderr: o.Stderr,
 		Width: o.Width, Height: o.Height, Resize: o.Resize})
 }
 
@@ -155,8 +161,8 @@ func (b Backend) RestoreVolume(ctx context.Context, req api.VolumeRestoreRequest
 }
 
 // Reconcile implements api.Backend.
-func (b Backend) Reconcile(ctx context.Context, name string, force bool) (*api.ReconcileResult, error) {
-	res, err := b.S.Lifecycle.Repair(ctx, name, force)
+func (b Backend) Reconcile(ctx context.Context, req api.ReconcileRequest) (*api.ReconcileResult, error) {
+	res, err := b.S.Lifecycle.Repair(ctx, req.Name, req.Force)
 	if res == nil {
 		return nil, err
 	}
@@ -164,21 +170,26 @@ func (b Backend) Reconcile(ctx context.Context, name string, force bool) (*api.R
 }
 
 // Pause implements api.Backend.
-func (b Backend) Pause(ctx context.Context, name string, paused bool) error {
-	return b.S.Lifecycle.Pause(ctx, name, paused)
+func (b Backend) Pause(ctx context.Context, req api.ReleaseRequest) error {
+	return b.S.Lifecycle.Pause(ctx, req.Name, true)
+}
+
+// Resume implements api.Backend.
+func (b Backend) Resume(ctx context.Context, req api.ReleaseRequest) error {
+	return b.S.Lifecycle.Pause(ctx, req.Name, false)
 }
 
 // Events implements api.Backend.
-func (b Backend) Events(ctx context.Context, name string, afterID int64, limit int) ([]api.Operation, error) {
-	ops, err := b.S.Reads.Events(ctx, name, afterID, limit)
+func (b Backend) Events(ctx context.Context, req api.EventsRequest) ([]api.Operation, error) {
+	ops, err := b.S.Reads.Events(ctx, req.Name, req.AfterID, req.Limit)
 	return wireAll(ops, func(o release.Operation) api.Operation {
 		return api.Operation{ID: o.ID, Release: o.Release, Type: o.Type, Revision: o.Revision, Status: string(o.Status),
 			Actor: o.Actor, Steps: wireAll(o.Steps, wireStep), Error: o.Error, StartedAt: o.StartedAt, FinishedAt: o.FinishedAt}
 	}), err
 }
 
-// Gateway implements api.Backend.
-func (b Backend) Gateway(ctx context.Context) ([]api.Exposed, error) {
+// GatewayRoutes implements api.Backend.
+func (b Backend) GatewayRoutes(ctx context.Context) ([]api.Exposed, error) {
 	routes, err := b.S.Gateway.Routes(ctx)
 	return wireAll(routes, func(e gateway.Exposed) api.Exposed {
 		return api.Exposed{Listener: e.Listener, Route: e.Route, Release: e.Release, Service: e.Service, Upstream: e.Upstream}
@@ -203,13 +214,13 @@ func (b Backend) GatewaySettings(ctx context.Context) (api.Settings, map[string]
 }
 
 // SetGatewayAccessLog implements api.Backend.
-func (b Backend) SetGatewayAccessLog(ctx context.Context, on bool) error {
-	return b.S.Gateway.SetAccessLog(ctx, on)
+func (b Backend) SetGatewayAccessLog(ctx context.Context, req api.GatewayAccessLogRequest) error {
+	return b.S.Gateway.SetAccessLog(ctx, req.Enabled)
 }
 
 // SetGatewayListen implements api.Backend.
-func (b Backend) SetGatewayListen(ctx context.Context, addrs []string) error {
-	return b.S.Gateway.SetListen(ctx, addrs)
+func (b Backend) SetGatewayListen(ctx context.Context, req api.GatewayListenRequest) error {
+	return b.S.Gateway.SetListen(ctx, req.Addresses)
 }
 
 // AddGatewayListener implements api.Backend.
@@ -218,8 +229,8 @@ func (b Backend) AddGatewayListener(ctx context.Context, l api.Listener) error {
 }
 
 // RemoveGatewayListener implements api.Backend.
-func (b Backend) RemoveGatewayListener(ctx context.Context, name string) error {
-	return b.S.Gateway.RemoveListener(ctx, name)
+func (b Backend) RemoveGatewayListener(ctx context.Context, req api.GatewayListenerRequest) error {
+	return b.S.Gateway.RemoveListener(ctx, req.Name)
 }
 
 func wireResult(r *releases.Result) *api.Result {

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-sdk/packages"
+
 	"github.com/hasankaradmir/karga-server/internal/application/reconciler"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -23,7 +25,7 @@ func TestReconcilerRepairsFromDockerEvents(t *testing.T) {
 	name := releaseName("it-rec")
 	s, rt := service(t, name)
 	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: releases.Values{Set: []string{"strategy=recreate"}}}, nil); err != nil {
+		Values: releases.Values{Sets: packages.Sets([]string{"strategy=recreate"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	loop := reconciler.New(s, 0, nil)

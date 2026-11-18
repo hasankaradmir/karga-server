@@ -32,7 +32,9 @@ JSON, no remote API). The **karga** CLI is its client: it packs packages and val
 them, and streams progress, logs, `exec` (an upgraded connection carrying frames) and backups. Only
 `create`, `lint`, `template` and `show` work without the server. The API is karga-sdk's `api`: a
 `Backend` interface that `internal/server`'s `Backend` implements on the server (mapping it to the
-release service) and `api.Client` in the CLI, the HTTP handler and the client. Every request carries
+release service) and `api.Client` in the CLI, the HTTP handler and the client. Each endpoint takes
+its own request type, which the handler validates (release names are DNS labels that do not start
+with `karga`) before the backend sees it. Every request carries
 the API version `Major.Minor` (`Karga-Api`); the server refuses another major, and a field or
 endpoint it does not know, so the CLI and the server may be of different releases while the major
 is the same (ADR-0014). The server reads each client's user from the socket (`SO_PEERCRED`) and records it on the

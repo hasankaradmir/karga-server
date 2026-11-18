@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-sdk/packages"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
@@ -49,7 +50,7 @@ func newEnv(t *testing.T) *env {
 }
 
 func (e *env) opts(sets ...string) Values {
-	return Values{Set: append([]string{"service.enabled=false"}, sets...)}
+	return Values{Sets: packages.Sets(append([]string{"service.enabled=false"}, sets...)...)}
 }
 
 func common() CommonOptions {
@@ -175,7 +176,7 @@ func TestUpgradeReuseValues(t *testing.T) {
 	e := newEnv(t)
 	must[*Result](t)(e.install("config.maxmemory=64mb"))
 	must[*Result](t)(e.svc.Lifecycle.Upgrade(context.Background(), UpgradeRequest{CommonOptions: common(), Name: "cache", Package: redisPkg,
-		Values: Values{Set: []string{"image.tag=7.2"}}, ReuseValues: true}, nil))
+		Values: Values{Sets: packages.Sets([]string{"image.tag=7.2"}...)}, ReuseValues: true}, nil))
 	vals := must[map[string]any](t)(e.svc.Reads.GetValues(context.Background(), "cache", 0, false))
 	if vals["config"].(map[string]any)["maxmemory"] != "64mb" || vals["image"].(map[string]any)["tag"] != "7.2" {
 		t.Fatalf("reused values: %#v", vals)
@@ -298,7 +299,7 @@ func TestManifestAndStatus(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	_, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "db", Package: "../../../tests/testdata/postgres",
-		Values: Values{Set: []string{"service.enabled=false", "database.password=hunter2"}}}, nil)
+		Values: Values{Sets: packages.Sets([]string{"service.enabled=false", "database.password=hunter2"}...)}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +339,7 @@ func TestReplaceUpgradeAndNonDisruptiveFailure(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	up := func(sets ...string) (*Result, error) {
-		return e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "site", Package: webPkg, Values: Values{Set: sets}}, nil)
+		return e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "site", Package: webPkg, Values: Values{Sets: packages.Sets(sets...)}}, nil)
 	}
 	if _, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "site", Package: webPkg}, nil); err != nil {
 		t.Fatal(err)
@@ -374,7 +375,7 @@ func TestReplaceUpgradeAndNonDisruptiveFailure(t *testing.T) {
 	// --strategy recreate overrides the spec.
 	e.rt.Health = ""
 	res = must[*Result](t)(e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "site", Package: webPkg,
-		Values: Values{Set: []string{"content=v4"}}, Strategy: "recreate"}, nil))
+		Values: Values{Sets: packages.Sets([]string{"content=v4"}...)}, Strategy: "recreate"}, nil))
 	for _, c := range res.Plan {
 		if c.Kind == resource.KindWorkload && c.Strategy != "recreate" {
 			t.Fatalf("override ignored: %+v", c)
@@ -412,7 +413,7 @@ func TestWriteOnlyValuesNotStored(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	pg := func(sets ...string) Values {
-		return Values{Set: append([]string{"service.enabled=false"}, sets...)}
+		return Values{Sets: packages.Sets(append([]string{"service.enabled=false"}, sets...)...)}
 	}
 	if _, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "db", Package: pgPkg, Values: pg("database.password=hunter2")}, nil); err != nil {
 		t.Fatal(err)
@@ -442,7 +443,7 @@ func TestWriteOnlyValuesNotStored(t *testing.T) {
 		t.Fatalf("reuse without password: %v", err)
 	}
 	if _, err := e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "db", Package: pgPkg, ReuseValues: true,
-		Values: Values{Set: []string{"database.password=hunter3"}}}, nil); err != nil {
+		Values: Values{Sets: packages.Sets([]string{"database.password=hunter3"}...)}}, nil); err != nil {
 		t.Fatalf("reuse with password: %v", err)
 	}
 	vals := must[map[string]any](t)(e.svc.Reads.GetValues(ctx, "db", 0, false))
@@ -612,7 +613,7 @@ func TestUpgradeDeletingVolumeNeedsFlag(t *testing.T) {
 	ctx := context.Background()
 	pkgDir := scratchPkg(t)
 	must[*Result](t)(e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "s", Package: pkgDir}, nil))
-	without := UpgradeRequest{CommonOptions: common(), Name: "s", Package: pkgDir, Values: Values{Set: []string{"scratch=false"}}}
+	without := UpgradeRequest{CommonOptions: common(), Name: "s", Package: pkgDir, Values: Values{Sets: packages.Sets([]string{"scratch=false"}...)}}
 
 	dry := without
 	dry.DryRun = true
@@ -716,7 +717,7 @@ func TestRegisterSecretsAfterRestart(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	if _, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "db", Package: "../../../tests/testdata/postgres",
-		Values: Values{Set: []string{"service.enabled=false", "database.password=hunter2-restart"}}}, nil); err != nil {
+		Values: Values{Sets: packages.Sets([]string{"service.enabled=false", "database.password=hunter2-restart"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	var got []string
@@ -733,5 +734,39 @@ func TestRegisterSecretsAfterRestart(t *testing.T) {
 	restarted.RegisterSecrets(ctx)
 	if len(got) != 0 {
 		t.Fatalf("registered %v without secret files", got)
+	}
+}
+
+// A variable set from a Secret is visible through docker inspect: the plan says so, and the
+// warnings of a successful deployment keep it.
+func TestEnvironmentFromWarns(t *testing.T) {
+	e := newEnv(t)
+	dir := scratchPkg(t)
+	tpl := `apiVersion: karga.io/v1alpha1
+kind: Secret
+metadata: {name: db}
+spec:
+  values: {uri: postgres://db}
+---
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: api}
+spec:
+  image: busybox:1.37
+  command: [sleep, "300"]
+  environmentFrom:
+    - {name: DB_URI, secret: db, key: uri}
+`
+	if err := os.WriteFile(filepath.Join(dir, "templates", "api.yaml"), []byte(tpl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, dry := range []bool{true, false} {
+		res, err := e.svc.Lifecycle.Install(context.Background(), InstallRequest{CommonOptions: CommonOptions{DryRun: dry, Timeout: time.Second}, Name: "envs", Package: dir}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.ContainsFunc(res.Warnings, func(w string) bool { return strings.Contains(w, `"api" sets DB_URI from Secret "db"`) }) {
+			t.Fatalf("dry run %v: warnings %q", dry, res.Warnings)
+		}
 	}
 }

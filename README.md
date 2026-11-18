@@ -156,7 +156,7 @@ Secrets (and what mounts them) once more on its next upgrade.
   gateway.
 - Image pulls are anonymous; private registries are not supported yet.
 - A variable a workload takes from a Secret (`environmentFrom`) is stored only as a reference, but
-  its value is in the container's environment, which `docker inspect` shows.
+  its value is in the container's environment, which `docker inspect` shows; plans warn about it.
 
 ## Development
 

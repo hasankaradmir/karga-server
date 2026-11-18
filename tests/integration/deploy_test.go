@@ -25,7 +25,7 @@ func render(t *testing.T, example, release string, sets ...string) []resource.Re
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := packages.Render(p, packages.Options{ReleaseName: release, Sets: sets})
+	m, err := packages.Render(p, packages.Options{ReleaseName: release, Values: packages.ValueSources{Sets: packages.Sets(sets...)}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hasankaradmir/karga-sdk/packages"
+
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
@@ -41,7 +43,7 @@ func TestAnonymousVolumeKeptAcrossUpgrade(t *testing.T) {
 	vol := workload(t, rt, name+"-redis").AnonymousVolumes[0].Source
 
 	res, err = s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: "testdata/anon",
-		Values: releases.Values{Set: []string{"rev=2"}}}, nil)
+		Values: releases.Values{Sets: packages.Sets([]string{"rev=2"}...)}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

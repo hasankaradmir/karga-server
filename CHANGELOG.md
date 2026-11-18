@@ -6,6 +6,22 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Changed
+- API 3.0 (karga-sdk): karga CLIs of API 2 are refused with a message to upgrade them. Every
+  request is checked before it reaches the service: a release name must be a DNS label that does
+  not start with `karga`, for every operation (a name like `../x` could reach a path outside the
+  state before). Errors of logs, volume backups and exec keep their kind.
+- A package's digest is its content (karga-sdk): the same package sent by CLIs built with other
+  Go versions, or as a directory and as a `.tgz`, is recognised as the same (`install` is a no-op
+  instead of a conflict). Releases installed before get a new revision on their next install or
+  upgrade.
+- `--set` and `--set-string` apply in the order they were given, and `--set a[1]=x` edits the
+  default list instead of replacing it with `[null, x]` (ADR-0018).
+- Plans warn about every variable a workload takes from a Secret (`environmentFrom`): anyone who
+  can inspect the container sees its value. Packages may use only `bridge` networks and `local`
+  volumes (karga-sdk); other drivers could reach the host's network past the gateway.
+- A package cannot keep karga-server rendering forever or exhaust its memory: template loops are
+  limited to 1,000,000 iterations per render and the time limit is checked as they run
+  (karga-sdk).
 - `history` shows deployed revisions a later deployment replaced as `superseded`; only the one
   that runs is `deployed`. The state is unchanged, and rollback targets are the same.
 
@@ -16,6 +32,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- writeOnly values under a map or a list of the values schema (`additionalProperties`, `items`, …)
+  were stored as written in the revision: the masking did not follow `*` in secret paths. They are
+  stored as `<redacted>` now, and `--reuse-values` asks for them again.
+- The warnings of a deployment's run (from the gateway) were dropped when it succeeded.
 - After a restart the server did not mask Secret values in its log until each release was
   applied again; it now registers the current revisions' values when it starts.
 - The gateway cut every HTTP request after 15 seconds (Envoy's default route timeout) and refused

@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-sdk/packages"
+
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
@@ -36,7 +38,7 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 	common := opts()
 	common.Timeout = 30 * time.Second
 	sets := func(extra ...string) releases.Values {
-		return releases.Values{Set: append([]string{startDelay, "listener=" + l, "second=true"}, extra...)}
+		return releases.Values{Sets: packages.Sets(append([]string{startDelay, "listener=" + l, "second=true"}, extra...)...)}
 	}
 
 	res, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil)
@@ -141,7 +143,7 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 	l, port := listener(t, gateway.ProtocolHTTP)
 	install := func(rel, host, content string) error {
 		_, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: rel, Package: webPkg,
-			Values: releases.Values{Set: []string{"route=" + host, "routeListener=" + l, "content=" + content}}}, nil)
+			Values: releases.Values{Sets: packages.Sets([]string{"route=" + host, "routeListener=" + l, "content=" + content}...)}}, nil)
 		return err
 	}
 	if err := install(a, "a.local", "from-a"); err != nil {
@@ -213,7 +215,7 @@ func TestGatewayRecreateWorkload(t *testing.T) {
 	s, rt := service(t, name)
 	l, port := listener(t, gateway.ProtocolTCP)
 	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: releases.Values{Set: []string{"strategy=recreate", "listener=" + l, "listenPort=80"}}}, nil); err != nil {
+		Values: releases.Values{Sets: packages.Sets([]string{"strategy=recreate", "listener=" + l, "listenPort=80"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if code, body := hostGet(t, port, "x"); code != http.StatusOK || body != "v1" {
@@ -241,7 +243,7 @@ func TestProxyLowPort(t *testing.T) {
 	name := releaseName("it-proxy-80")
 	s, rt := service(t, name)
 	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: releases.Values{Set: []string{"listenPort=80"}}}, nil); err != nil {
+		Values: releases.Values{Sets: packages.Sets([]string{"listenPort=80"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	p := startNetPinger(t, rt, name, "http://web:80/")
@@ -263,7 +265,7 @@ func TestGatewayKeepsLongConnections(t *testing.T) {
 	common := opts()
 	common.Timeout = 30 * time.Second
 	sets := func(extra ...string) releases.Values {
-		return releases.Values{Set: append([]string{"echo=true", "echoListener=" + l, "drain=60s"}, extra...)}
+		return releases.Values{Sets: packages.Sets(append([]string{"echo=true", "echoListener=" + l, "drain=60s"}, extra...)...)}
 	}
 	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil); err != nil {
 		t.Fatal(err)
@@ -355,7 +357,7 @@ func TestGatewayConcurrentInstalls(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, errs[i] = x.s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: x.name, Package: webPkg,
-				Values: releases.Values{Set: []string{"route=" + x.name + ".local", "routeListener=" + l, "content=" + x.name}}}, nil)
+				Values: releases.Values{Sets: packages.Sets([]string{"route=" + x.name + ".local", "routeListener=" + l, "content=" + x.name}...)}}, nil)
 		}()
 	}
 	wg.Wait()
@@ -381,7 +383,7 @@ func TestGatewaySurvivesDockerRestart(t *testing.T) {
 	s, _ := service(t, name)
 	l, port := listener(t, gateway.ProtocolHTTP)
 	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: releases.Values{Set: []string{"second=true", "route=boot.local", "routeListener=" + l}}}, nil); err != nil {
+		Values: releases.Values{Sets: packages.Sets([]string{"second=true", "route=boot.local", "routeListener=" + l}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := exec.Command("sudo", "-n", "systemctl", "restart", "docker").CombinedOutput(); err != nil {
