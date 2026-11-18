@@ -13,6 +13,7 @@ First release.
   install script; this one installs karga-server as a systemd service, without credentials.
 
 ### Release
+- Built with Go 1.27.4 (net/http fix GO-2026-6859) and golang.org/x/net 0.60.0 (GO-2026-6603, GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6617); CI runs govulncheck 1.10.0.
 - Releases carry an SBOM per archive and a keyless (Sigstore) signature of `checksums.txt`;
   `install.sh` verifies it when `cosign` is installed (`KARGA_SKIP_SIGNATURE=1` skips it).
 - The release workflow runs the tests, the integration tests and the linter before it publishes; CI runs `govulncheck`, and
