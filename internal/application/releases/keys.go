@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
+	"github.com/hasankaradmir/karga-server/internal/fsutil"
 )
 
 // digestJSON is the keyed digest of v's JSON: values and manifests may hold secret material.
@@ -75,17 +76,7 @@ func writeNewFile(path string, data []byte) error {
 	if err := os.Link(tmp.Name(), path); err != nil {
 		return err
 	}
-	return syncDir(filepath.Dir(path))
-}
-
-// syncDir makes the entries of dir durable.
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }() // read-only
-	return d.Sync()
+	return fsutil.SyncDir(filepath.Dir(path))
 }
 
 // RegisterSecrets gives the log redactor the Secret values of every release's current revision,

@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -59,7 +60,11 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	// The host has one gateway, and karga-server leaves another home's alone (the integration
+	// tests' or an earlier run's).
+	_ = exec.Command("docker", "rm", "-f", "karga-gateway").Run()
 	code := m.Run()
+	_ = exec.Command("docker", "rm", "-f", "karga-gateway").Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -226,7 +231,14 @@ func status(t *testing.T, e *env, rel string) (string, map[string]string) {
 			Health string `json:"health"`
 		} `json:"resources"`
 	}
-	if err := json.Unmarshal([]byte(e.run("status", rel, "-o", "json")), &rep); err != nil {
+	// Exit code 6 says the release is not deployed and healthy (yet): the report still comes.
+	cmd := exec.Command(karga, "status", rel, "-o", "json")
+	cmd.Env = append(os.Environ(), "KARGA_SOCKET="+e.socket)
+	out, err := cmd.Output()
+	if ee := (*exec.ExitError)(nil); err != nil && (!errors.As(err, &ee) || ee.ExitCode() != 6) {
+		t.Fatalf("karga status %s: %v\n%s", rel, err, out)
+	}
+	if err := json.Unmarshal(out, &rep); err != nil {
 		t.Fatal(err)
 	}
 	actual := map[string]string{}

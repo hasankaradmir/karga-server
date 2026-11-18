@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -112,7 +113,7 @@ func findTargets(ctx context.Context, rt Runtime, home string) ([]Target, error)
 // the gateway container as needed. It returns the targets it routes to.
 func (g *Gateway) Sync(ctx context.Context) ([]Target, error) {
 	rt, h, home := g.rt, g.host, g.home
-	unlock, err := Lock(home)
+	unlock, err := Lock(ctx, home)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +125,7 @@ func (g *Gateway) Sync(ctx context.Context) ([]Target, error) {
 // lock that no other release took the same listeners, hosts or paths since the pre-flight.
 func (g *Gateway) Expose(ctx context.Context, rel string, rs []resource.Resource, routes []Route) ([]Target, error) {
 	rt, h, home := g.rt, g.host, g.home
-	unlock, err := Lock(home)
+	unlock, err := Lock(ctx, home)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +148,16 @@ func syncLocked(ctx context.Context, rt Runtime, h *proxyops.Host, home string) 
 	}
 	dir := Dir(home)
 	exposed := slices.ContainsFunc(targets, func(t Target) bool { return len(t.Routes) > 0 })
+	// The host has one gateway. Another KARGA_HOME's is never replaced nor removed: two servers
+	// would replace each other's for ever (one karga-server per host).
+	if st, err := rt.GetWorkload(ctx, ContainerName); err == nil && !strings.HasPrefix(st.Labels[labelSource], dir+" ") {
+		if !exposed {
+			return nil, os.RemoveAll(dir)
+		}
+		other, _, _ := strings.Cut(st.Labels[labelSource], " ")
+		return nil, fmt.Errorf("%w: the host gateway %s is the one of the karga-server with its state in %s; one karga-server runs per host",
+			ports.ErrConflict, ContainerName, filepath.Dir(other))
+	}
 	if !exposed {
 		if err := proxyops.RemoveWorkload(ctx, rt, ContainerName); err != nil && !errors.Is(err, ports.ErrNotFound) {
 			return nil, err

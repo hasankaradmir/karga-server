@@ -8,6 +8,8 @@ import (
 	"strconv"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/fsutil"
 )
 
 // Key identifies a resource inside a release.
@@ -95,7 +97,7 @@ func syncDir(dir string, files map[string]string) error {
 			}
 			continue
 		}
-		if err := writeAtomic(p, []byte(content), mountFileMode); err != nil {
+		if err := fsutil.WriteFile(p, []byte(content), mountFileMode); err != nil {
 			return err
 		}
 	}
@@ -104,30 +106,6 @@ func syncDir(dir string, files map[string]string) error {
 		keep[name] = true
 	}
 	return removeOthers(dir, keep)
-}
-
-// writeAtomic replaces p with data: readers see the old content or the new one, never a part.
-func writeAtomic(p string, data []byte, mode os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(p), ".karga-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }() // gone after the rename; cleans up after a failure
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp.Name(), mode); err != nil { // CreateTemp makes it 0600
-		return err
-	}
-	return os.Rename(tmp.Name(), p)
 }
 
 // removeOthers removes the entries of dir that keep does not name; a missing dir has none.

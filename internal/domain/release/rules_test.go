@@ -39,6 +39,15 @@ func TestCanUpgrade(t *testing.T) {
 	}
 }
 
+func TestCanRollback(t *testing.T) {
+	if err := (Release{Name: "r", Status: StatusUninstalled}).CanRollback(); err == nil {
+		t.Fatal("an uninstalled release was rolled back")
+	}
+	if err := (Release{Name: "r", Status: StatusFailed}).CanRollback(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPrunable(t *testing.T) {
 	revs := make([]Revision, 8)
 	for i := range revs {

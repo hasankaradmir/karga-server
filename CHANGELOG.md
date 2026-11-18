@@ -32,6 +32,46 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- Containers are named `<release>-<name>`, so release `a-b`'s workload `c` and release `a`'s workload
+  `b-c` share a name: the second install failed half way. It is refused before anything changes,
+  naming the release that holds the container.
+- A rollback of an uninstalled release recorded an operation before it failed; it is refused
+  first, pointing at `karga install`. karga-server warns at start when `--allow-capabilities` is
+  `ALL`.
+- Two karga-servers with different `KARGA_HOME`s on one Docker replaced each other's gateway for ever,
+  and one with nothing to expose removed the other's. The gateway of another home is left alone now:
+  exposing fails with a conflict naming that home. Moving to another home, remove `karga-gateway`
+  with Docker first.
+- `volume backup --stop` kept the workloads stopped and the release held for as long as the client
+  took to read the backup; the copy now goes to a temporary file under `$KARGA_HOME/tmp` (as large
+  as the backup), the workloads run again, and the file is sent after.
+- Waiting for the gateway's lock (another release changing what it exposes) could not be
+  interrupted; it ends with the operation's context now.
+- Revisions were pruned to `--history-max` only after a deployment that succeeded: an upgrade
+  failing again and again kept every revision and its files. Failed deployments prune too. Temporary
+  files a crash left in the state are removed when karga-server starts.
+- A repair waited up to 5 minutes for a container that did not come up, holding every other
+  release's repairs that long, and the reconciler's queue dropped releases beyond 256. Repairs wait
+  at most a minute and are tried again with growing pauses; the queue keeps every release once
+  (ADR-0019).
+- A secret quoted in an error message (a failed connection with its password, say) reached the
+  client and the operations in the state as it was; the redactor masks those too now. A first
+  install that failed left its Config and Secret files on disk; they are removed with it.
+- The gateway's and the proxies' files (settings, routes, certificates, Envoy's configuration) were
+  replaced without being synced, through a fixed temporary name: a power loss could leave Envoy an
+  empty file. Every file karga-server writes now goes through one helper that syncs the file and its
+  directory; the state syncs its directory after a removal too.
+- karga-server answered no request until it had resumed every operation it left running, each up to
+  its timeout, and a resume that met Docker not up yet failed and left its release interrupted for
+  good. It now serves at once: commands on a release being resumed wait for it, and a resume waits
+  for Docker to answer, with growing pauses.
+- After a reboot, an operation an earlier karga-server left running could keep its release locked
+  for good (`ErrLocked`, even with `--force`) when another process got its PID. Only one
+  karga-server runs per home, so such an operation is interrupted, and resumed or aborted as any.
+- A command waiting for a busy release went on waiting after its client went away (Ctrl-C), and ran
+  later; it stops waiting now, as ADR-0015 says. What started still runs to the end.
+- The state store refuses a release name that is not a DNS label itself, as a second line behind
+  the API's check: names build its paths, so `../x` reached outside the state.
 - writeOnly values under a map or a list of the values schema (`additionalProperties`, `items`, …)
   were stored as written in the revision: the masking did not follow `*` in secret paths. They are
   stored as `<redacted>` now, and `--reuse-values` asks for them again.
@@ -60,6 +100,26 @@ First release.
   `KARGA_CLI_REF` (master without it).
 
 ### Fixed
+- Two karga-servers with different `KARGA_HOME`s on one Docker replaced each other's gateway for ever,
+  and one with nothing to expose removed the other's. The gateway of another home is left alone now:
+  exposing fails with a conflict naming that home. Moving to another home, remove `karga-gateway`
+  with Docker first.
+- A repair waited up to 5 minutes for a container that did not come up, holding every other
+  release's repairs that long, and the reconciler's queue dropped releases beyond 256. Repairs wait
+  at most a minute and are tried again with growing pauses; the queue keeps every release once
+  (ADR-0019).
+- A secret quoted in an error message (a failed connection with its password, say) reached the
+  client and the operations in the state as it was; the redactor masks those too now. A first
+  install that failed left its Config and Secret files on disk; they are removed with it.
+- karga-server answered no request until it had resumed every operation it left running, each up to
+  its timeout, and a resume that met Docker not up yet failed and left its release interrupted for
+  good. It now serves at once: commands on a release being resumed wait for it, and a resume waits
+  for Docker to answer, with growing pauses.
+- After a reboot, an operation an earlier karga-server left running could keep its release locked
+  for good (`ErrLocked`, even with `--force`) when another process got its PID. Only one
+  karga-server runs per home, so such an operation is interrupted, and resumed or aborted as any.
+- A command waiting for a busy release went on waiting after its client went away (Ctrl-C), and ran
+  later; it stops waiting now, as ADR-0015 says. What started still runs to the end.
 - Repairing or resuming a release rewrote its Config and Secret directories from scratch: running
   containers were left with an empty, deleted directory. They are now updated in place.
 - Two commands on one release could plan against the same state and take the same revision; the

@@ -13,8 +13,8 @@
   containers, add capabilities beyond Docker's defaults (unless the administrator allows them with
   `--allow-capabilities`), publish host ports, or change the gateway's listeners. Rendering and
   archives are bounded in size, depth and time.
-- **Secrets.** Secret values never appear in plans, output, logs (the server's redactor masks every
-  value it knows) or the state: the state keeps only HMAC digests keyed by `$KARGA_HOME/state.key`.
+- **Secrets.** Secret values never appear in plans, output, logs, error messages or the operations
+  recorded (the server's redactor masks every value it knows in all of them) or the state: the state keeps only HMAC digests keyed by `$KARGA_HOME/state.key`.
   `writeOnly` is allowed only in Secrets, and those values are stored as `<redacted>`.
 - **Secret files are plain files** under the revision's directory in `$KARGA_HOME` (directories
   0700, owned by the server's user), mounted read-only. Anyone who can read `$KARGA_HOME` or run as

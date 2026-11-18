@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -31,12 +33,14 @@ type EventSource interface {
 }
 
 // Queue collects the releases to reconcile, after a debounce: a recreate fires several events.
-// It is made before the release service, whose Deps.Notify is Queue.Notify, and the loop.
+// It is made before the release service, whose Deps.Notify is Queue.Notify, and the loop. A release
+// waits in it once, however often it is notified, and none is ever dropped.
 type Queue struct {
 	debounce time.Duration
 	mu       sync.Mutex
-	pending  map[string]*time.Timer
-	ch       chan string // release names; "" means every release
+	pending  map[string]*time.Timer // debouncing
+	ready    map[string]bool        // to reconcile; "" means every release
+	wake     chan struct{}          // signalled when ready gets a name
 }
 
 // NewQueue returns a queue that delays a release's reconciliation by debounce (0: 2s).
@@ -44,7 +48,7 @@ func NewQueue(debounce time.Duration) *Queue {
 	if debounce <= 0 {
 		debounce = 2 * time.Second
 	}
-	return &Queue{debounce: debounce, pending: map[string]*time.Timer{}, ch: make(chan string, 256)}
+	return &Queue{debounce: debounce, pending: map[string]*time.Timer{}, ready: map[string]bool{}, wake: make(chan struct{}, 1)}
 }
 
 // Notify asks for a reconciliation of release name after the debounce ("" means every release).
@@ -58,12 +62,22 @@ func (q *Queue) Notify(name string) {
 	q.pending[name] = time.AfterFunc(q.debounce, func() {
 		q.mu.Lock()
 		delete(q.pending, name)
+		q.ready[name] = true
 		q.mu.Unlock()
 		select {
-		case q.ch <- name:
-		default: // the queue is full of work already; the next pass covers it
+		case q.wake <- struct{}{}:
+		default: // already signalled: the loop takes every ready name at once
 		}
 	})
+}
+
+// take returns the releases ready to reconcile, sorted, and empties the set.
+func (q *Queue) take() []string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	names := slices.Sorted(maps.Keys(q.ready))
+	clear(q.ready)
+	return names
 }
 
 // Options configure a Loop.
@@ -126,10 +140,16 @@ func (l *Loop) Run(ctx context.Context) {
 			return
 		case <-tick:
 			l.all(ctx)
-		case name := <-l.q.ch:
-			if name == "" {
+		case <-l.q.wake:
+			names := l.q.take()
+			if slices.Contains(names, "") {
 				l.all(ctx)
-			} else {
+				continue
+			}
+			for _, name := range names {
+				if ctx.Err() != nil {
+					return
+				}
 				l.one(ctx, name)
 			}
 		}

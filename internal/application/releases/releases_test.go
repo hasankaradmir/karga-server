@@ -228,20 +228,21 @@ func TestInterruptedOperation(t *testing.T) {
 		}
 	}
 
-	// Another process that is alive. One with this process's PID is from an earlier process: stale.
+	// Only one karga-server runs on a home, and only it runs operations: one left running is from an
+	// earlier process, even when another live process got its PID since (a reboot).
 	live := exec.Command("sleep", "60")
 	if err := live.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = live.Process.Kill(); _ = live.Wait() })
 	begin(live.Process.Pid)
-	if _, err := e.upgrade("image.tag=7.2"); !errors.Is(err, ErrLocked) {
-		t.Fatalf("live lock: want ErrLocked, got %v", err)
+	if _, err := e.upgrade("image.tag=7.2"); !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("PID reused by a live process: want ErrInterrupted, got %v", err)
 	}
 	force := common()
 	force.Force = true
-	if _, err := e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: force, Name: "cache", Package: redisPkg, Values: e.opts("image.tag=7.2")}, nil); !errors.Is(err, ErrLocked) {
-		t.Fatalf("--force must not break a live operation: %v", err)
+	if _, err := e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: force, Name: "cache", Package: redisPkg, Values: e.opts("image.tag=7.1")}, nil); err != nil {
+		t.Fatalf("--force: %v", err)
 	}
 
 	begin(deadPID(t))
@@ -520,6 +521,10 @@ func TestFailedInstallLeavesNothing(t *testing.T) {
 	if _, err := e.svc.c.store.GetRelease(context.Background(), "cache"); !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("failed install left a release: %v", err)
 	}
+	// Its Config and Secret files were written before the image pull failed; they go too.
+	if _, err := os.Stat(filepath.Join(e.svc.c.home, "releases", "cache")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed install left its files: %v", err)
+	}
 	delete(e.rt.Fail, "EnsureImage:redis:7.4")
 	if res := must[*Result](t)(e.install("image.tag=7.4")); res.Revision != 1 {
 		t.Fatalf("reinstall: %+v", res)
@@ -780,6 +785,103 @@ spec:
 		}
 		if !slices.ContainsFunc(res.Warnings, func(w string) bool { return strings.Contains(w, `"api" sets DB_URI from Secret "db"`) }) {
 			t.Fatalf("dry run %v: warnings %q", dry, res.Warnings)
+		}
+	}
+}
+
+// A command that waits for a busy release stops waiting when its client goes away, though the
+// operation's own context is never canceled (ADR-0015).
+func TestLockWaitEndsWithTheClient(t *testing.T) {
+	e := newEnv(t)
+	must[*Result](t)(e.install())
+	unlock, err := e.svc.c.locks.lock(context.Background(), "cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	client, cancel := context.WithCancel(context.Background())
+	ctx := WithWait(context.WithoutCancel(client), client)
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "cache", Package: redisPkg, Values: e.opts("image.tag=7.2")}, nil)
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("want the wait to end with the client, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the command kept waiting for the lock after its client went away")
+	}
+}
+
+// Failed upgrades are pruned too: a pipeline retrying a broken image must not fill the disk.
+func TestPruneAfterFailures(t *testing.T) {
+	e := newEnv(t)
+	must[*Result](t)(e.install())
+	e.rt.Fail["StartWorkload:cache-redis"] = errors.New("boom")
+	for _, tag := range []string{"7.0", "7.1", "7.2", "7.3", "7.4.1"} {
+		if _, err := e.svc.Lifecycle.Upgrade(context.Background(), UpgradeRequest{
+			CommonOptions: CommonOptions{Timeout: time.Second, HistoryMax: new(2)}, Name: "cache", Package: redisPkg, Values: e.opts("image.tag=" + tag)}, nil); err == nil {
+			t.Fatal("the upgrade did not fail")
+		}
+	}
+	hist := must[[]release.Revision](t)(e.svc.Reads.History(context.Background(), "cache"))
+	if len(hist) > 3 { // the 2 newest, and revision 1 that is still applied
+		t.Fatalf("%d revisions kept after failures, history max 2", len(hist))
+	}
+	for _, r := range hist {
+		if r.Number > 1 && r.Number < 5 {
+			if _, err := os.Stat(deployment.RevisionDir(e.svc.c.home, "cache", r.Number)); err == nil && r.Number < 4 {
+				t.Fatalf("revision %d's files kept", r.Number)
+			}
+		}
+	}
+}
+
+// A rollback of an uninstalled release is refused before anything is recorded.
+func TestRollbackOfUninstalledRelease(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	must[*Result](t)(e.install())
+	must[*Result](t)(e.upgrade("image.tag=7.2"))
+	if _, err := e.svc.Lifecycle.Uninstall(ctx, UninstallRequest{Name: "cache", KeepHistory: true}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(e.lastOps(100))
+	if _, err := e.svc.Lifecycle.Rollback(ctx, RollbackRequest{CommonOptions: common(), Name: "cache", Revision: 1}, nil); err == nil || !strings.Contains(err.Error(), "uninstalled") {
+		t.Fatalf("rollback of an uninstalled release: %v", err)
+	}
+	if after := len(e.lastOps(100)); after != before {
+		t.Fatalf("the refused rollback recorded %d operations", after-before)
+	}
+}
+
+// Runtime names are <release>-<name>: release a-b's workload app and release a's workload b-app
+// would share a container. The second install is refused before it changes anything.
+func TestRuntimeNameClashRefusedEarly(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	first := scratchPkg(t)
+	if _, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "a-b", Package: first}, nil); err != nil {
+		t.Fatal(err)
+	}
+	second := scratchPkg(t)
+	tpl, _ := os.ReadFile(filepath.Join(second, "templates", "r.yaml"))
+	if err := os.WriteFile(filepath.Join(second, "templates", "r.yaml"), []byte(strings.Replace(string(tpl), "metadata: {name: app}", "metadata: {name: b-app}", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.rt.Calls = nil
+	_, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "a", Package: second}, nil)
+	if !errors.Is(err, ports.ErrConflict) || !strings.Contains(err.Error(), `release "a-b"`) {
+		t.Fatalf("want a conflict naming release a-b, got %v", err)
+	}
+	for _, c := range e.rt.Calls {
+		if strings.HasPrefix(c, "Create") || strings.HasPrefix(c, "Delete") || strings.HasPrefix(c, "Stop") {
+			t.Fatalf("the refused install changed the runtime: %v", e.rt.Calls)
 		}
 	}
 }

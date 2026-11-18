@@ -52,6 +52,11 @@ type repair struct {
 }
 
 // repairs is the reconciler's memory per release/kind/name; it lives as long as the server.
+// repairTimeout bounds how long a repair waits for what it recreated: the loop repairs one release
+// at a time, so one that does not come up must not hold up the others for long; it is tried again
+// later, with growing pauses.
+const repairTimeout = time.Minute
+
 type repairs struct {
 	mu sync.Mutex
 	m  map[string]*repair
@@ -274,6 +279,9 @@ func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present 
 		key := name + "/" + a.Kind + "/" + a.Name
 		st, err := s.c.rt.GetWorkload(ctx, a.RuntimeName)
 		if err != nil {
+			if !errors.Is(err, ports.ErrNotFound) { // a missing one is recreated by the plan above
+				s.c.log.Warn("reconcile: read workload", "release", name, "workload", a.RuntimeName, "error", err)
+			}
 			continue
 		}
 		var failed *release.AppliedResource
@@ -378,7 +386,7 @@ func (s *Lifecycle) recreate(ctx context.Context, rt ports.Runtime, op *release.
 	}
 	in := deployInput{Name: rel.Name, Type: ReconcileOperation, Revision: rel.CurrentRevision, Resources: rs,
 		Package: pkgOf(rev), Existing: &rel}
-	in.Timeout = deployment.DefaultTimeout
+	in.Timeout = repairTimeout
 	start := len(op.Steps)
 	err = s.c.env.Execute(ctx, rt, deployment.ExecRequest{
 		Release: rel.Name, Revision: rel.CurrentRevision, Supported: rev.RuntimeSupported,

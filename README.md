@@ -58,8 +58,9 @@ $ karga version                          # the CLI's and the server's version an
 - **Operations** run in the server: a client that goes away (Ctrl-C) does not stop them. Operations
   on one release run one after the other, from planning to the end. On `systemctl stop` the server
   waits up to `--shutdown-grace` (5 minutes) for running operations (the unit's `TimeoutStopSec` allows it). Killed in
-  the middle of one, it finishes the operation when it starts again, before it answers requests
-  (`resume` in `karga events`). Every operation records the user of the CLI that asked for it, as
+  the middle of one, it finishes the operation when it starts again (`resume` in `karga events`);
+  commands on that release wait for it, the others are served at once, and a Docker that is not up
+  yet is waited for. Every operation records the user of the CLI that asked for it, as
   the kernel reports it on the socket.
 - **Capabilities:** a package may add only the Linux capabilities Docker gives containers by
   default (`CHOWN`, `NET_BIND_SERVICE`, `SETUID`, ...; usually after `capDrop: [ALL]`). Others give

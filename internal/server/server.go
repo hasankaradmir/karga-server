@@ -99,8 +99,9 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 		return nil, err
 	}
 	var redact func(string)
+	var mask func(string) string
 	if cfg.Redactor != nil {
-		redact = cfg.Redactor.Add
+		redact, mask = cfg.Redactor.Add, cfg.Redactor.Redact
 	}
 	// The composition root: Envoy runs the proxies, the host's network runs probes and port tests.
 	host := &proxyops.Host{Proxies: envoy.Proxies{}, Net: hostnet.Net{}}
@@ -111,7 +112,7 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 		notify = nil
 	}
 	svc, err := releases.New(releases.Deps{Store: store, Runtime: rt,
-		Host: host, Home: cfg.Home, Redact: redact, Log: cfg.Log, AllowedCaps: cfg.AllowedCaps, Notify: notify})
+		Host: host, Home: cfg.Home, Redact: redact, Mask: mask, Log: cfg.Log, AllowedCaps: cfg.AllowedCaps, Notify: notify})
 	if err != nil {
 		_ = store.Close()
 		unlock()
@@ -167,22 +168,36 @@ func (s *Server) Listen() (net.Listener, error) {
 	return l, nil
 }
 
+// mask masks the secret values the service registered (none without a Redactor).
+func (s *Server) mask(v string) string {
+	if s.cfg.Redactor == nil {
+		return v
+	}
+	return s.cfg.Redactor.Redact(v)
+}
+
 // Serve answers on l until ctx is done, then waits for running operations (at most grace).
 func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration) error {
-	hs := &http.Server{Handler: api.NewServer(NewBackend(s.svc), version.Current().Version, api.Options{TempDir: filepath.Join(s.cfg.Home, "tmp"), Classify: classify}), ReadHeaderTimeout: 10 * time.Second,
+	hs := &http.Server{Handler: api.NewServer(NewBackend(s.svc), version.Current().Version, api.Options{TempDir: filepath.Join(s.cfg.Home, "tmp"), Classify: classify, Redact: s.mask}), ReadHeaderTimeout: 10 * time.Second,
 		// Operations record the user of the client process.
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context { return releases.WithActor(ctx, peerUser(c)) }}
-	// Operations a stopped karga-server left running are finished before requests are served, so a
-	// command never meets one half done; clients wait for it. Then the reconciler starts.
 	// Secret values are masked in the log from the start, not only once a release is applied again.
 	s.svc.RegisterSecrets(ctx)
-	s.svc.Lifecycle.Resume(context.WithoutCancel(ctx))
+	// Operations a stopped karga-server left running are resumed in the background: Resume holds
+	// their releases first, so a command on one waits for its resume and never meets it half done,
+	// while every other release is served at once. The reconciler starts when they are done.
+	resumed := s.svc.Lifecycle.Resume(ctx)
 	errc := make(chan error, 1)
 	go func() { errc <- hs.Serve(l) }()
 	loopDone := make(chan struct{})
 	go func() {
 		defer close(loopDone)
-		if s.loop != nil && ctx.Err() == nil {
+		select {
+		case <-resumed:
+		case <-ctx.Done():
+			return
+		}
+		if s.loop != nil {
 			s.loop.Run(ctx)
 		}
 	}()
@@ -196,9 +211,11 @@ func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration)
 	defer cancel()
 	// Operations in progress finish (they do not depend on their clients), at most grace.
 	err := hs.Shutdown(shutdown)
-	select {
-	case <-loopDone:
-	case <-shutdown.Done():
+	for _, done := range []<-chan struct{}{loopDone, resumed} {
+		select {
+		case <-done:
+		case <-shutdown.Done():
+		}
 	}
 	_ = os.Remove(s.cfg.Socket)
 	return err

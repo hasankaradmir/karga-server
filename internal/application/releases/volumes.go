@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -96,43 +98,70 @@ func pause(ctx context.Context, rt ports.Runtime, ms []mounter) (func() error, e
 	return resume, nil
 }
 
-// Backup writes req.Volume to w.
-func (s *Volumes) Backup(ctx context.Context, req VolumeBackupRequest, w io.Writer) (err error) {
-	// A live copy only reads: it holds nothing, so a slow client never blocks the release. A copy
-	// with --stop stops workloads and holds the release, as an operation, until they run again.
-	if req.Stop {
-		unlock, err := s.c.locks.lock(ctx, req.Release)
+// Backup writes req.Volume to w. A live copy only reads: it holds nothing, so a slow client never
+// blocks the release. A copy with Stop stops the workloads mounting the volume and holds the
+// release, as an operation, only while the copy is made: it goes to a temporary file under
+// $KARGA_HOME/tmp, the workloads run again, and the file is sent after.
+func (s *Volumes) Backup(ctx context.Context, req VolumeBackupRequest, w io.Writer) error {
+	if !req.Stop {
+		ms, err := s.mounters(ctx, req.Release, req.Volume)
 		if err != nil {
 			return err
 		}
-		defer unlock()
+		s.c.log.Info("volume backup", "release", req.Release, "volume", req.Volume, "user", actorOf(ctx))
+		return s.write(ctx, req, ms[0], w)
 	}
+	dir := filepath.Join(s.c.home, "tmp")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, "karga-backup-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close(); _ = os.Remove(f.Name()) }()
+	if err := s.stopped(ctx, req, f); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	_, err = io.Copy(w, f)
+	return err
+}
+
+// stopped copies req.Volume to w with the workloads mounting it stopped, as an operation holding
+// the release; they run again before it returns.
+func (s *Volumes) stopped(ctx context.Context, req VolumeBackupRequest, w io.Writer) (err error) {
+	unlock, err := s.c.locks.lock(ctx, req.Release)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	ms, err := s.mounters(ctx, req.Release, req.Volume)
 	if err != nil {
 		return err
 	}
-	if req.Stop {
-		rel, err := s.c.store.GetRelease(ctx, req.Release)
-		if err != nil {
-			return err
-		}
-		op, err := s.c.begin(ctx, req.Release, "volume-backup", rel.CurrentRevision, false, release.Options{})
-		if err != nil {
-			return err
-		}
-		defer func() { s.c.finish(ctx, op, err) }()
-	} else {
-		s.c.log.Info("volume backup", "release", req.Release, "volume", req.Volume, "user", actorOf(ctx))
+	rel, err := s.c.store.GetRelease(ctx, req.Release)
+	if err != nil {
+		return err
 	}
+	op, err := s.c.begin(ctx, req.Release, "volume-backup", rel.CurrentRevision, false, release.Options{})
+	if err != nil {
+		return err
+	}
+	defer func() { s.c.finish(ctx, op, err) }()
+	resume, perr := pause(ctx, s.c.rt, ms)
+	defer func() { err = errors.Join(err, resume()) }()
+	if perr != nil {
+		return perr
+	}
+	return s.write(ctx, req, ms[0], w)
+}
+
+// write copies the volume, through the workload src that mounts it, to w as a backup archive.
+func (s *Volumes) write(ctx context.Context, req VolumeBackupRequest, src mounter, w io.Writer) error {
 	rt := s.c.rt
-	if req.Stop {
-		resume, perr := pause(ctx, rt, ms)
-		defer func() { err = errors.Join(err, resume()) }()
-		if perr != nil {
-			return perr
-		}
-	}
-	src := ms[0]
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
 	man, _ := yaml.Marshal(BackupManifest{Release: req.Release, Volume: req.Volume, MountPath: src.path, Created: s.c.now().UTC()})

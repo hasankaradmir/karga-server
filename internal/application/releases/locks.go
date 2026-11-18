@@ -2,11 +2,9 @@ package releases
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
@@ -20,17 +18,34 @@ type opLocks struct {
 }
 
 // lock takes release rel for one operation, from reading its state to recording the outcome, so
-// what an operation plans cannot go stale before it runs. It waits until rel is free or ctx ends.
-// Call the returned function to let go.
+// what an operation plans cannot go stale before it runs. It waits until rel is free or the wait's
+// context (WithWait; ctx otherwise) ends. Call the returned function to let go.
 func (o *opLocks) lock(ctx context.Context, rel string) (func(), error) {
 	l := o.ref(rel)
+	wait := waitContext(ctx)
 	select {
 	case l.ch <- struct{}{}:
 		return o.unlock(rel, l), nil
-	case <-ctx.Done():
+	case <-wait.Done():
 		o.unref(rel)
-		return nil, fmt.Errorf("waiting for the operation running on %s: %w", rel, ctx.Err())
+		return nil, fmt.Errorf("waiting for the operation running on %s: %w", rel, wait.Err())
 	}
+}
+
+type waitKey struct{}
+
+// WithWait bounds by wait what an operation on ctx waits for before it changes anything (a busy
+// release's lock), without canceling the operation: a command whose client went away stops
+// waiting, one that started goes on (ADR-0015).
+func WithWait(ctx, wait context.Context) context.Context {
+	return context.WithValue(ctx, waitKey{}, wait)
+}
+
+func waitContext(ctx context.Context) context.Context {
+	if w, ok := ctx.Value(waitKey{}).(context.Context); ok {
+		return w
+	}
+	return ctx
 }
 
 // tryLock is lock without waiting: it fails with ErrLocked when rel is busy.
@@ -84,12 +99,6 @@ func (o *opLocks) unref(rel string) {
 	}
 }
 
-// processAlive reports whether pid runs on this host (signal 0 only checks existence).
-func processAlive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
 func describe(op release.Operation) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s of revision %d started %s by pid %d on %s", op.Type, op.Revision, op.StartedAt.Local().Format(time.RFC3339), op.PID, op.Hostname)
@@ -102,17 +111,15 @@ func describe(op release.Operation) string {
 	return b.String()
 }
 
-// begin records a running operation; the caller holds the release's lock. A live process holding the
-// release always wins; a dead one is only overridden with force (D15).
+// begin records a running operation; the caller holds the release's lock. An interrupted operation
+// is only overridden with force (D15).
 func (s *core) begin(ctx context.Context, rel, typ string, revision int, force bool, opts release.Options) (release.Operation, error) {
 	op := release.Operation{Release: rel, Type: typ, Revision: revision, Status: release.OperationRunning,
 		PID: s.pid, Hostname: s.hostname, Actor: actorOf(ctx), Options: opts, StartedAt: s.now()}
 	id, err := s.store.BeginOperation(ctx, op, func(running release.Operation) error {
-		// Under the release mutex no operation of this process runs: one with its PID is from an
-		// earlier process that got the same PID (a container's PID 1).
-		if running.Hostname == s.hostname && running.PID != s.pid && processAlive(running.PID) {
-			return fmt.Errorf("%w: %s", ErrLocked, describe(running))
-		}
+		// Under the release's lock no operation of this process runs, and only one karga-server runs
+		// on a home (its lock file): an operation left running is an earlier process's, whatever
+		// process has its PID now.
 		if !force {
 			return fmt.Errorf("%w: %s\nInspect with 'karga status %s'; rerun with --force to continue", ErrInterrupted, describe(running), rel)
 		}

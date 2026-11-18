@@ -154,6 +154,9 @@ func (s *Lifecycle) Rollback(ctx context.Context, req RollbackRequest, progress 
 	if existing == nil {
 		return nil, fmt.Errorf("release %s: %w", req.Name, ports.ErrNotFound)
 	}
+	if err := existing.CanRollback(); err != nil {
+		return nil, invalid{err}
+	}
 	target := req.Revision
 	if target == 0 {
 		if target, err = s.rollbackTarget(ctx, existing); err != nil {
@@ -263,6 +266,7 @@ func (s *Lifecycle) uninstall(ctx context.Context, rt ports.Runtime, rel release
 		rel.Status = release.StatusFailed
 		return errors.Join(err, s.c.store.SaveRelease(bg, rel))
 	}
+	s.c.repairs.reset(req.Name) // what was repaired, or given up on, is no more
 	if !req.KeepHistory {
 		return s.c.store.DeleteRelease(bg, req.Name)
 	}

@@ -24,6 +24,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/hasankaradmir/karga-server/internal/fsutil"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -173,11 +174,7 @@ func writeAtomic(dir, name string, data []byte) error {
 	if old, err := os.ReadFile(filepath.Join(dir, name)); err == nil && bytes.Equal(old, data) {
 		return nil
 	}
-	tmp := filepath.Join(dir, "."+name+".tmp")
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(dir, name))
+	return fsutil.WriteFile(filepath.Join(dir, name), data, 0o600)
 }
 
 // Write creates the proxy directory (0700) and writes bootstrap, clusters and listeners. Clusters

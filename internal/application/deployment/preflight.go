@@ -10,6 +10,7 @@ import (
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -36,6 +37,15 @@ func (e *Env) Preflight(ctx context.Context, rt ports.Runtime, info ports.Runtim
 		case *resource.VolumeSpec:
 			need(r, ports.CapVolumeDriver(s.Driver), "volume driver "+s.Driver)
 		case *resource.WorkloadSpec:
+			// Runtime names are <release>-<name>, so another release may hold this one's name.
+			rn := proxyops.RuntimeName(release, r.Metadata.Name)
+			if st, err := rt.GetWorkload(ctx, rn); err == nil && st.Labels[ports.LabelRelease] != release {
+				owner := "is not karga's"
+				if other := st.Labels[ports.LabelRelease]; other != "" {
+					owner = fmt.Sprintf("belongs to release %q (containers are named <release>-<name>)", other)
+				}
+				errs = append(errs, fmt.Errorf("%s %q: its container %s %s; rename the workload or the release: %w", r.Kind, r.Metadata.Name, rn, owner, ports.ErrConflict))
+			}
 			if s.Resources != nil && s.Resources.Memory != "" {
 				need(r, ports.CapResourcesMemory, "a memory limit")
 			}

@@ -102,8 +102,10 @@ type Deps struct {
 	Host *proxyops.Host
 	// Home is $KARGA_HOME; its state.key is created on first use.
 	Home string
-	// Redact registers secret values with the log redactor (nil: none).
+	// Redact registers secret values with the log redactor (nil: none); Mask replaces those it
+	// knows in a text (nil: none), for what operations record.
 	Redact func(string)
+	Mask   func(string) string
 	Log    *slog.Logger
 	// AllowedCaps are the Linux capabilities, besides resource.DefaultCaps, the host administrator
 	// lets packages add (karga-server --allow-capabilities).
@@ -128,6 +130,9 @@ func New(d Deps) (*Service, error) {
 		d.Log = slog.New(slog.DiscardHandler)
 	}
 	env := deployment.NewEnv(d.Host, deployment.EnvConfig{Home: d.Home, DigestKey: key, Redact: d.Redact, AllowedCaps: d.AllowedCaps})
+	if d.Mask != nil {
+		d.Store = maskingStore{d.Store, d.Mask}
+	}
 	if d.Notify == nil {
 		d.Notify = func(string) {}
 	}

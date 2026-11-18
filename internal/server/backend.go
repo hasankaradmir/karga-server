@@ -33,6 +33,10 @@ func NewBackend(svc *releases.Service) Backend {
 
 var _ api.Backend = Backend{}
 
+// wait lets the service stop waiting for a busy release when the client goes away: the API runs
+// mutations on a context that is not canceled then, and gives the client's with ClientContext.
+func wait(ctx context.Context) context.Context { return releases.WithWait(ctx, api.ClientContext(ctx)) }
+
 func common(o api.CommonOptions) releases.CommonOptions {
 	return releases.CommonOptions{DryRun: o.DryRun, Timeout: time.Duration(o.Timeout), HistoryMax: o.HistoryMax, Force: o.Force, DeleteVolumes: o.DeleteVolumes}
 }
@@ -56,28 +60,28 @@ func events(progress func(api.Event)) func(deployment.Event) {
 
 // Install implements api.Backend.
 func (b Backend) Install(ctx context.Context, req api.InstallRequest, progress func(api.Event)) (*api.Result, error) {
-	res, err := b.lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common(req.CommonOptions), Name: req.Name, Package: req.Package,
+	res, err := b.lifecycle.Install(wait(ctx), releases.InstallRequest{CommonOptions: common(req.CommonOptions), Name: req.Name, Package: req.Package,
 		Values: values(req.Values)}, events(progress))
 	return wireResult(res), err
 }
 
 // Upgrade implements api.Backend.
 func (b Backend) Upgrade(ctx context.Context, req api.UpgradeRequest, progress func(api.Event)) (*api.Result, error) {
-	res, err := b.lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common(req.CommonOptions), Name: req.Name, Package: req.Package,
+	res, err := b.lifecycle.Upgrade(wait(ctx), releases.UpgradeRequest{CommonOptions: common(req.CommonOptions), Name: req.Name, Package: req.Package,
 		Values: values(req.Values), ReuseValues: req.ReuseValues, Install: req.Install, Strategy: req.Strategy}, events(progress))
 	return wireResult(res), err
 }
 
 // Rollback implements api.Backend.
 func (b Backend) Rollback(ctx context.Context, req api.RollbackRequest, progress func(api.Event)) (*api.Result, error) {
-	res, err := b.lifecycle.Rollback(ctx, releases.RollbackRequest{CommonOptions: common(req.CommonOptions), Name: req.Name,
+	res, err := b.lifecycle.Rollback(wait(ctx), releases.RollbackRequest{CommonOptions: common(req.CommonOptions), Name: req.Name,
 		Revision: req.Revision, Strategy: req.Strategy}, events(progress))
 	return wireResult(res), err
 }
 
 // Uninstall implements api.Backend.
 func (b Backend) Uninstall(ctx context.Context, req api.UninstallRequest) (*api.Result, error) {
-	res, err := b.lifecycle.Uninstall(ctx, releases.UninstallRequest{Name: req.Name, Force: req.Force, DeleteVolumes: req.DeleteVolumes,
+	res, err := b.lifecycle.Uninstall(wait(ctx), releases.UninstallRequest{Name: req.Name, Force: req.Force, DeleteVolumes: req.DeleteVolumes,
 		KeepHistory: req.KeepHistory, DryRun: req.DryRun})
 	return wireResult(res), err
 }
@@ -163,17 +167,17 @@ func (b Backend) Exec(ctx context.Context, req api.ExecRequest) (int, error) {
 
 // BackupVolume implements api.Backend.
 func (b Backend) BackupVolume(ctx context.Context, req api.VolumeBackupRequest, w io.Writer) error {
-	return b.volumes.Backup(ctx, releases.VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Stop: req.Stop}, w)
+	return b.volumes.Backup(wait(ctx), releases.VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Stop: req.Stop}, w)
 }
 
 // RestoreVolume implements api.Backend.
 func (b Backend) RestoreVolume(ctx context.Context, req api.VolumeRestoreRequest, r io.Reader) error {
-	return b.volumes.Restore(ctx, releases.VolumeRestoreRequest{Release: req.Release, Volume: req.Volume, Force: req.Force, Name: req.Name}, r)
+	return b.volumes.Restore(wait(ctx), releases.VolumeRestoreRequest{Release: req.Release, Volume: req.Volume, Force: req.Force, Name: req.Name}, r)
 }
 
 // Reconcile implements api.Backend.
 func (b Backend) Reconcile(ctx context.Context, req api.ReconcileRequest) (*api.ReconcileResult, error) {
-	res, err := b.lifecycle.Repair(ctx, req.Name, req.Force)
+	res, err := b.lifecycle.Repair(wait(ctx), req.Name, req.Force)
 	if res == nil {
 		return nil, err
 	}
@@ -182,12 +186,12 @@ func (b Backend) Reconcile(ctx context.Context, req api.ReconcileRequest) (*api.
 
 // Pause implements api.Backend.
 func (b Backend) Pause(ctx context.Context, req api.ReleaseRequest) error {
-	return b.lifecycle.Pause(ctx, req.Name, true)
+	return b.lifecycle.Pause(wait(ctx), req.Name, true)
 }
 
 // Resume implements api.Backend.
 func (b Backend) Resume(ctx context.Context, req api.ReleaseRequest) error {
-	return b.lifecycle.Pause(ctx, req.Name, false)
+	return b.lifecycle.Pause(wait(ctx), req.Name, false)
 }
 
 // Events implements api.Backend.

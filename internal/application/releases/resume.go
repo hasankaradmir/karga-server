@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -12,33 +13,78 @@ import (
 // ResumeOperation is the type of the operation that finishes one karga-server left running when it stopped.
 const ResumeOperation = release.OpResume
 
+// resumeRetry is the first pause before an operation is resumed again when the runtime is
+// unavailable; it doubles up to resumeRetryMax.
+var resumeRetry = 5 * time.Second
+
+const resumeRetryMax = 5 * time.Minute
+
 // Resume finishes the operations a stopped karga-server left running. Install, upgrade and rollback
 // deploy their revision again: the executor skips what is already done. Uninstall runs again. Each
 // resumes with the options its request gave (--delete-volumes, --keep-history, --strategy,
 // --timeout), recorded with the operation. Other operations are aborted; the reconciler starts what
 // they stopped.
-func (s *Lifecycle) Resume(ctx context.Context) {
-	rels, err := s.c.store.ListReleases(ctx)
-	if err != nil {
-		s.c.log.Error("resume: list releases", "error", err)
-		return
+//
+// It takes the lock of every release it resumes before it returns, then resumes them one by one in
+// the background: a command on one of them waits for its resume; commands on the others run at once.
+// A resume the runtime is unavailable for (karga-server started before Docker) is tried again, with
+// growing pauses, until ctx ends. The channel is closed when every resume has ended.
+func (s *Lifecycle) Resume(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
+	type held struct {
+		name   string
+		unlock func()
 	}
-	for _, rel := range rels {
-		if err := s.resumeRelease(ctx, rel.Name); err != nil {
-			s.c.log.Error("resume interrupted operation", "release", rel.Name, "error", err)
+	var pending []held
+	if rels, err := s.c.store.ListReleases(ctx); err != nil {
+		s.c.log.Error("resume: list releases", "error", err)
+	} else {
+		for _, rel := range rels {
+			if _, err := s.c.store.RunningOperation(ctx, rel.Name); err != nil {
+				continue // nothing to resume (or it cannot be read: the command that meets it says so)
+			}
+			unlock, err := s.c.locks.lock(ctx, rel.Name)
+			if err != nil {
+				s.c.log.Error("resume interrupted operation", "release", rel.Name, "error", err)
+				continue
+			}
+			pending = append(pending, held{rel.Name, unlock})
+		}
+	}
+	go func() {
+		defer close(done)
+		for _, h := range pending {
+			s.resumeHeld(ctx, h.name)
+			h.unlock()
+		}
+	}()
+	return done
+}
+
+// resumeHeld resumes release name, whose lock the caller holds, once the runtime answers: a resume
+// started without it would fail and leave the release failed instead of resumed.
+func (s *Lifecycle) resumeHeld(ctx context.Context, name string) {
+	for pause := resumeRetry; ; pause = min(2*pause, resumeRetryMax) {
+		_, err := s.c.rt.Info(ctx)
+		if !errors.Is(err, ports.ErrUnavailable) {
+			// A resume that started finishes even when the server stops: ctx only ends the waiting.
+			if err := s.resumeRelease(context.WithoutCancel(ctx), name); err != nil {
+				s.c.log.Error("resume interrupted operation", "release", name, "error", err)
+			}
+			return
+		}
+		s.c.log.Warn("resume interrupted operation: the runtime is unavailable; trying again", "release", name, "in", pause, "error", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(pause):
 		}
 	}
 }
 
-// resumeRelease resumes the operation left running on release name, if any. Under the release's lock
-// no operation of this process runs, so one recorded with this process's PID is an earlier
-// process's that had the same PID.
+// resumeRelease resumes the operation left running on release name, if any. The caller holds the
+// release's lock, so no operation of this process runs on it: the operation is an earlier process's.
 func (s *Lifecycle) resumeRelease(ctx context.Context, name string) error {
-	unlock, err := s.c.locks.lock(ctx, name)
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	rel, err := s.c.store.GetRelease(ctx, name)
 	if err != nil {
 		return err
@@ -49,9 +95,6 @@ func (s *Lifecycle) resumeRelease(ctx context.Context, name string) error {
 	}
 	if err != nil {
 		return err
-	}
-	if op.Hostname == s.c.hostname && op.PID != s.c.pid && processAlive(op.PID) {
-		return nil // a live process still works on it
 	}
 	return s.resume(ctx, rel, op)
 }

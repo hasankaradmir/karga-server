@@ -95,7 +95,7 @@ func TestLifecycleGolden(t *testing.T) {
 		PID: deadPID(t), Hostname: e.svc.c.hostname, StartedAt: time.Now()}, func(release.Operation) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	e.svc.Lifecycle.Resume(ctx)
+	<-e.svc.Lifecycle.Resume(ctx)
 	record("resume an interrupted upgrade", nil, nil)
 
 	res, err = e.svc.Lifecycle.Uninstall(ctx, UninstallRequest{Name: "cache"})

@@ -76,7 +76,7 @@ func (s *Gateway) RemoveListener(ctx context.Context, name string) error {
 func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settings, map[string][]string) error) error {
 	rt := s.c.rt
 	err := func() error {
-		unlock, err := gateway.Lock(s.c.home)
+		unlock, err := gateway.Lock(ctx, s.c.home)
 		if err != nil {
 			return err
 		}

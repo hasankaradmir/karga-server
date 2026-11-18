@@ -44,8 +44,9 @@ operations it starts.
 away loses only the progress. Each operation holds its release from reading its state to recording
 the outcome, so what it plans cannot go stale; others wait, and a reconciliation skips a busy
 release. On SIGTERM the server stops accepting requests and waits up to `--shutdown-grace` (5 minutes) for running
-operations. When it starts, it resumes the operations it left running before it answers requests
-or repairs anything (section 5).
+operations. When it starts, it holds the releases it left an operation running on and resumes them
+in the background before it repairs anything (section 5); a command on such a release waits for its
+resume, the others are served at once.
 
 **Reconciliation.** Desired state is each release's current revision and its applied resources;
 only install, upgrade and rollback change it. karga-server's reconciler (`internal/application/
@@ -53,7 +54,8 @@ reconciler`, the queue and the loop; `releases.Lifecycle.Repair`, the repairs) b
 
 - *Triggers:* Docker events of karga's containers (die, stop, destroy, oom, unhealthy; 2 s debounce),
   a pass over every release every 30 s (`--reconcile-interval`), the server's start, and every
-  install, upgrade or rollback. One release at a time.
+  install, upgrade or rollback. One release at a time, from a queue that holds each release once
+  and drops none (ADR-0019).
 - *Scope:* deployed releases that are not paused and have no operation running. A failed release is
   the user's (D2). Within the server a per-release mutex serializes commands and repairs: a command
   waits for a repair; a repair skips a busy release.
@@ -61,7 +63,8 @@ reconciler`, the queue and the loop; `releases.Lifecycle.Repair`, the repairs) b
   label differs from the applied digest (changed outside karga) are created from the current revision
   through the usual plan and executor, creates only, without a new revision; stopped containers are
   started; unhealthy ones (Docker's check, or karga's tcp/http check failing `retries` times) are
-  restarted; the gateway is synced if something is exposed.
+  restarted; the gateway is synced if something is exposed. A repair waits at most a minute for what
+  it recreated, so one release that does not come up holds up the others no longer than that.
 - *Backoff:* per resource, 10 s doubling to 5 min; after 5 failures in 10 minutes it gives up until
   the user acts on the release or runs `karga reconcile`.
 - Every repair is an operation of type `reconcile`; `karga events` lists them.
@@ -155,8 +158,9 @@ The state is YAML files under `$KARGA_HOME/state` (ADR-0017), mode 0600 in 0700 
 Files are replaced atomically; a transaction writes the release file last, so a crash leaves at
 most unreferenced files. `version.yaml` holds the format version; a newer one is refused.
 
-Every mutating command records an operation first. An operation whose process is alive on this
-host locks the release; one whose process is gone is aborted only with `--force`. Operations do
+Every mutating command records an operation first. One karga-server runs per home and only it runs
+operations, so an operation found running after a restart is interrupted: it is resumed, or aborted
+only with `--force`. Operations do
 not depend on their client's connection. When karga-server starts it resumes the operations it
 left running, with the options recorded on the operation (`--delete-volumes`, `--strategy`,
 `--timeout`, `--keep-history`): install, upgrade and rollback deploy their recorded revision again

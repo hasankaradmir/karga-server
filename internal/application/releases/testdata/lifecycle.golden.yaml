@@ -210,6 +210,7 @@
     - resume 5 succeeded
   runtimeCalls:
     - 'Info:'
+    - 'Info:'
     - StopWorkload:karga-gateway
 - step: uninstall
   result:
