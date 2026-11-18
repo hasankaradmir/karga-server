@@ -129,8 +129,7 @@ func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) 
 	if err != nil {
 		return nil, err
 	}
-	rt := s.c.rt
-	objs, err := rt.ListManaged(ctx, name)
+	objs, err := s.c.rt.ListManaged(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -140,48 +139,9 @@ func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) 
 	}
 	tracked := map[string]bool{}
 	for _, a := range applied {
-		st := ResourceStatus{Kind: a.Kind, Name: a.Name, RuntimeName: a.RuntimeName, Revision: a.Revision, Desired: "applied"}
-		if a.Digest == "" {
-			st.Desired = "failed"
-		}
-		switch a.Kind {
-		case resource.KindWorkload, deployment.KindProxy:
-			tracked[ports.ObjectWorkload+"/"+a.RuntimeName] = true
-			ws, err := rt.GetWorkload(ctx, a.RuntimeName)
-			switch {
-			case errors.Is(err, ports.ErrNotFound):
-				st.Actual = "missing"
-			case err != nil:
-				return nil, err
-			default:
-				st.Actual, st.Health, st.Restarts, st.OOMKilled = ws.State, ws.Health, ws.RestartCount, ws.OOMKilled
-				if r, derr := resource.DecodeStored(a.Spec); a.Kind == resource.KindWorkload && derr == nil {
-					if w, ok := r.Spec.(*resource.WorkloadSpec); ok {
-						st.Health = s.c.env.ProbeHealth(ctx, ws, w) // tcp/http checks are karga's
-					}
-				}
-			}
-			if a.Kind == deployment.KindProxy {
-				st.Backend = s.backends(deployment.ProxyDir(s.c.home, name), "")
-			}
-		case resource.KindService:
-			// A Service has no container: it is routed when the release proxy sends its ports somewhere.
-			st.Actual = "not routed"
-			if b := s.backends(deployment.ProxyDir(s.c.home, name), a.Name+"-p"); b != "" {
-				st.Actual, st.Backend = "routed", b
-			}
-		case resource.KindNetwork, resource.KindVolume:
-			kind := ports.ObjectNetwork
-			if a.Kind == resource.KindVolume {
-				kind = ports.ObjectVolume
-			}
-			tracked[kind+"/"+a.RuntimeName] = true
-			st.Actual = "missing"
-			if present[kind+"/"+a.RuntimeName] {
-				st.Actual = "present"
-			}
-		default:
-			st.Actual = "file" // Config and Secret live under the revision directory
+		st, err := s.resourceStatus(ctx, name, a, present, tracked)
+		if err != nil {
+			return nil, err
 		}
 		rep.Resources = append(rep.Resources, st)
 	}
@@ -192,6 +152,55 @@ func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) 
 		}
 	}
 	return rep, nil
+}
+
+// resourceStatus compares applied resource a of release name with the runtime. present holds the
+// release's runtime objects ("kind/name"); the ones a accounts for are added to tracked.
+func (s *Reads) resourceStatus(ctx context.Context, name string, a release.AppliedResource, present, tracked map[string]bool) (ResourceStatus, error) {
+	st := ResourceStatus{Kind: a.Kind, Name: a.Name, RuntimeName: a.RuntimeName, Revision: a.Revision, Desired: "applied"}
+	if a.Digest == "" {
+		st.Desired = "failed"
+	}
+	switch a.Kind {
+	case resource.KindWorkload, deployment.KindProxy:
+		tracked[ports.ObjectWorkload+"/"+a.RuntimeName] = true
+		ws, err := s.c.rt.GetWorkload(ctx, a.RuntimeName)
+		switch {
+		case errors.Is(err, ports.ErrNotFound):
+			st.Actual = "missing"
+		case err != nil:
+			return st, err
+		default:
+			st.Actual, st.Health, st.Restarts, st.OOMKilled = ws.State, ws.Health, ws.RestartCount, ws.OOMKilled
+			if r, derr := resource.DecodeStored(a.Spec); a.Kind == resource.KindWorkload && derr == nil {
+				if w, ok := r.Spec.(*resource.WorkloadSpec); ok {
+					st.Health = s.c.env.ProbeHealth(ctx, ws, w) // tcp/http checks are karga's
+				}
+			}
+		}
+		if a.Kind == deployment.KindProxy {
+			st.Backend = s.backends(deployment.ProxyDir(s.c.home, name), "")
+		}
+	case resource.KindService:
+		// A Service has no container: it is routed when the release proxy sends its ports somewhere.
+		st.Actual = "not routed"
+		if b := s.backends(deployment.ProxyDir(s.c.home, name), a.Name+"-p"); b != "" {
+			st.Actual, st.Backend = "routed", b
+		}
+	case resource.KindNetwork, resource.KindVolume:
+		kind := ports.ObjectNetwork
+		if a.Kind == resource.KindVolume {
+			kind = ports.ObjectVolume
+		}
+		tracked[kind+"/"+a.RuntimeName] = true
+		st.Actual = "missing"
+		if present[kind+"/"+a.RuntimeName] {
+			st.Actual = "present"
+		}
+	default:
+		st.Actual = "file" // Config and Secret live under the revision directory
+	}
+	return st, nil
 }
 
 // backends lists the aliases a release proxy routes to, e.g. "karga-api-r2, karga-web-r3", for the
