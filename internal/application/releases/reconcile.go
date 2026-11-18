@@ -205,10 +205,7 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 	if res.Skipped != "" {
 		return res, nil
 	}
-	rt, err := s.c.runtime(ctx)
-	if err != nil {
-		return nil, err
-	}
+	rt := s.c.rt
 	applied, err := s.c.store.ListResources(ctx, name)
 	if err != nil {
 		return nil, err

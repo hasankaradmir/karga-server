@@ -14,10 +14,7 @@ import (
 
 // Routes lists what the host gateway serves, across releases.
 func (s *Gateway) Routes(ctx context.Context) ([]gateway.Exposed, error) {
-	rt, err := s.c.rtFn(ctx)
-	if err != nil {
-		return nil, err
-	}
+	rt := s.c.rt
 	return gateway.Routes(ctx, rt, s.c.home)
 }
 
@@ -27,20 +24,14 @@ func (s *Gateway) Settings(ctx context.Context) (gateway.Settings, map[string][]
 	if err != nil {
 		return settings, nil, err
 	}
-	rt, err := s.c.rtFn(ctx)
-	if err != nil {
-		return settings, nil, err
-	}
+	rt := s.c.rt
 	users, err := gateway.Users(ctx, rt, s.c.home)
 	return settings, users, err
 }
 
 // Health reports the gateway container and whether its Envoy is ready.
 func (s *Gateway) Health(ctx context.Context) (gateway.State, error) {
-	rt, err := s.c.rtFn(ctx)
-	if err != nil {
-		return gateway.State{}, err
-	}
+	rt := s.c.rt
 	return gateway.Health(ctx, rt, s.c.env.Host(), s.c.home)
 }
 
@@ -86,11 +77,8 @@ func (s *Gateway) RemoveListener(ctx context.Context, name string) error {
 // updateGateway changes the gateway settings under the gateway lock, stores them and applies them
 // to a running gateway, waiting until it routes again.
 func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settings, map[string][]string) error) error {
-	rt, err := s.c.runtime(ctx)
-	if err != nil {
-		return err
-	}
-	err = func() error {
+	rt := s.c.rt
+	err := func() error {
 		unlock, err := gateway.Lock(s.c.home)
 		if err != nil {
 			return err

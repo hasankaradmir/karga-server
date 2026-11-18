@@ -124,10 +124,7 @@ func (s *Volumes) BackupVolume(ctx context.Context, req VolumeBackupRequest, w i
 	} else {
 		s.c.log.Info("volume backup", "release", req.Release, "volume", req.Volume, "user", actorOf(ctx))
 	}
-	rt, err := s.c.rtFn(ctx)
-	if err != nil {
-		return err
-	}
+	rt := s.c.rt
 	if req.Stop {
 		resume, perr := pause(ctx, rt, ms)
 		defer func() { err = errors.Join(err, resume()) }()
@@ -205,10 +202,7 @@ func (s *Volumes) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r
 		return err
 	}
 	defer func() { s.c.finish(ctx, op, err) }()
-	rt, err := s.c.rtFn(ctx)
-	if err != nil {
-		return err
-	}
+	rt := s.c.rt
 	resume, err := pause(ctx, rt, ms)
 	defer func() { err = errors.Join(err, resume()) }()
 	if err != nil {

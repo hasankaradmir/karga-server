@@ -110,7 +110,7 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 	if cfg.ReconcileInterval < 0 {
 		notify = nil
 	}
-	svc, err := releases.New(releases.Deps{Store: store, Runtime: func(context.Context) (ports.Runtime, error) { return rt, nil },
+	svc, err := releases.New(releases.Deps{Store: store, Runtime: rt,
 		Host: host, Home: cfg.Home, Redact: redact, Log: cfg.Log, AllowedCaps: cfg.AllowedCaps, Notify: notify})
 	if err != nil {
 		_ = store.Close()

@@ -129,10 +129,7 @@ func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) 
 	if err != nil {
 		return nil, err
 	}
-	rt, err := s.c.runtime(ctx)
-	if err != nil {
-		return nil, err
-	}
+	rt := s.c.rt
 	objs, err := rt.ListManaged(ctx, name)
 	if err != nil {
 		return nil, err

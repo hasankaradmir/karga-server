@@ -173,7 +173,12 @@ func serviceIn(t *testing.T, home, name string) (*releases.Service, ports.Runtim
 		}
 		_ = store.Close()
 	})
-	svc, err := releases.New(releases.Deps{Store: store, Runtime: func(context.Context) (ports.Runtime, error) { return rt, nil }, Host: testHost, Home: home})
+	info, err := rt.Info(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	testHost.UseRuntime(info)
+	svc, err := releases.New(releases.Deps{Store: store, Runtime: rt, Host: testHost, Home: home})
 	if err != nil {
 		t.Fatal(err)
 	}

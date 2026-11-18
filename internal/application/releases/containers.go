@@ -24,10 +24,7 @@ func (s *Containers) Logs(ctx context.Context, req LogsRequest, w io.Writer) err
 	if err != nil {
 		return err
 	}
-	rt, err := s.c.rtFn(ctx)
-	if err != nil {
-		return err
-	}
+	rt := s.c.rt
 	if len(containers) == 1 {
 		return rt.Logs(ctx, containers[0].runtime, req.Tail, req.Follow, w)
 	}
@@ -158,10 +155,7 @@ func (s *Containers) Exec(ctx context.Context, rel, workload string, opts ports.
 			continue
 		}
 		if a.Name == workload {
-			rt, err := s.c.rtFn(ctx)
-			if err != nil {
-				return -1, err
-			}
+			rt := s.c.rt
 			return rt.Exec(ctx, a.RuntimeName, opts)
 		}
 		names = append(names, a.Name)

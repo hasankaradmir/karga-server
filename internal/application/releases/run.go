@@ -110,40 +110,19 @@ func (s *core) nextRevision(ctx context.Context, name string) (int, error) {
 var inProgress = []release.Status{release.StatusPending, release.StatusDeploying, release.StatusUpgrading, release.StatusUninstalling}
 
 // deploy plans the desired revision against the applied state and executes it.
-// runtime connects to the container runtime and tells the deployment package whether it can run
-// karga's proxies there.
-func (s *core) runtime(ctx context.Context) (ports.Runtime, error) {
-	rt, err := s.rtFn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	info, err := rt.Info(ctx)
-	if err != nil {
-		return nil, err
-	}
-	s.env.Host().UseRuntime(info)
-	return rt, nil
-}
-
 func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	applied, err := s.store.ListResources(ctx, in.Name)
 	if err != nil {
 		return nil, err
 	}
-	// A dry run plans without a runtime if there is none (as if proxies were unavailable).
-	rt, rtErr := s.runtime(ctx)
-	if rtErr != nil && !in.DryRun {
-		return nil, rtErr
-	}
+	rt := s.rt
 	recorded := applied
-	var anon deployment.Anonymous
-	if rtErr == nil {
-		if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
-			return nil, err
-		}
-		if anon, err = anonymousVolumes(ctx, rt, in.Name, in.Resources); err != nil {
-			return nil, err
-		}
+	if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
+		return nil, err
+	}
+	anon, err := anonymousVolumes(ctx, rt, in.Name, in.Resources)
+	if err != nil {
+		return nil, err
 	}
 	plan, err := s.env.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
 	if err != nil {

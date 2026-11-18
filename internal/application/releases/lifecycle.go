@@ -227,10 +227,7 @@ func (s *Lifecycle) uninstallRelease(ctx context.Context, req UninstallRequest) 
 	if existing.Status == release.StatusUninstalled {
 		return nil, fmt.Errorf("%w: release %s is already uninstalled", ports.ErrConflict, req.Name)
 	}
-	rt, err := s.c.runtime(ctx)
-	if err != nil {
-		return nil, err
-	}
+	rt := s.c.rt
 	res := &Result{Release: req.Name, Revision: existing.CurrentRevision, From: existing.CurrentRevision, DryRun: req.DryRun}
 	if req.DryRun {
 		res.Status = string(existing.Status)

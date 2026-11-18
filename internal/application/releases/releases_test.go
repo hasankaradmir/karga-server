@@ -45,8 +45,13 @@ func newEnv(t *testing.T) *env {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	rt := fakeruntime.New().WithGateway()
-	svc, err := New(Deps{Store: store, Runtime: func(context.Context) (ports.Runtime, error) { return rt, nil },
-		Host: &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, Home: home})
+	host := &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}
+	info, err := rt.Info(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.UseRuntime(info)
+	svc, err := New(Deps{Store: store, Runtime: rt, Host: host, Home: home})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -725,7 +730,7 @@ func TestRegisterSecretsAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got []string
-	restarted, err := New(Deps{Store: e.svc.c.store, Runtime: e.svc.c.rtFn, Host: e.svc.c.env.Host(), Home: e.svc.c.home,
+	restarted, err := New(Deps{Store: e.svc.c.store, Runtime: e.svc.c.rt, Host: e.svc.c.env.Host(), Home: e.svc.c.home,
 		Redact: func(v string) { got = append(got, v) }})
 	if err != nil {
 		t.Fatal(err)

@@ -2,7 +2,6 @@
 package releases
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -76,7 +75,7 @@ type core struct {
 	store ports.StateStore
 	// env plans and applies deployments on this host.
 	env      *deployment.Env
-	rtFn     func(context.Context) (ports.Runtime, error)
+	rt       ports.Runtime
 	home     string
 	redact   func(string) // registers secret values with the log redactor
 	log      *slog.Logger
@@ -93,8 +92,9 @@ type core struct {
 // Deps are what the release service is made of.
 type Deps struct {
 	Store ports.StateStore
-	// Runtime returns the container runtime.
-	Runtime func(context.Context) (ports.Runtime, error)
+	// Runtime is the container runtime. Whether it can run karga's proxies is Host's to know
+	// (Host.UseRuntime, once, where the service is made).
+	Runtime ports.Runtime
 	// Host is where deployments run: its proxies and network.
 	Host *proxyops.Host
 	// Home is $KARGA_HOME; its state.key is created on first use.
@@ -128,7 +128,7 @@ func New(d Deps) (*Service, error) {
 	if d.Notify == nil {
 		d.Notify = func(string) {}
 	}
-	c := &core{store: d.Store, env: env, rtFn: d.Runtime, home: d.Home, redact: d.Redact, log: d.Log, now: time.Now,
+	c := &core{store: d.Store, env: env, rt: d.Runtime, home: d.Home, redact: d.Redact, log: d.Log, now: time.Now,
 		pid: os.Getpid(), hostname: hostname, notify: d.Notify}
 	return &Service{Lifecycle: &Lifecycle{c}, Reads: &Reads{c}, Containers: &Containers{c}, Volumes: &Volumes{c}, Gateway: &Gateway{c}, c: c}, nil
 }

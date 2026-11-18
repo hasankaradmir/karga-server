@@ -29,8 +29,13 @@ func TestEventTriggersRepair(t *testing.T) {
 	rt := fakeruntime.New().WithGateway()
 	rt.EventsC = make(chan ports.RuntimeEvent)
 	q := NewQueue(50 * time.Millisecond)
-	svc, err := releases.New(releases.Deps{Store: store, Runtime: func(context.Context) (ports.Runtime, error) { return rt, nil },
-		Host: &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, Home: home, Notify: q.Notify})
+	host := &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}
+	info, err := rt.Info(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.UseRuntime(info)
+	svc, err := releases.New(releases.Deps{Store: store, Runtime: rt, Host: host, Home: home, Notify: q.Notify})
 	if err != nil {
 		t.Fatal(err)
 	}
