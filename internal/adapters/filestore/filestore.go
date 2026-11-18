@@ -31,6 +31,8 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/hasankaradmir/karga-sdk/resource"
+
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
@@ -317,6 +319,15 @@ func notFound(err error, what string) error {
 	return err
 }
 
+// checkRelease refuses a name that is not a release's: names build paths of the state, so one like
+// "../x" would reach outside it. The API checks names too; the store does not rely on it.
+func checkRelease(name string) error {
+	if !resource.IsDNSLabel(name) {
+		return fmt.Errorf("%w: %q is not a release name", ports.ErrInvalid, name)
+	}
+	return nil
+}
+
 func releaseDir(name string) string { return "releases/" + name }
 
 // --- releases ---
@@ -339,6 +350,9 @@ func (f releaseFile) release() release.Release {
 
 // GetRelease implements ports.StateStore.
 func (s *Store) GetRelease(_ context.Context, name string) (release.Release, error) {
+	if err := checkRelease(name); err != nil {
+		return release.Release{}, err
+	}
 	var f releaseFile
 	if err := s.readYAML(releaseDir(name)+"/release.yaml", &f); err != nil {
 		return release.Release{}, notFound(err, "release "+name)
@@ -395,6 +409,9 @@ func (s *Store) dirs(dir string) ([]string, error) {
 
 // SaveRelease implements ports.StateStore. CreatedAt is kept from the stored release.
 func (s *Store) SaveRelease(ctx context.Context, r release.Release) error {
+	if err := checkRelease(r.Name); err != nil {
+		return err
+	}
 	if old, err := s.GetRelease(ctx, r.Name); err == nil {
 		r.CreatedAt = old.CreatedAt
 	}
@@ -405,6 +422,9 @@ func (s *Store) SaveRelease(ctx context.Context, r release.Release) error {
 // DeleteRelease implements ports.StateStore: the release with its revisions and resources. Its
 // operations stay, like an audit log.
 func (s *Store) DeleteRelease(_ context.Context, name string) error {
+	if err := checkRelease(name); err != nil {
+		return err
+	}
 	return s.remove(releaseDir(name), true)
 }
 
@@ -435,6 +455,9 @@ func revisionPath(rel string, n int) string {
 
 // CreateRevision implements ports.StateStore.
 func (s *Store) CreateRevision(_ context.Context, rev release.Revision) error {
+	if err := checkRelease(rev.Release); err != nil {
+		return err
+	}
 	var manifest []any
 	if len(rev.Manifest) > 0 {
 		if err := json.Unmarshal(rev.Manifest, &manifest); err != nil {
@@ -476,6 +499,9 @@ func (f revisionFile) revision() (release.Revision, error) {
 
 // UpdateRevisionStatus implements ports.StateStore.
 func (s *Store) UpdateRevisionStatus(_ context.Context, rel string, number int, status release.RevisionStatus, description string) error {
+	if err := checkRelease(rel); err != nil {
+		return err
+	}
 	var f revisionFile
 	if err := s.readYAML(revisionPath(rel, number), &f); err != nil {
 		return notFound(err, fmt.Sprintf("revision %s/%d", rel, number))
@@ -486,6 +512,9 @@ func (s *Store) UpdateRevisionStatus(_ context.Context, rel string, number int, 
 
 // GetRevision implements ports.StateStore.
 func (s *Store) GetRevision(_ context.Context, rel string, number int) (release.Revision, error) {
+	if err := checkRelease(rel); err != nil {
+		return release.Revision{}, err
+	}
 	var f revisionFile
 	if err := s.readYAML(revisionPath(rel, number), &f); err != nil {
 		return release.Revision{}, notFound(err, fmt.Sprintf("revision %d of release %s", number, rel))
@@ -495,6 +524,9 @@ func (s *Store) GetRevision(_ context.Context, rel string, number int) (release.
 
 // ListRevisions implements ports.StateStore. Revisions come in ascending order.
 func (s *Store) ListRevisions(ctx context.Context, rel string) ([]release.Revision, error) {
+	if err := checkRelease(rel); err != nil {
+		return nil, err
+	}
 	names, err := s.list(releaseDir(rel) + "/revisions")
 	if err != nil {
 		return nil, err
@@ -519,6 +551,9 @@ func (s *Store) ListRevisions(ctx context.Context, rel string) ([]release.Revisi
 
 // DeleteRevision implements ports.StateStore.
 func (s *Store) DeleteRevision(_ context.Context, rel string, number int) error {
+	if err := checkRelease(rel); err != nil {
+		return err
+	}
 	return s.remove(revisionPath(rel, number), false)
 }
 
@@ -540,6 +575,9 @@ func resourcePath(rel, kind, name string) string {
 
 // ListResources implements ports.StateStore. Resources come sorted by kind and name.
 func (s *Store) ListResources(_ context.Context, rel string) ([]release.AppliedResource, error) {
+	if err := checkRelease(rel); err != nil {
+		return nil, err
+	}
 	dir := releaseDir(rel) + "/resources"
 	names, err := s.list(dir)
 	if err != nil {
@@ -568,6 +606,9 @@ func (s *Store) ListResources(_ context.Context, rel string) ([]release.AppliedR
 
 // SaveResource implements ports.StateStore.
 func (s *Store) SaveResource(_ context.Context, rel string, r release.AppliedResource) error {
+	if err := checkRelease(rel); err != nil {
+		return err
+	}
 	var spec any
 	if len(r.Spec) > 0 {
 		if err := json.Unmarshal(r.Spec, &spec); err != nil {
@@ -580,6 +621,9 @@ func (s *Store) SaveResource(_ context.Context, rel string, r release.AppliedRes
 
 // DeleteResource implements ports.StateStore.
 func (s *Store) DeleteResource(_ context.Context, rel, kind, name string) error {
+	if err := checkRelease(rel); err != nil {
+		return err
+	}
 	return s.remove(resourcePath(rel, kind, name), false)
 }
 
@@ -692,6 +736,9 @@ func (s *Store) updateOperation(id int64, fn func(*release.Operation)) error {
 
 // BeginOperation implements ports.StateStore.
 func (s *Store) BeginOperation(_ context.Context, op release.Operation, onRunning func(release.Operation) error) (int64, error) {
+	if err := checkRelease(op.Release); err != nil {
+		return 0, err
+	}
 	if s.tx != nil {
 		return 0, errors.New("BeginOperation cannot run inside InTx")
 	}
@@ -750,6 +797,9 @@ func (s *Store) SaveOperationSteps(_ context.Context, id int64, steps []release.
 
 // RunningOperation implements ports.StateStore.
 func (s *Store) RunningOperation(_ context.Context, rel string) (release.Operation, error) {
+	if err := checkRelease(rel); err != nil {
+		return release.Operation{}, err
+	}
 	ops, err := s.operations(rel)
 	if err != nil {
 		return release.Operation{}, err
@@ -765,6 +815,11 @@ func (s *Store) RunningOperation(_ context.Context, rel string) (release.Operati
 // ListOperations implements ports.StateStore: newest first, at most limit (default 100), only those
 // with an id above afterID, of release rel or of every release ("").
 func (s *Store) ListOperations(_ context.Context, rel string, afterID int64, limit int) ([]release.Operation, error) {
+	if rel != "" {
+		if err := checkRelease(rel); err != nil {
+			return nil, err
+		}
+	}
 	if limit <= 0 {
 		limit = 100
 	}

@@ -32,6 +32,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- The state store refuses a release name that is not a DNS label itself, as a second line behind
+  the API's check: names build its paths, so `../x` reached outside the state.
 - writeOnly values under a map or a list of the values schema (`additionalProperties`, `items`, …)
   were stored as written in the revision: the masking did not follow `*` in secret paths. They are
   stored as `<redacted>` now, and `--reuse-values` asks for them again.

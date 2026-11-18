@@ -19,6 +19,7 @@ func Run(t *testing.T, open func(t *testing.T) ports.StateStore) {
 	t.Run("Operations", func(t *testing.T) { operations(t, open(t)) })
 	t.Run("ListOperations", func(t *testing.T) { listOperations(t, open(t)) })
 	t.Run("InTx", func(t *testing.T) { inTx(t, open(t)) })
+	t.Run("ReleaseNames", func(t *testing.T) { releaseNames(t, open(t)) })
 }
 
 func must(t *testing.T, err error) {
@@ -248,5 +249,33 @@ func inTx(t *testing.T, s ports.StateStore) {
 	}))
 	if rs, _ := s.ListResources(ctx, "web"); len(rs) != 0 {
 		t.Fatalf("deleted resource left: %+v", rs)
+	}
+}
+
+// releaseNames checks that a name that is not a release's (a path, an empty name) is refused by
+// every call that takes one, before it can reach anything outside the release's state.
+func releaseNames(t *testing.T, s ports.StateStore) {
+	ctx := context.Background()
+	for _, name := range []string{"../x", "a/b", "", "..", "X"} {
+		for what, call := range map[string]func() error{
+			"GetRelease":       func() error { _, err := s.GetRelease(ctx, name); return err },
+			"SaveRelease":      func() error { return s.SaveRelease(ctx, release.Release{Name: name, Status: release.StatusDeployed}) },
+			"DeleteRelease":    func() error { return s.DeleteRelease(ctx, name) },
+			"ListRevisions":    func() error { _, err := s.ListRevisions(ctx, name); return err },
+			"GetRevision":      func() error { _, err := s.GetRevision(ctx, name, 1); return err },
+			"ListResources":    func() error { _, err := s.ListResources(ctx, name); return err },
+			"RunningOperation": func() error { _, err := s.RunningOperation(ctx, name); return err },
+			"ListOperations": func() error {
+				if name == "" {
+					return ports.ErrInvalid // "" lists every release's operations
+				}
+				_, err := s.ListOperations(ctx, name, 0, 10)
+				return err
+			},
+		} {
+			if err := call(); !errors.Is(err, ports.ErrInvalid) {
+				t.Errorf("%s(%q): want ErrInvalid, got %v", what, name, err)
+			}
+		}
 	}
 }
