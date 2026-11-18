@@ -1,5 +1,5 @@
 // Package envoy writes the file-based configuration of karga's Envoy proxies and reads their admin
-// API (ADR-009, ADR-010). Switching a cluster's endpoint in cds.yaml moves new connections to
+// API (ADR-0009, ADR-0010). Switching a cluster's endpoint in cds.yaml moves new connections to
 // another container while existing ones finish on the old one.
 package envoy
 
@@ -44,7 +44,7 @@ func Image() string {
 	return DefaultImage
 }
 
-// Command runs Envoy on the mounted bootstrap file with one worker thread (ADR-010: low resources).
+// Command runs Envoy on the mounted bootstrap file with one worker thread (ADR-0010: low resources).
 // It starts with a flag, so both the distroless entrypoint (envoy) and the debian one accept it.
 func Command() []string {
 	return []string{"-c", MountPath + "/envoy.yaml", "--concurrency", "1", "--log-level", "warn"}
@@ -76,7 +76,7 @@ type (
 	Config       = ports.ProxyConfig
 )
 
-// Proxies implements ports.ProxyControl with Envoy (ADR-009, ADR-010).
+// Proxies implements ports.ProxyControl with Envoy (ADR-0009, ADR-0010).
 type Proxies struct{}
 
 var _ ports.ProxyControl = Proxies{}

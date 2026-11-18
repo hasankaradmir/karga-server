@@ -196,7 +196,6 @@ func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	return res, nil
 }
 
-// replan repairs leftovers of an interrupted replace and, if anything changed, plans again.
 // discard removes a release that never had a deployed revision and owns nothing in the runtime (an
 // install that failed before creating anything), with its files, so it does not linger as a failed
 // release nor leave its secrets on disk.
@@ -216,11 +215,9 @@ func (s *core) discard(ctx context.Context, name string) bool {
 	return true
 }
 
-// anonymousVolumes records on each workload the image VOLUME paths its container keeps in anonymous
-// volumes. Such data moves to the new container on a recreate but cannot be shared by two, so these
-// workloads are never replaced.
 // anonymousVolumes finds the image VOLUME paths the release's current workload containers keep in
-// anonymous volumes.
+// anonymous volumes. Such data moves to the new container on a recreate but cannot be shared by
+// two, so these workloads are never replaced.
 func anonymousVolumes(ctx context.Context, rt ports.Runtime, name string, rs []resource.Resource) (deployment.Anonymous, error) {
 	anon := deployment.Anonymous{}
 	for _, r := range rs {
@@ -280,6 +277,7 @@ func existing(ctx context.Context, rt ports.Runtime, name string, applied []rele
 	return out, nil
 }
 
+// replan repairs leftovers of an interrupted replace and, if anything changed, plans again.
 func (s *core) replan(ctx context.Context, rt ports.Runtime, in deployInput, applied []release.AppliedResource, plan deployment.Plan) (deployment.Plan, error) {
 	repaired, err := s.env.RepairReplace(ctx, rt, in.Name, applied)
 	if err != nil || len(repaired) == 0 {
@@ -304,6 +302,8 @@ func (s *core) replan(ctx context.Context, rt ports.Runtime, in deployInput, app
 	return s.env.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
 }
 
+// run records the release and its new revision, executes plan step by step (each step recorded as
+// it ends) and settles the revision as deployed or failed.
 func (s *core) run(ctx context.Context, rt ports.Runtime, op *release.Operation, in deployInput, plan deployment.Plan) error {
 	now := s.now()
 	rel := release.Release{Name: in.Name, PackageName: in.Package.Name, PackageVersion: in.Package.Version,

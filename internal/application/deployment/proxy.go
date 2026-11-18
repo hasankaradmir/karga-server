@@ -17,7 +17,7 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )
 
-// KindProxy is the derived resource for a release's Envoy proxy (ADR-011). It is not written in
+// KindProxy is the derived resource for a release's Envoy proxy (ADR-0011). It is not written in
 // packages: karga adds it to the plan when the release has Services.
 const KindProxy = "Proxy"
 

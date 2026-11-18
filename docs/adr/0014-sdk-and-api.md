@@ -4,8 +4,8 @@
 
 **Decision:** karga-sdk holds only the contract between the CLI and the server:
 
-- **The package format:** the resource model (`resource`), and loading, linting, rendering and
-  creating packages (`packages`). The CLI renders offline (`lint`, `template`, `show`); the server
+- **The package format:** the resource model (`resource`), and loading, linting and rendering
+  packages (`packages`; `karga create` writes a new one in the CLI). The CLI renders offline (`lint`, `template`, `show`); the server
   renders what it deploys. Both must agree, so the code is shared.
 - **The API** (`api`): the request and result types, the `Backend` interface, the unix socket
   client and the HTTP handler. Each endpoint has its own request type with a `Validate` method; the
@@ -28,8 +28,9 @@ only `internal/server/backend.go` knows the API and maps between them (`depguard
 - Renaming or removing a field, or changing its meaning, raises the major.
 
 **Errors:** the server sends an error kind with every error: not found, conflict, invalid,
-incompatible. Streamed responses (logs, backups, exec) keep the kind too. The CLI maps them to exit codes: 1 other failure, 2 usage, 3 server unavailable or
-incompatible, 4 not found, 5 conflict, 6 `status` unhealthy. Scripts may rely on the codes and on
+incompatible. Streamed responses (logs, backups, exec) keep the kind too. The CLI maps them to exit codes: 1 other failure, 2 usage (and invalid
+requests), 3 server unavailable or incompatible, 4 not found, 5 conflict, 6 `status` unhealthy, 7
+the CLI stopped waiting (Ctrl-C) for an operation that goes on. Scripts may rely on the codes and on
 the shapes of `-o json` and `-o yaml` (the API's views), which only grow within a major.
 
 **Reason:** an SDK that collects whatever is shared couples the CLI and the server through

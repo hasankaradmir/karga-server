@@ -18,7 +18,13 @@
   `writeOnly` is allowed only in Secrets, and those values are stored as `<redacted>`.
 - **Secret files are plain files** under the revision's directory in `$KARGA_HOME` (directories
   0700, owned by the server's user), mounted read-only. Anyone who can read `$KARGA_HOME` or run as
-  the server's user reads them; there is no encryption at rest.
+  the server's user reads them; there is no encryption at rest. A workload may also take a Secret
+  value as an environment variable (`environmentFrom`) for an image that reads nothing else; Docker
+  shows it to whoever can inspect the container, so `karga lint` and every plan warn about it.
+- **Confirmations.** Requests that change what cannot be changed back (uninstall, volume restore,
+  removing a listener, listening beyond loopback, deleting volumes in an upgrade or rollback) are
+  refused unless the client says its user agreed (`Confirmed`, from the request's `Risk()` in the
+  SDK): a client of the API cannot skip the question `karga` asks.
 
 **Reason:** karga is a single-host tool for the host's administrator. A finer model (users,
 per-release rights) would need authentication and still be bypassed by anyone in the `docker`

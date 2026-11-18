@@ -68,7 +68,7 @@ func takeOver(ctx context.Context, rt ports.Runtime, name string, mounts []ports
 	return mounts, nil
 }
 
-// replaceWorkload updates a workload without downtime (ADR-011): its clients reach it only
+// replaceWorkload updates a workload without downtime (ADR-0011): its clients reach it only
 // through its Services, that is through the release proxy, so switching the proxy switches all of
 // them, from the release's networks and through the gateway alike:
 //  1. remove a leftover <name>-next of this release;
