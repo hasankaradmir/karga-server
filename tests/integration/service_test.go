@@ -26,7 +26,7 @@ func TestServicesAreIsolatedPerRelease(t *testing.T) {
 		s    *releases.Service
 		name string
 	}{{sa, a}, {sb, b}} {
-		if _, err := x.s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: x.name, Package: webPkg,
+		if _, err := x.s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: x.name, Package: webPkg,
 			Values: releases.Values{Set: []string{"servicePort=80", "content=" + x.name}}}, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +47,7 @@ func TestGatewayListenAddresses(t *testing.T) {
 	name := releaseName("it-listen")
 	s, _ := service(t, name)
 	l, port := listener(t, gateway.ProtocolHTTP)
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
 		Values: releases.Values{Set: []string{"route=listen.local", "routeListener=" + l}}}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -65,10 +65,10 @@ func TestGatewayListenAddresses(t *testing.T) {
 	if code, err := get("127.0.0.1"); err != nil || code != http.StatusOK {
 		t.Fatalf("default 127.0.0.1: %d %v", code, err)
 	}
-	if err := s.SetGatewayListen(ctx, []string{"127.0.0.2"}); err != nil {
+	if err := s.Gateway.SetListen(ctx, []string{"127.0.0.2"}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = s.SetGatewayListen(context.Background(), []string{gateway.DefaultListen}) })
+	t.Cleanup(func() { _ = s.Gateway.SetListen(context.Background(), []string{gateway.DefaultListen}) })
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		code, err := get("127.0.0.2")
@@ -82,7 +82,7 @@ func TestGatewayListenAddresses(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	// A listener in use cannot be removed.
-	if err := s.RemoveGatewayListener(ctx, l); err == nil {
+	if err := s.Gateway.RemoveListener(ctx, l); err == nil {
 		t.Fatal("removed a listener in use")
 	}
 }

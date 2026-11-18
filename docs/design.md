@@ -68,7 +68,9 @@ reconciler`, the loop; `releases.Service.Reconcile`, the repairs) brings the run
 cmd/karga-server                entry point
 internal/server                 karga-server: state, runtime, socket, peer credentials; backend.go maps
                                 the API (karga-sdk/api) to the release service and back
-internal/application/releases   release lifecycle: install, upgrade, rollback, uninstall, resume, reads
+internal/application/releases   the release service: one Core (state, runtime, locks, deploy steps)
+                                shared by Lifecycle (install, upgrade, rollback, uninstall, resume,
+                                repair), Reads (status, history, logs, exec), Volumes and Gateway
 internal/application/deployment plan (diff, strategies), execute, release proxy, probes (deployment.Env)
 internal/application/gateway    the host gateway: settings, exposures, its Envoy
 internal/application/proxyops   what both share: runtime names and removal, the proxy Host

@@ -23,11 +23,11 @@ func TestKargaHealthChecks(t *testing.T) {
 			name := releaseName("it-hc-" + health)
 			s, _ := service(t, name)
 			sets := []string{"health=" + health, "strategy=recreate"}
-			if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+			if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
 				Values: releases.Values{Set: sets}}, nil); err != nil {
 				t.Fatal(err)
 			}
-			rep, err := s.Status(ctx, name)
+			rep, err := s.Reads.Status(ctx, name)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -41,7 +41,7 @@ func TestKargaHealthChecks(t *testing.T) {
 			}
 			short := opts()
 			short.Timeout = 20 * time.Second
-			_, err = s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: short, Name: name, Package: webPkg,
+			_, err = s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: short, Name: name, Package: webPkg,
 				Values: releases.Values{Set: append(sets, "healthy=false")}}, nil)
 			if err == nil || !strings.Contains(err.Error(), "GET /missing") {
 				t.Fatalf("want the failing http check in the error, got %v", err)
@@ -58,11 +58,11 @@ func TestHealthCheckByContainerAddress(t *testing.T) {
 	ctx := context.Background()
 	name := releaseName("it-hc-ip")
 	s, _ := service(t, name)
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
 		Values: releases.Values{Set: []string{"health=http"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	rep, err := s.Status(ctx, name)
+	rep, err := s.Reads.Status(ctx, name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,14 +87,14 @@ func TestReplaceWithHTTPHealth(t *testing.T) {
 	sets := func(extra ...string) releases.Values {
 		return releases.Values{Set: append([]string{startDelay, "health=http", "listener=" + l}, extra...)}
 	}
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil); err != nil {
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil); err != nil {
 		t.Fatal(err)
 	}
 	host := startHostPinger(port)
 	defer host.halt()
 	net := startNetPinger(t, rt, name, "http://web:8080/")
 	time.Sleep(time.Second)
-	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets("content=v2")}, nil); err != nil {
+	if _, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets("content=v2")}, nil); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)

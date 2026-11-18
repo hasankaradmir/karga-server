@@ -40,8 +40,34 @@ func (e invalid) Unwrap() error { return e.error }
 
 func (invalid) Is(target error) bool { return target == ports.ErrInvalid }
 
-// Service runs release use cases. Runtime is opened lazily so read-only commands never need Docker.
+// Service is the release service: one Core shared by its four faces.
 type Service struct {
+	*Core
+	// Lifecycle installs, upgrades, rolls back, uninstalls, resumes and repairs releases.
+	Lifecycle *Lifecycle
+	// Reads answers questions about releases and reaches into their containers (logs, exec).
+	Reads *Reads
+	// Volumes backs up and restores a release's volumes.
+	Volumes *Volumes
+	// Gateway reads and changes the host gateway.
+	Gateway *Gateway
+}
+
+// Lifecycle changes releases.
+type Lifecycle struct{ *Core }
+
+// Reads reads releases; it changes nothing.
+type Reads struct{ *Core }
+
+// Volumes copies volume data in and out.
+type Volumes struct{ *Core }
+
+// Gateway holds the host gateway's settings and health.
+type Gateway struct{ *Core }
+
+// Core is what the faces share: the state, the runtime, the locks and the deploy steps. Runtime is
+// opened lazily so read-only commands never need Docker.
+type Core struct {
 	// AllowedCaps are the Linux capabilities, besides resource.DefaultCaps, the host administrator
 	// lets packages add (karga-server --allow-capabilities).
 	AllowedCaps []string
@@ -78,5 +104,6 @@ func New(store ports.StateStore, rt func(context.Context) (ports.Runtime, error)
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{Store: store, Deploy: &deployment.Env{Host: host}, Runtime: rt, Home: home, Redact: redact, Log: log, Now: time.Now, PID: os.Getpid(), Hostname: hostname}
+	c := &Core{Store: store, Deploy: &deployment.Env{Host: host}, Runtime: rt, Home: home, Redact: redact, Log: log, Now: time.Now, PID: os.Getpid(), Hostname: hostname}
+	return &Service{Core: c, Lifecycle: &Lifecycle{c}, Reads: &Reads{c}, Volumes: &Volumes{c}, Gateway: &Gateway{c}}
 }

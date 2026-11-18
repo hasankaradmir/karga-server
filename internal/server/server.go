@@ -164,7 +164,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration)
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context { return releases.WithActor(ctx, peerUser(c)) }}
 	// Operations a stopped karga-server left running are finished before requests are served, so a
 	// command never meets one half done; clients wait for it. Then the reconciler starts.
-	s.Service.Resume(context.WithoutCancel(ctx))
+	s.Service.Lifecycle.Resume(context.WithoutCancel(ctx))
 	errc := make(chan error, 1)
 	go func() { errc <- hs.Serve(l) }()
 	loopDone := make(chan struct{})

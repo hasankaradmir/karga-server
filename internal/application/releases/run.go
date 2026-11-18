@@ -21,7 +21,7 @@ import (
 )
 
 // encodeManifest stores resources as a JSON array with secret values replaced by digests.
-func (s *Service) encodeManifest(rs []resource.Resource) (json.RawMessage, string, error) {
+func (s *Core) encodeManifest(rs []resource.Resource) (json.RawMessage, string, error) {
 	redacted := make([]resource.Resource, len(rs))
 	for i, r := range rs {
 		redacted[i] = s.Deploy.Redacted(r)
@@ -48,7 +48,7 @@ func decodeManifest(js json.RawMessage) ([]resource.Resource, error) {
 }
 
 // restoreSecrets fills secret values from the files materialized for that revision.
-func (s *Service) restoreSecrets(rel string, revision int, rs []resource.Resource) error {
+func (s *Core) restoreSecrets(rel string, revision int, rs []resource.Resource) error {
 	dir := deployment.RevisionDir(s.Home, rel, revision)
 	for i, r := range rs {
 		sec, ok := r.Spec.(*resource.SecretSpec)
@@ -96,7 +96,7 @@ type deployInput struct {
 	resumed bool
 }
 
-func (s *Service) nextRevision(ctx context.Context, name string) (int, error) {
+func (s *Core) nextRevision(ctx context.Context, name string) (int, error) {
 	revs, err := s.Store.ListRevisions(ctx, name)
 	if err != nil {
 		return 0, err
@@ -112,7 +112,7 @@ var inProgress = []release.Status{release.StatusPending, release.StatusDeploying
 // deploy plans the desired revision against the applied state and executes it.
 // runtime connects to the container runtime and tells the deployment package whether it can run
 // karga's proxies there.
-func (s *Service) runtime(ctx context.Context) (ports.Runtime, error) {
+func (s *Core) runtime(ctx context.Context) (ports.Runtime, error) {
 	rt, err := s.Runtime(ctx)
 	if err != nil {
 		return nil, err
@@ -125,7 +125,7 @@ func (s *Service) runtime(ctx context.Context) (ports.Runtime, error) {
 	return rt, nil
 }
 
-func (s *Service) deploy(ctx context.Context, in deployInput) (*Result, error) {
+func (s *Core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	if err := s.loadKey(); err != nil {
 		return nil, err
 	}
@@ -217,7 +217,7 @@ func (s *Service) deploy(ctx context.Context, in deployInput) (*Result, error) {
 // replan repairs leftovers of an interrupted replace and, if anything changed, plans again.
 // discard removes a release that never had a deployed revision and owns nothing in the runtime (an
 // install that failed before creating anything), so it does not linger as a failed release.
-func (s *Service) discard(ctx context.Context, name string) bool {
+func (s *Core) discard(ctx context.Context, name string) bool {
 	applied, err := s.Store.ListResources(ctx, name)
 	if err != nil || len(applied) > 0 {
 		return false
@@ -293,7 +293,7 @@ func existing(ctx context.Context, rt ports.Runtime, name string, applied []rele
 	return out, nil
 }
 
-func (s *Service) replan(ctx context.Context, rt ports.Runtime, in deployInput, applied []release.AppliedResource, plan deployment.Plan) (deployment.Plan, error) {
+func (s *Core) replan(ctx context.Context, rt ports.Runtime, in deployInput, applied []release.AppliedResource, plan deployment.Plan) (deployment.Plan, error) {
 	repaired, err := s.Deploy.RepairReplace(ctx, rt, s.Home, in.Name, applied)
 	if err != nil || len(repaired) == 0 {
 		return plan, err
@@ -317,7 +317,7 @@ func (s *Service) replan(ctx context.Context, rt ports.Runtime, in deployInput, 
 	return s.Deploy.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
 }
 
-func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operation, in deployInput, plan deployment.Plan) error {
+func (s *Core) run(ctx context.Context, rt ports.Runtime, op *release.Operation, in deployInput, plan deployment.Plan) error {
 	now := s.Now()
 	rel := release.Release{Name: in.Name, PackageName: in.Package.Name, PackageVersion: in.Package.Version,
 		Status: release.StatusPending, CreatedAt: now, UpdatedAt: now}
@@ -391,7 +391,7 @@ func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operati
 }
 
 // settle records the outcome of a revision and the release it leaves, together.
-func (s *Service) settle(ctx context.Context, rel release.Release, revision int, status release.RevisionStatus, desc string) error {
+func (s *Core) settle(ctx context.Context, rel release.Release, revision int, status release.RevisionStatus, desc string) error {
 	return s.Store.InTx(ctx, func(st ports.StateStore) error {
 		if err := st.UpdateRevisionStatus(ctx, rel.Name, revision, status, desc); err != nil {
 			return err
@@ -405,7 +405,7 @@ func titled(t string) string { return strings.ToUpper(t[:1]) + t[1:] }
 // record persists one executor step: progress on the operation and the applied state of the resource.
 // A failed workload is stored with an empty digest so the next plan recreates it; a kept-previous
 // step (failed replace) leaves the applied state alone.
-func (s *Service) record(ctx context.Context, op *release.Operation, in deployInput, c deployment.Change, st release.Step) error {
+func (s *Core) record(ctx context.Context, op *release.Operation, in deployInput, c deployment.Change, st release.Step) error {
 	ctx = context.WithoutCancel(ctx)
 	op.Steps = append(op.Steps, st)
 	s.Log.Debug("step", "operation_id", op.ID, "release", in.Name, "resource", c.Kind+"/"+c.Name, "action", st.Action, "status", st.Status)
@@ -434,7 +434,7 @@ func (s *Service) record(ctx context.Context, op *release.Operation, in deployIn
 
 // prune keeps the newest historyMax revisions. The current revision and any revision whose files are still
 // mounted by an applied resource are never removed (D13).
-func (s *Service) prune(ctx context.Context, name string, historyMax int) error {
+func (s *Core) prune(ctx context.Context, name string, historyMax int) error {
 	if historyMax <= 0 {
 		return nil
 	}

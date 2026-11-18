@@ -213,7 +213,7 @@ func workload(t *testing.T, rt ports.Runtime, name string) ports.WorkloadStatus 
 
 func currentRelease(t *testing.T, s *releases.Service, name string) release.Release {
 	t.Helper()
-	rels, err := s.List(context.Background())
+	rels, err := s.Reads.List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

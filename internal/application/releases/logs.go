@@ -18,7 +18,7 @@ import (
 
 // Logs writes container logs to w. Several containers are prefixed "name | " per line; without
 // Follow they are shown one after the other, with Follow side by side until ctx is done.
-func (s *Service) Logs(ctx context.Context, req LogsRequest, w io.Writer) error {
+func (s *Reads) Logs(ctx context.Context, req LogsRequest, w io.Writer) error {
 	containers, err := s.logTargets(ctx, req)
 	if err != nil {
 		return err
@@ -56,7 +56,7 @@ func (s *Service) Logs(ctx context.Context, req LogsRequest, w io.Writer) error 
 
 type logTarget struct{ label, runtime string }
 
-func (s *Service) logTargets(ctx context.Context, req LogsRequest) ([]logTarget, error) {
+func (s *Reads) logTargets(ctx context.Context, req LogsRequest) ([]logTarget, error) {
 	if req.Gateway {
 		return []logTarget{{"gateway", gateway.ContainerName}}, nil
 	}

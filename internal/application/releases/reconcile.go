@@ -145,7 +145,7 @@ func (r *repairs) next(rel string, now time.Time) time.Time {
 
 // NextRepair is when a failed repair of release name may be tried again (zero if none waits): a
 // loop that reacts to events only must come back then, as no event may follow.
-func (s *Service) NextRepair(name string) time.Time { return s.repairs.next(name, s.Now()) }
+func (s *Lifecycle) NextRepair(name string) time.Time { return s.repairs.next(name, s.Now()) }
 
 // gaveUp lists what karga stopped repairing in a release.
 func (r *repairs) gaveUp(rel string, now time.Time) map[string]string {
@@ -172,7 +172,7 @@ type planned struct {
 
 // Repair brings release name's runtime back to its current revision. force forgets earlier
 // failures first (karga reconcile).
-func (s *Service) Repair(ctx context.Context, name string, force bool) (*ReconcileResult, error) {
+func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*ReconcileResult, error) {
 	// What is observed below is acted on: nothing else may change the release meanwhile. A busy
 	// release is skipped; the command working on it leaves it as it should be.
 	unlock, err := s.lock(ctx, name, true)
@@ -342,7 +342,7 @@ func (s *Service) Repair(ctx context.Context, name string, force bool) (*Reconci
 // recreate creates what is missing from the current revision, through the same plan and executor as
 // an upgrade, without a new revision. Only creates are applied: anything else that differs (a newer
 // karga's defaults, for example) waits for the user's next upgrade.
-func (s *Service) recreate(ctx context.Context, rt ports.Runtime, op *release.Operation, rel release.Release, present []release.AppliedResource) ([]release.Step, error) {
+func (s *Lifecycle) recreate(ctx context.Context, rt ports.Runtime, op *release.Operation, rel release.Release, present []release.AppliedResource) ([]release.Step, error) {
 	rev, err := s.Store.GetRevision(ctx, rel.Name, rel.CurrentRevision)
 	if err != nil {
 		return nil, err
@@ -381,7 +381,7 @@ func (s *Service) recreate(ctx context.Context, rt ports.Runtime, op *release.Op
 
 // healed marks a workload applied again once its container, created from the current revision by
 // an earlier (interrupted) repair, runs: its digest label says which spec it runs.
-func (s *Service) healed(ctx context.Context, rt ports.Runtime, rel string, a release.AppliedResource) {
+func (s *Lifecycle) healed(ctx context.Context, rt ports.Runtime, rel string, a release.AppliedResource) {
 	st, err := rt.GetWorkload(ctx, a.RuntimeName)
 	if err != nil || st.State != ports.StateRunning || st.Labels[ports.LabelDigest] == "" {
 		return
@@ -400,7 +400,7 @@ func pkgOf(rev release.Revision) packages.Metadata {
 }
 
 // Pause stops (or with paused false, resumes) reconciliation of a release.
-func (s *Service) Pause(ctx context.Context, name string, paused bool) error {
+func (s *Lifecycle) Pause(ctx context.Context, name string, paused bool) error {
 	unlock, err := s.lock(ctx, name, false)
 	if err != nil {
 		return err
@@ -418,6 +418,6 @@ func (s *Service) Pause(ctx context.Context, name string, paused bool) error {
 }
 
 // Events lists the operations of a release (all for ""), newest first.
-func (s *Service) Events(ctx context.Context, name string, afterID int64, limit int) ([]release.Operation, error) {
+func (s *Reads) Events(ctx context.Context, name string, afterID int64, limit int) ([]release.Operation, error) {
 	return s.Store.ListOperations(ctx, name, afterID, limit)
 }

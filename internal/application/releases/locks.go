@@ -14,7 +14,7 @@ import (
 // lock takes release rel for one operation, from reading its state to recording the outcome, so
 // what an operation plans cannot go stale before it runs. It waits until rel is free or ctx ends;
 // with try it does not wait. Call the returned function to let go.
-func (s *Service) lock(ctx context.Context, rel string, try bool) (func(), error) {
+func (s *Core) lock(ctx context.Context, rel string, try bool) (func(), error) {
 	l := s.lockRef(rel)
 	unlock := func() {
 		<-l.ch
@@ -45,7 +45,7 @@ type releaseLock struct {
 	refs int
 }
 
-func (s *Service) lockRef(rel string) *releaseLock {
+func (s *Core) lockRef(rel string) *releaseLock {
 	s.busyMu.Lock()
 	defer s.busyMu.Unlock()
 	if s.busy == nil {
@@ -60,7 +60,7 @@ func (s *Service) lockRef(rel string) *releaseLock {
 	return l
 }
 
-func (s *Service) lockUnref(rel string) {
+func (s *Core) lockUnref(rel string) {
 	s.busyMu.Lock()
 	defer s.busyMu.Unlock()
 	if l := s.busy[rel]; l != nil {
@@ -90,7 +90,7 @@ func describe(op release.Operation) string {
 
 // begin records a running operation; the caller holds the release's lock. A live process holding the
 // release always wins; a dead one is only overridden with force (D15).
-func (s *Service) begin(ctx context.Context, rel, typ string, revision int, force bool, opts release.Options) (release.Operation, error) {
+func (s *Core) begin(ctx context.Context, rel, typ string, revision int, force bool, opts release.Options) (release.Operation, error) {
 	op := release.Operation{Release: rel, Type: typ, Revision: revision, Status: release.OperationRunning,
 		PID: s.PID, Hostname: s.Hostname, Actor: actorOf(ctx), Options: opts, StartedAt: s.Now()}
 	id, err := s.Store.BeginOperation(ctx, op, func(running release.Operation) error {
@@ -131,7 +131,7 @@ func actorOf(ctx context.Context) string {
 
 // finish records the end of an operation. It uses a context that survives cancellation (Ctrl-C) so
 // the operation is not left running.
-func (s *Service) finish(ctx context.Context, op release.Operation, err error) {
+func (s *Core) finish(ctx context.Context, op release.Operation, err error) {
 	ctx = context.WithoutCancel(ctx)
 	op.Status = release.OperationSucceeded
 	if err != nil {

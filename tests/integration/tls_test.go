@@ -88,7 +88,7 @@ func TestGatewayTLS(t *testing.T) {
 	const host = "secure.local"
 	cert1, vals1 := selfSigned(t, host, 1)
 	sets := []string{"route=" + host, "routeListener=" + l}
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
 		Values: releases.Values{Files: [][]byte{readFile(t, vals1)}, Set: sets}}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestGatewayTLS(t *testing.T) {
 
 	// A new certificate is served after an upgrade.
 	cert2, vals2 := selfSigned(t, host, 2)
-	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: webPkg,
 		Values: releases.Values{Files: [][]byte{readFile(t, vals2)}, Set: sets}}, nil); err != nil {
 		t.Fatal(err)
 	}

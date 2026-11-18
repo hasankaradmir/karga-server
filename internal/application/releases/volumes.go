@@ -39,7 +39,7 @@ type mounter struct {
 }
 
 // mounters lists the workloads of a release that mount volume.
-func (s *Service) mounters(ctx context.Context, rel, volume string) ([]mounter, error) {
+func (s *Volumes) mounters(ctx context.Context, rel, volume string) ([]mounter, error) {
 	applied, err := s.Store.ListResources(ctx, rel)
 	if err != nil {
 		return nil, err
@@ -97,7 +97,7 @@ func pause(ctx context.Context, rt ports.Runtime, ms []mounter) (func() error, e
 }
 
 // BackupVolume writes req.Volume to w.
-func (s *Service) BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) (err error) {
+func (s *Volumes) BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) (err error) {
 	// A live copy only reads: it holds nothing, so a slow client never blocks the release. A copy
 	// with --stop stops workloads and holds the release, as an operation, until they run again.
 	if req.Stop {
@@ -158,7 +158,7 @@ func (s *Service) BackupVolume(ctx context.Context, req VolumeBackupRequest, w i
 }
 
 // RestoreVolume writes the backup read from r into req.Volume.
-func (s *Service) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader) (err error) {
+func (s *Volumes) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader) (err error) {
 	unlock, err := s.lock(ctx, req.Release, false)
 	if err != nil {
 		return err

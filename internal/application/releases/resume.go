@@ -19,7 +19,7 @@ const ResumeOperation = "resume"
 // resumes with the options its request gave (--delete-volumes, --keep-history, --strategy,
 // --timeout), recorded with the operation. Other operations are aborted; the reconciler starts what
 // they stopped.
-func (s *Service) Resume(ctx context.Context) {
+func (s *Lifecycle) Resume(ctx context.Context) {
 	rels, err := s.Store.ListReleases(ctx)
 	if err != nil {
 		s.Log.Error("resume: list releases", "error", err)
@@ -35,7 +35,7 @@ func (s *Service) Resume(ctx context.Context) {
 // resumeRelease resumes the operation left running on release name, if any. Under the release's lock
 // no operation of this process runs, so one recorded with this process's PID is an earlier
 // process's that had the same PID.
-func (s *Service) resumeRelease(ctx context.Context, name string) error {
+func (s *Lifecycle) resumeRelease(ctx context.Context, name string) error {
 	unlock, err := s.lock(ctx, name, false)
 	if err != nil {
 		return err
@@ -58,7 +58,7 @@ func (s *Service) resumeRelease(ctx context.Context, name string) error {
 	return s.resume(ctx, rel, op)
 }
 
-func (s *Service) resume(ctx context.Context, rel release.Release, op release.Operation) error {
+func (s *Lifecycle) resume(ctx context.Context, rel release.Release, op release.Operation) error {
 	s.Log.Warn("resuming interrupted operation", "release", rel.Name, "operation", op.ID, "type", op.Type, "revision", op.Revision)
 	// Deploys and uninstalls abort the interrupted operation when they begin (Force): if they cannot
 	// begin (no container runtime yet), it stays running and the next start tries again.
@@ -76,7 +76,7 @@ func (s *Service) resume(ctx context.Context, rel release.Release, op release.Op
 
 // redeploy deploys the revision op was deploying. Without it (stopped before it was recorded) nothing
 // had changed: the release goes back to its current revision.
-func (s *Service) redeploy(ctx context.Context, rel release.Release, op release.Operation) error {
+func (s *Lifecycle) redeploy(ctx context.Context, rel release.Release, op release.Operation) error {
 	rev, err := s.Store.GetRevision(ctx, rel.Name, op.Revision)
 	if errors.Is(err, ports.ErrNotFound) {
 		op.Status, op.Error = release.OperationAborted, "interrupted before it changed anything"

@@ -10,7 +10,7 @@ import (
 )
 
 // digestJSON is the keyed digest of v's JSON: values and manifests may hold secret material.
-func (s *Service) digestJSON(v any) (string, []byte, error) {
+func (s *Core) digestJSON(v any) (string, []byte, error) {
 	js, err := json.Marshal(v)
 	if err != nil {
 		return "", nil, err
@@ -23,7 +23,7 @@ const keyFile = "state.key"
 
 // loadKey reads $KARGA_HOME/state.key, creating it (32 random bytes, 0600) on first use, and makes
 // it the digest key. Losing it only means secrets are re-applied once.
-func (s *Service) loadKey() error {
+func (s *Core) loadKey() error {
 	s.keyMu.Lock()
 	defer s.keyMu.Unlock()
 	if s.key == nil {

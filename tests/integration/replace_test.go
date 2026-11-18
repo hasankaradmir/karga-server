@@ -28,11 +28,11 @@ func TestReplaceWithoutDowntime(t *testing.T) {
 	common := opts()
 	common.Timeout = 30 * time.Second
 	upgrade := func(sets ...string) (*releases.Result, error) {
-		return s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg,
+		return s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg,
 			Values: releases.Values{Set: append([]string{startDelay}, sets...)}}, nil)
 	}
 
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg,
 		Values: releases.Values{Set: []string{startDelay}}}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestReplaceWithoutDowntime(t *testing.T) {
 	if r.Status != release.StatusDeployed || r.CurrentRevision != 2 {
 		t.Fatalf("release after failed replace: %+v", r)
 	}
-	hist, err := s.History(ctx, name)
+	hist, err := s.Reads.History(ctx, name)
 	if err != nil || len(hist) != 3 || hist[2].Status != release.RevisionFailed {
 		t.Fatalf("history: %+v %v", hist, err)
 	}
@@ -91,13 +91,13 @@ func TestRecreateHasDowntime(t *testing.T) {
 	s, rt := service(t, name)
 	common := opts()
 	common.Timeout = 30 * time.Second
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg,
 		Values: releases.Values{Set: []string{startDelay, "strategy=recreate"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	pinger := startNetPinger(t, rt, name, "http://web:8080/")
 	time.Sleep(time.Second)
-	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg,
 		Values: releases.Values{Set: []string{startDelay, "strategy=recreate", "content=v2"}}}, nil); err != nil {
 		t.Fatal(err)
 	}

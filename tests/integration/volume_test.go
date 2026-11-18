@@ -29,7 +29,7 @@ func TestAnonymousVolumeKeptAcrossUpgrade(t *testing.T) {
 		return strings.TrimSpace(out.String())
 	}
 
-	res, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: "testdata/anon"}, nil)
+	res, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: "testdata/anon"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestAnonymousVolumeKeptAcrossUpgrade(t *testing.T) {
 	redis("SAVE")
 	vol := workload(t, rt, name+"-redis").AnonymousVolumes[0].Source
 
-	res, err = s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: "testdata/anon",
+	res, err = s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: "testdata/anon",
 		Values: releases.Values{Set: []string{"rev=2"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestAnonymousVolumeKeptAcrossUpgrade(t *testing.T) {
 		t.Fatalf("volume %s not moved: %+v", vol, st.AnonymousVolumes)
 	}
 
-	if _, err := s.Uninstall(ctx, releases.UninstallRequest{Name: name}); err != nil {
+	if _, err := s.Lifecycle.Uninstall(ctx, releases.UninstallRequest{Name: name}); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.CreateVolume(ctx, ports.VolumeRequest{Name: vol}); err != nil {

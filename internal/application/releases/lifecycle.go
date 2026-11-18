@@ -13,7 +13,7 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
-func (s *Service) getRelease(ctx context.Context, name string) (*release.Release, error) {
+func (s *Core) getRelease(ctx context.Context, name string) (*release.Release, error) {
 	rel, err := s.Store.GetRelease(ctx, name)
 	if errors.Is(err, ports.ErrNotFound) {
 		return nil, nil
@@ -25,7 +25,7 @@ func (s *Service) getRelease(ctx context.Context, name string) (*release.Release
 }
 
 // render loads and renders a package for revision of release name.
-func (s *Service) render(ctx context.Context, name, path string, opts packages.Options) (deployInput, error) {
+func (s *Core) render(ctx context.Context, name, path string, opts packages.Options) (deployInput, error) {
 	revision, err := s.nextRevision(ctx, name)
 	if err != nil {
 		return deployInput{}, err
@@ -53,7 +53,7 @@ func valuesOptions(v Values) packages.Options {
 }
 
 // Install installs a package. Installing again with the same package and values is a no-op.
-func (s *Service) Install(ctx context.Context, req InstallRequest, progress func(deployment.Event)) (*Result, error) {
+func (s *Lifecycle) Install(ctx context.Context, req InstallRequest, progress func(deployment.Event)) (*Result, error) {
 	unlock, err := s.lock(ctx, req.Name, false)
 	if err != nil {
 		return nil, err
@@ -62,7 +62,7 @@ func (s *Service) Install(ctx context.Context, req InstallRequest, progress func
 	return s.install(ctx, req, progress)
 }
 
-func (s *Service) install(ctx context.Context, req InstallRequest, progress func(deployment.Event)) (*Result, error) {
+func (s *Lifecycle) install(ctx context.Context, req InstallRequest, progress func(deployment.Event)) (*Result, error) {
 	existing, err := s.getRelease(ctx, req.Name)
 	if err != nil {
 		return nil, err
@@ -99,7 +99,7 @@ func (s *Service) install(ctx context.Context, req InstallRequest, progress func
 }
 
 // Upgrade renders the package with new values and applies the difference.
-func (s *Service) Upgrade(ctx context.Context, req UpgradeRequest, progress func(deployment.Event)) (*Result, error) {
+func (s *Lifecycle) Upgrade(ctx context.Context, req UpgradeRequest, progress func(deployment.Event)) (*Result, error) {
 	unlock, err := s.lock(ctx, req.Name, false)
 	if err != nil {
 		return nil, err
@@ -149,7 +149,7 @@ func (s *Service) Upgrade(ctx context.Context, req UpgradeRequest, progress func
 }
 
 // Rollback re-applies the desired state of an earlier revision as a new revision.
-func (s *Service) Rollback(ctx context.Context, req RollbackRequest, progress func(deployment.Event)) (*Result, error) {
+func (s *Lifecycle) Rollback(ctx context.Context, req RollbackRequest, progress func(deployment.Event)) (*Result, error) {
 	unlock, err := s.lock(ctx, req.Name, false)
 	if err != nil {
 		return nil, err
@@ -196,7 +196,7 @@ func (s *Service) Rollback(ctx context.Context, req RollbackRequest, progress fu
 
 // rollbackTarget picks the revision to return to: after a failure the last good one (the current
 // revision), otherwise the last deployed revision before the current one.
-func (s *Service) rollbackTarget(ctx context.Context, rel *release.Release) (int, error) {
+func (s *Lifecycle) rollbackTarget(ctx context.Context, rel *release.Release) (int, error) {
 	if rel.Status == release.StatusFailed && rel.CurrentRevision > 0 {
 		return rel.CurrentRevision, nil
 	}
@@ -214,7 +214,7 @@ func (s *Service) rollbackTarget(ctx context.Context, rel *release.Release) (int
 
 // Uninstall removes the release's workloads and networks; volumes are kept unless DeleteVolumes or
 // retention: delete. With KeepHistory the revisions stay and the release is marked uninstalled.
-func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result, error) {
+func (s *Lifecycle) Uninstall(ctx context.Context, req UninstallRequest) (*Result, error) {
 	unlock, err := s.lock(ctx, req.Name, false)
 	if err != nil {
 		return nil, err
@@ -223,7 +223,7 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 	return s.uninstallRelease(ctx, req)
 }
 
-func (s *Service) uninstallRelease(ctx context.Context, req UninstallRequest) (*Result, error) {
+func (s *Lifecycle) uninstallRelease(ctx context.Context, req UninstallRequest) (*Result, error) {
 	existing, err := s.getRelease(ctx, req.Name)
 	if err != nil {
 		return nil, err
@@ -258,7 +258,7 @@ func (s *Service) uninstallRelease(ctx context.Context, req UninstallRequest) (*
 	return res, nil
 }
 
-func (s *Service) uninstall(ctx context.Context, rt ports.Runtime, rel release.Release, req UninstallRequest) error {
+func (s *Lifecycle) uninstall(ctx context.Context, rt ports.Runtime, rel release.Release, req UninstallRequest) error {
 	if rel.Status != release.StatusDeployed && rel.Status != release.StatusFailed {
 		rel.Status = release.StatusFailed // interrupted operation that begin just aborted
 	}

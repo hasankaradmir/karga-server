@@ -22,7 +22,7 @@ func TestReconcilerRepairsFromDockerEvents(t *testing.T) {
 	defer cancel()
 	name := releaseName("it-rec")
 	s, rt := service(t, name)
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
 		Values: releases.Values{Set: []string{"strategy=recreate"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestReconcilerRepairsFromDockerEvents(t *testing.T) {
 		t.Fatal("no digest label on the container")
 	}
 
-	ops, err := s.Events(ctx, name, 0, 20)
+	ops, err := s.Reads.Events(ctx, name, 0, 20)
 	if err != nil {
 		t.Fatal(err)
 	}

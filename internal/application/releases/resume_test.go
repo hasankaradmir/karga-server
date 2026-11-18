@@ -55,7 +55,7 @@ func TestResumeFinishesAnInterruptedUpgrade(t *testing.T) {
 	e.crash("upgrade", 2, release.StatusUpgrading)
 	delete(e.rt.Workloads, "cache-redis")
 
-	e.svc.Resume(context.Background())
+	e.svc.Lifecycle.Resume(context.Background())
 
 	if r := e.release(); r.Status != release.StatusDeployed || r.CurrentRevision != 2 {
 		t.Fatalf("release: %+v", r)
@@ -81,7 +81,7 @@ func TestResumeBeforeTheRevisionWasRecorded(t *testing.T) {
 	e := newEnv(t)
 	must[*Result](t)(e.install())
 	e.crash("upgrade", 2, release.StatusUpgrading)
-	e.svc.Resume(context.Background())
+	e.svc.Lifecycle.Resume(context.Background())
 	if r := e.release(); r.Status != release.StatusDeployed || r.CurrentRevision != 1 {
 		t.Fatalf("release: %+v", r)
 	}
@@ -94,14 +94,14 @@ func TestResumeAbortsOtherOperationsAndUninstallsAgain(t *testing.T) {
 	e := newEnv(t)
 	must[*Result](t)(e.install())
 	e.crash("volume-backup", 1, release.StatusDeployed)
-	e.svc.Resume(context.Background())
+	e.svc.Lifecycle.Resume(context.Background())
 	if ops := e.lastOps(1); ops[0].Status != release.OperationAborted || e.release().Status != release.StatusDeployed {
 		t.Fatalf("operation: %+v", ops[0])
 	}
 
 	// An uninstall resumes with its own options: --keep-history keeps the release, uninstalled.
 	e.crashWith("uninstall", 1, release.StatusUninstalling, release.Options{KeepHistory: true})
-	e.svc.Resume(context.Background())
+	e.svc.Lifecycle.Resume(context.Background())
 	if r := e.release(); r.Status != release.StatusUninstalled {
 		t.Fatalf("release: %+v", r)
 	}
@@ -115,7 +115,7 @@ func TestResumeAbortsOtherOperationsAndUninstallsAgain(t *testing.T) {
 	// Without --keep-history the release goes.
 	must[*Result](t)(e.install())
 	e.crashWith("uninstall", 2, release.StatusUninstalling, release.Options{})
-	e.svc.Resume(context.Background())
+	e.svc.Lifecycle.Resume(context.Background())
 	if _, err := e.svc.Store.GetRelease(context.Background(), "cache"); err == nil {
 		t.Fatal("release kept by an uninstall without --keep-history")
 	}
@@ -124,7 +124,7 @@ func TestResumeAbortsOtherOperationsAndUninstallsAgain(t *testing.T) {
 func TestOperationsRecordTheirUser(t *testing.T) {
 	e := newEnv(t)
 	ctx := WithActor(context.Background(), "alice")
-	must[*Result](t)(e.svc.Install(ctx, InstallRequest{CommonOptions: common(), Name: "cache", Package: redisPkg, Values: e.opts()}, nil))
+	must[*Result](t)(e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "cache", Package: redisPkg, Values: e.opts()}, nil))
 	if op := e.lastOps(1)[0]; op.Actor != "alice" {
 		t.Fatalf("actor: %+v", op)
 	}

@@ -39,7 +39,7 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 		return releases.Values{Set: append([]string{startDelay, "listener=" + l, "second=true"}, extra...)}
 	}
 
-	res, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil)
+	res, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 			t.Fatalf("the host port must be held by the gateway, not a container: %+v", p)
 		}
 	}
-	routes, err := s.Gateway(ctx)
+	routes, err := s.Gateway.Routes(ctx)
 	if err != nil || !slices.ContainsFunc(routes, func(r gateway.Exposed) bool {
 		return r.Release == name && r.Listener == l+":"+strconv.Itoa(port) && r.Route == "tcp" && r.Service == "web:8080"
 	}) {
@@ -74,12 +74,12 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 	net := startNetPinger(t, rt, name, "http://web:8080/", "http://api:8081/")
 	time.Sleep(time.Second)
 
-	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets("content=v2")}, nil); err != nil {
+	if _, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets("content=v2")}, nil); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)
 	// A broken version of web (api unchanged) never takes traffic and changes nothing that runs.
-	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets("content=v2", "healthy=false")}, nil); err == nil {
+	if _, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets("content=v2", "healthy=false")}, nil); err == nil {
 		t.Fatal("unhealthy replace should fail")
 	}
 	time.Sleep(time.Second)
@@ -98,7 +98,7 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 		t.Fatalf("release after failed replace: %+v", r)
 	}
 
-	rep, err := s.Status(ctx, name)
+	rep, err := s.Reads.Status(ctx, name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 	t.Cleanup(func() { _ = hostEnv.Delete(context.Background(), rt, s.Home, b, true) })
 	l, port := listener(t, gateway.ProtocolHTTP)
 	install := func(rel, host, content string) error {
-		_, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: rel, Package: webPkg,
+		_, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: rel, Package: webPkg,
 			Values: releases.Values{Set: []string{"route=" + host, "routeListener=" + l, "content=" + content}}}, nil)
 		return err
 	}
@@ -158,13 +158,13 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 	if code, _ := hostGet(t, port, "other.local"); code != http.StatusNotFound {
 		t.Errorf("unknown host: %d", code)
 	}
-	health, err := s.GatewayHealth(ctx)
+	health, err := s.Gateway.Health(ctx)
 	if err != nil || !health.Ready || health.Version != "1.36.13" || !strings.Contains(health.Image, "@sha256:") {
 		t.Fatalf("gateway health: %+v %v", health, err)
 	}
 	// The access log is off by default; turning it on logs requests without recreating the gateway.
 	before, _ := rt.GetWorkload(ctx, gateway.ContainerName)
-	if err := s.SetGatewayAccessLog(ctx, true); err != nil {
+	if err := s.Gateway.SetAccessLog(ctx, true); err != nil {
 		t.Fatal(err)
 	}
 	var logged strings.Builder
@@ -177,7 +177,7 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 		logged.Reset()
-		if err := s.Logs(ctx, releases.LogsRequest{Gateway: true, Tail: 20}, &logged); err != nil {
+		if err := s.Reads.Logs(ctx, releases.LogsRequest{Gateway: true, Tail: 20}, &logged); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -194,7 +194,7 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 	}
 	// Removing the last release removes the gateway.
 	for _, rel := range []string{a, b} {
-		if _, err := s.Uninstall(ctx, releases.UninstallRequest{Name: rel}); err != nil {
+		if _, err := s.Lifecycle.Uninstall(ctx, releases.UninstallRequest{Name: rel}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -212,7 +212,7 @@ func TestGatewayRecreateWorkload(t *testing.T) {
 	name := releaseName("it-gw-rc")
 	s, rt := service(t, name)
 	l, port := listener(t, gateway.ProtocolTCP)
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
 		Values: releases.Values{Set: []string{"strategy=recreate", "listener=" + l, "listenPort=80"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestProxyLowPort(t *testing.T) {
 	ctx := context.Background()
 	name := releaseName("it-proxy-80")
 	s, rt := service(t, name)
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
 		Values: releases.Values{Set: []string{"listenPort=80"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestGatewayKeepsLongConnections(t *testing.T) {
 	sets := func(extra ...string) releases.Values {
 		return releases.Values{Set: append([]string{"echo=true", "echoListener=" + l, "drain=60s"}, extra...)}
 	}
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil); err != nil {
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil); err != nil {
 		t.Fatal(err)
 	}
 	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(echo), 2*time.Second)
@@ -300,7 +300,7 @@ func TestGatewayKeepsLongConnections(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets("content=v2")}, nil)
+		_, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets("content=v2")}, nil)
 		done <- err
 	}()
 	// Wait until the gateway sends new connections to the new container, then let it settle and
@@ -354,7 +354,7 @@ func TestGatewayConcurrentInstalls(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, errs[i] = x.s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: x.name, Package: webPkg,
+			_, errs[i] = x.s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: x.name, Package: webPkg,
 				Values: releases.Values{Set: []string{"route=" + x.name + ".local", "routeListener=" + l, "content=" + x.name}}}, nil)
 		}()
 	}
@@ -380,7 +380,7 @@ func TestGatewaySurvivesDockerRestart(t *testing.T) {
 	name := releaseName("it-gw-boot")
 	s, _ := service(t, name)
 	l, port := listener(t, gateway.ProtocolHTTP)
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
 		Values: releases.Values{Set: []string{"second=true", "route=boot.local", "routeListener=" + l}}}, nil); err != nil {
 		t.Fatal(err)
 	}

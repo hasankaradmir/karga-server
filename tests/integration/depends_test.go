@@ -19,7 +19,7 @@ func TestDependsOnWaitsForTheService(t *testing.T) {
 	ctx := context.Background()
 	name := releaseName("it-dep")
 	s, _ := service(t, name)
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
 		Values: releases.Values{Set: []string{"second=true", "apiDependsOn=true", "startDelay=3", "strategy=recreate"}}}, nil); err != nil {
 		t.Fatal(err)
 	}

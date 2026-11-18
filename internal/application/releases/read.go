@@ -11,19 +11,17 @@ import (
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
-	"github.com/hasankaradmir/karga-server/internal/application/gateway"
-	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // List returns every release.
-func (s *Service) List(ctx context.Context) ([]release.Release, error) {
+func (s *Reads) List(ctx context.Context) ([]release.Release, error) {
 	return s.Store.ListReleases(ctx)
 }
 
 // History returns a release's revisions, oldest first.
-func (s *Service) History(ctx context.Context, name string) ([]release.Revision, error) {
+func (s *Reads) History(ctx context.Context, name string) ([]release.Revision, error) {
 	if _, err := s.Store.GetRelease(ctx, name); err != nil {
 		return nil, err
 	}
@@ -31,7 +29,7 @@ func (s *Service) History(ctx context.Context, name string) ([]release.Revision,
 }
 
 // revisionOrCurrent resolves revision 0 to the current revision.
-func (s *Service) revisionOrCurrent(ctx context.Context, name string, number int) (release.Revision, error) {
+func (s *Core) revisionOrCurrent(ctx context.Context, name string, number int) (release.Revision, error) {
 	if number == 0 {
 		rel, err := s.Store.GetRelease(ctx, name)
 		if err != nil {
@@ -45,7 +43,7 @@ func (s *Service) revisionOrCurrent(ctx context.Context, name string, number int
 }
 
 // GetValues returns the user overrides of a revision (0 = current), or with all the merged values.
-func (s *Service) GetValues(ctx context.Context, name string, revision int, all bool) (map[string]any, error) {
+func (s *Reads) GetValues(ctx context.Context, name string, revision int, all bool) (map[string]any, error) {
 	rev, err := s.revisionOrCurrent(ctx, name, revision)
 	if err != nil {
 		return nil, err
@@ -58,7 +56,7 @@ func (s *Service) GetValues(ctx context.Context, name string, revision int, all 
 
 // GetManifest returns a revision's resources with secret values shown as <redacted>.
 // GetNotes returns the rendered NOTES.txt of a revision (0: the current one), "" if the package has none.
-func (s *Service) GetNotes(ctx context.Context, name string, revision int) (string, error) {
+func (s *Reads) GetNotes(ctx context.Context, name string, revision int) (string, error) {
 	rev, err := s.revisionOrCurrent(ctx, name, revision)
 	if err != nil {
 		return "", err
@@ -66,7 +64,7 @@ func (s *Service) GetNotes(ctx context.Context, name string, revision int) (stri
 	return rev.Notes, nil
 }
 
-func (s *Service) GetManifest(ctx context.Context, name string, revision int) ([]resource.Resource, error) {
+func (s *Reads) GetManifest(ctx context.Context, name string, revision int) ([]resource.Resource, error) {
 	rev, err := s.revisionOrCurrent(ctx, name, revision)
 	if err != nil {
 		return nil, err
@@ -88,7 +86,7 @@ func (s *Service) GetManifest(ctx context.Context, name string, revision int) ([
 }
 
 // Status reports the release and the live state of each of its resources.
-func (s *Service) Status(ctx context.Context, name string) (*StatusReport, error) {
+func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) {
 	rel, err := s.Store.GetRelease(ctx, name)
 	if err != nil {
 		return nil, err
@@ -185,7 +183,7 @@ func (s *Service) Status(ctx context.Context, name string) (*StatusReport, error
 
 // backends lists the aliases a release proxy routes to, e.g. "karga-api-r2, karga-web-r3", for the
 // clusters whose name starts with prefix.
-func (s *Service) backends(dir, prefix string) string {
+func (s *Reads) backends(dir, prefix string) string {
 	eps, _ := s.Deploy.Proxies.Endpoints(dir)
 	var out []string
 	for cluster, ep := range eps {
@@ -199,122 +197,8 @@ func (s *Service) backends(dir, prefix string) string {
 	return strings.Join(slices.Compact(out), ", ")
 }
 
-// Gateway lists what the host gateway serves, across releases.
-func (s *Service) Gateway(ctx context.Context) ([]gateway.Exposed, error) {
-	rt, err := s.Runtime(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return gateway.Routes(ctx, rt, s.Home)
-}
-
-// GatewaySettings returns the host's gateway settings and, per listener, the services using it.
-func (s *Service) GatewaySettings(ctx context.Context) (gateway.Settings, map[string][]string, error) {
-	settings, err := gateway.ReadSettings(s.Home)
-	if err != nil {
-		return settings, nil, err
-	}
-	rt, err := s.Runtime(ctx)
-	if err != nil {
-		return settings, nil, err
-	}
-	users, err := gateway.Users(ctx, rt, s.Home)
-	return settings, users, err
-}
-
-// GatewayHealth reports the gateway container and whether its Envoy is ready.
-func (s *Service) GatewayHealth(ctx context.Context) (gateway.State, error) {
-	rt, err := s.Runtime(ctx)
-	if err != nil {
-		return gateway.State{}, err
-	}
-	return gateway.Health(ctx, rt, s.Deploy.Host, s.Home)
-}
-
-// SetGatewayAccessLog stores the access log setting and applies it to a running gateway.
-func (s *Service) SetGatewayAccessLog(ctx context.Context, on bool) error {
-	return s.updateGateway(ctx, func(g *gateway.Settings, _ map[string][]string) error {
-		g.AccessLog = on
-		return nil
-	})
-}
-
-// SetGatewayListen sets the host addresses every gateway listener binds.
-func (s *Service) SetGatewayListen(ctx context.Context, addrs []string) error {
-	return s.updateGateway(ctx, func(g *gateway.Settings, _ map[string][]string) error {
-		g.Listen = addrs
-		return nil
-	})
-}
-
-// AddGatewayListener defines a listener services can expose ports on.
-func (s *Service) AddGatewayListener(ctx context.Context, l gateway.Listener) error {
-	return s.updateGateway(ctx, func(g *gateway.Settings, _ map[string][]string) error {
-		g.Listeners = append(g.Listeners, l)
-		return nil
-	})
-}
-
-// RemoveGatewayListener removes a listener no service uses.
-func (s *Service) RemoveGatewayListener(ctx context.Context, name string) error {
-	return s.updateGateway(ctx, func(g *gateway.Settings, users map[string][]string) error {
-		i := slices.IndexFunc(g.Listeners, func(l gateway.Listener) bool { return l.Name == name })
-		switch {
-		case i < 0:
-			return fmt.Errorf("gateway listener %q: %w", name, ports.ErrNotFound)
-		case len(users[name]) > 0:
-			return fmt.Errorf("gateway listener %q is used by %s; remove those exposures first", name, strings.Join(users[name], ", "))
-		}
-		g.Listeners = slices.Delete(g.Listeners, i, i+1)
-		return nil
-	})
-}
-
-// updateGateway changes the gateway settings under the gateway lock, stores them and applies them
-// to a running gateway, waiting until it routes again.
-func (s *Service) updateGateway(ctx context.Context, change func(*gateway.Settings, map[string][]string) error) error {
-	rt, err := s.runtime(ctx)
-	if err != nil {
-		return err
-	}
-	err = func() error {
-		unlock, err := gateway.Lock(s.Home)
-		if err != nil {
-			return err
-		}
-		defer unlock()
-		settings, err := gateway.ReadSettings(s.Home)
-		if err != nil {
-			return err
-		}
-		users, err := gateway.Users(ctx, rt, s.Home)
-		if err != nil {
-			return err
-		}
-		if err := change(&settings, users); err != nil {
-			return err
-		}
-		return gateway.WriteSettings(s.Home, settings)
-	}()
-	if err != nil {
-		return err
-	}
-	if _, err := rt.GetWorkload(ctx, gateway.ContainerName); errors.Is(err, ports.ErrNotFound) {
-		return nil // applied when a release next exposes something
-	}
-	targets, err := gateway.Sync(ctx, rt, s.Deploy.Host, s.Home)
-	if err != nil {
-		return err
-	}
-	want := gateway.Want(targets, func(t gateway.Target) bool { return len(t.Routes) > 0 })
-	if len(want) == 0 {
-		return nil
-	}
-	return s.Deploy.Proxies.WaitReady(ctx, gateway.Dir(s.Home), want, proxyops.ProxyReadyTimeout)
-}
-
 // Exec runs a command in a running workload of a release and returns its exit code.
-func (s *Service) Exec(ctx context.Context, rel, workload string, opts ports.ExecOptions) (int, error) {
+func (s *Reads) Exec(ctx context.Context, rel, workload string, opts ports.ExecOptions) (int, error) {
 	if _, err := s.Store.GetRelease(ctx, rel); err != nil {
 		return -1, err
 	}
@@ -340,7 +224,7 @@ func (s *Service) Exec(ctx context.Context, rel, workload string, opts ports.Exe
 }
 
 // Diff compares revision from with revision to of a release (to 0: the current one).
-func (s *Service) Diff(ctx context.Context, name string, from, to int) (*RevisionDiff, error) {
+func (s *Reads) Diff(ctx context.Context, name string, from, to int) (*RevisionDiff, error) {
 	a, err := s.Store.GetRevision(ctx, name, from)
 	if err != nil {
 		return nil, err
@@ -365,6 +249,6 @@ func (s *Service) Diff(ctx context.Context, name string, from, to int) (*Revisio
 }
 
 // Resources lists what is applied for a release (for completion and tools; no runtime is read).
-func (s *Service) Resources(ctx context.Context, name string) ([]release.AppliedResource, error) {
+func (s *Reads) Resources(ctx context.Context, name string) ([]release.AppliedResource, error) {
 	return s.Store.ListResources(ctx, name)
 }

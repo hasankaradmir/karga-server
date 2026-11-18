@@ -85,7 +85,7 @@ func (l *Loop) Run(ctx context.Context) {
 }
 
 func (l *Loop) all(ctx context.Context) {
-	rels, err := l.Svc.List(ctx)
+	rels, err := l.Svc.Reads.List(ctx)
 	if err != nil {
 		l.Log.Warn("reconcile: list releases", "error", err)
 		return
@@ -103,7 +103,7 @@ func (l *Loop) one(ctx context.Context, name string) {
 		return
 	}
 	// A repair that started finishes even when the server stops.
-	res, err := l.Svc.Repair(context.WithoutCancel(ctx), name, false)
+	res, err := l.Svc.Lifecycle.Repair(context.WithoutCancel(ctx), name, false)
 	switch {
 	case errors.Is(err, ports.ErrNotFound):
 		return // a container of another KARGA_HOME, or a release uninstalled meanwhile
@@ -119,7 +119,7 @@ func (l *Loop) one(ctx context.Context, name string) {
 		l.Log.Warn("reconcile gave up", "release", name, "resource", what, "error", why)
 	}
 	// A repair waiting out its backoff is retried when it may run, events or not.
-	if at := l.Svc.NextRepair(name); !at.IsZero() {
+	if at := l.Svc.Lifecycle.NextRepair(name); !at.IsZero() {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		if _, ok := l.retries[name]; !ok {
