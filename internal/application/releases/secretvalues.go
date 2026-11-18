@@ -1,33 +1,15 @@
 package releases
 
-import "github.com/hasankaradmir/karga-sdk/packages"
+import (
+	"strconv"
 
-// Stored values keep writeOnly values masked; these helpers mask them and, for --reuse-values,
-// find and drop the masked ones.
+	"github.com/hasankaradmir/karga-sdk/packages"
+)
 
-// maskValues returns a copy of m with every present, non-nil value at paths replaced by packages.Redacted.
-func maskValues(m map[string]any, paths [][]string) map[string]any {
-	out, _ := copyValues(m).(map[string]any)
-	for _, p := range paths {
-		cur := out
-		for i, k := range p {
-			if i == len(p)-1 {
-				if v, ok := cur[k]; ok && v != nil {
-					cur[k] = packages.Redacted
-				}
-				break
-			}
-			next, ok := cur[k].(map[string]any)
-			if !ok {
-				break
-			}
-			cur = next
-		}
-	}
-	return out
-}
+// Stored values keep writeOnly values masked (packages.MaskValues); for --reuse-values these
+// helpers find and drop the masked ones. A path step into a list is the element's index.
 
-// redactedPaths lists the paths of m whose value is packages.Redacted, i.e. values maskValues removed.
+// redactedPaths lists the paths of m whose value is packages.Redacted, i.e. values masked when stored.
 func redactedPaths(m map[string]any) [][]string {
 	var out [][]string
 	var walk func(v any, path []string)
@@ -36,6 +18,10 @@ func redactedPaths(m map[string]any) [][]string {
 		case map[string]any:
 			for k, c := range t {
 				walk(c, append(path, k))
+			}
+		case []any:
+			for i, c := range t {
+				walk(c, append(path, strconv.Itoa(i)))
 			}
 		case string:
 			if t == packages.Redacted {
@@ -47,39 +33,46 @@ func redactedPaths(m map[string]any) [][]string {
 	return out
 }
 
-// dropValues returns a copy of m without the given paths.
+// dropValues returns a copy of m without the given paths. A value dropped from a list becomes nil,
+// so the other elements keep their indexes.
 func dropValues(m map[string]any, paths [][]string) map[string]any {
 	out, _ := copyValues(m).(map[string]any)
 	for _, p := range paths {
-		cur := out
-		for i, k := range p {
-			if i == len(p)-1 {
-				delete(cur, k)
-				break
+		if len(p) == 0 {
+			continue
+		}
+		switch parent := at(out, p[:len(p)-1]).(type) {
+		case map[string]any:
+			delete(parent, p[len(p)-1])
+		case []any:
+			if i, err := strconv.Atoi(p[len(p)-1]); err == nil && i >= 0 && i < len(parent) {
+				parent[i] = nil
 			}
-			next, ok := cur[k].(map[string]any)
-			if !ok {
-				break
-			}
-			cur = next
 		}
 	}
 	return out
 }
 
 // hasValue reports whether m has a non-nil value at path.
-func hasValue(m map[string]any, path []string) bool {
-	var cur any = m
+func hasValue(m map[string]any, path []string) bool { return at(m, path) != nil }
+
+// at returns the value of v at path (nil if there is none); a step into a list is an index.
+func at(v any, path []string) any {
 	for _, k := range path {
-		mm, ok := cur.(map[string]any)
-		if !ok {
-			return false
-		}
-		if cur, ok = mm[k]; !ok {
-			return false
+		switch t := v.(type) {
+		case map[string]any:
+			v = t[k]
+		case []any:
+			i, err := strconv.Atoi(k)
+			if err != nil || i < 0 || i >= len(t) {
+				return nil
+			}
+			v = t[i]
+		default:
+			return nil
 		}
 	}
-	return cur != nil
+	return v
 }
 
 func copyValues(v any) any {

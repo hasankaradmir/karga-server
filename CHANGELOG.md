@@ -26,6 +26,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- writeOnly values under a map or a list of the values schema (`additionalProperties`, `items`, …)
+  were stored as written in the revision: the masking did not follow `*` in secret paths. They are
+  stored as `<redacted>` now, and `--reuse-values` asks for them again.
 - The warnings of a deployment's run (from the gateway) were dropped when it succeeded.
 - After a restart the server did not mask Secret values in its log until each release was
   applied again; it now registers the current revisions' values when it starts.

@@ -359,7 +359,7 @@ func (s *Core) run(ctx context.Context, rt ports.Runtime, op *release.Operation,
 		return st.CreateRevision(ctx, release.Revision{
 			Release: in.Name, Number: in.Revision, PackageName: in.Package.Name, PackageVersion: in.Package.Version,
 			RuntimeSupported: in.Package.Runtime.Supported, PackageDigest: in.PackageDigest, ValuesDigest: valuesDigest, ManifestDigest: manifestDigest,
-			Values: maskValues(in.Overrides, in.SecretPaths), ValuesAll: maskValues(in.Values, in.SecretPaths), Manifest: manifest,
+			Values: packages.MaskValues(in.Overrides, in.SecretPaths), ValuesAll: packages.MaskValues(in.Values, in.SecretPaths), Manifest: manifest,
 			Status: release.RevisionPending, Description: in.Description, CreatedAt: now, Notes: in.Notes,
 		})
 	})
