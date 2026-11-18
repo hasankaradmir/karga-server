@@ -428,18 +428,13 @@ func (s *core) prune(ctx context.Context, name string, historyMax int) error {
 	if err != nil {
 		return err
 	}
-	keep := map[int]bool{rel.CurrentRevision: true}
-	for _, a := range applied {
-		keep[a.Revision] = true
+	inUse := make([]int, len(applied))
+	for i, a := range applied {
+		inUse[i] = a.Revision
 	}
 	var errs []error
-	// revs is ascending: everything before the newest max is a candidate.
-	for _, r := range revs[:max(0, len(revs)-historyMax)] {
-		if keep[r.Number] {
-			continue
-		}
-		errs = append(errs, s.store.DeleteRevision(ctx, name, r.Number),
-			os.RemoveAll(deployment.RevisionDir(s.home, name, r.Number)))
+	for _, n := range release.Prunable(revs, rel.CurrentRevision, inUse, historyMax) {
+		errs = append(errs, s.store.DeleteRevision(ctx, name, n), os.RemoveAll(deployment.RevisionDir(s.home, name, n)))
 	}
 	return errors.Join(errs...)
 }

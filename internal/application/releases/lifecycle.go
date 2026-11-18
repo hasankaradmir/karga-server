@@ -67,25 +67,24 @@ func (s *Lifecycle) install(ctx context.Context, req InstallRequest, progress fu
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil {
-		switch {
-		case existing.Status == release.StatusDeployed:
-			cur, err := s.c.store.GetRevision(ctx, req.Name, existing.CurrentRevision)
-			if err != nil {
-				return nil, err
-			}
-			valuesDigest, _, err := s.c.digestJSON(in.Values)
-			if err != nil {
-				return nil, err
-			}
-			if cur.PackageDigest == in.PackageDigest && cur.ValuesDigest == valuesDigest {
-				return &Result{Release: req.Name, Revision: cur.Number, From: cur.Number, Status: string(existing.Status), NoOp: true}, nil
-			}
-			return nil, fmt.Errorf("%w: %s is deployed with a different package or values; use 'karga upgrade'", ErrExists, req.Name)
-		case existing.Status == release.StatusFailed && existing.CurrentRevision > 0:
-			return nil, fmt.Errorf("%w: %s failed after revision %d; use 'karga upgrade' or 'karga rollback'", ErrExists, req.Name, existing.CurrentRevision)
+	same := false
+	if existing != nil && existing.Status == release.StatusDeployed {
+		cur, err := s.c.store.GetRevision(ctx, req.Name, existing.CurrentRevision)
+		if err != nil {
+			return nil, err
 		}
-		// A never-deployed failed release, an uninstalled one or an interrupted one is retried.
+		valuesDigest, _, err := s.c.digestJSON(in.Values)
+		if err != nil {
+			return nil, err
+		}
+		same = cur.PackageDigest == in.PackageDigest && cur.ValuesDigest == valuesDigest
+	}
+	switch action, err := release.Install(existing, same); {
+	case err != nil:
+		return nil, err
+	case action == release.InstallNoOp:
+		cur := existing.CurrentRevision
+		return &Result{Release: req.Name, Revision: cur, From: cur, Status: string(existing.Status), NoOp: true}, nil
 	}
 	in.CommonOptions, in.Type, in.Description, in.Existing, in.Progress = req.CommonOptions, "install", "Install complete", existing, progress
 	return s.c.deploy(ctx, in)
@@ -108,8 +107,8 @@ func (s *Lifecycle) Upgrade(ctx context.Context, req UpgradeRequest, progress fu
 		}
 		return nil, fmt.Errorf("release %s: %w (use --install to create it)", req.Name, ports.ErrNotFound)
 	}
-	if existing.Status == release.StatusUninstalled {
-		return nil, fmt.Errorf("release %s is uninstalled; use 'karga install'", req.Name)
+	if err := existing.CanUpgrade(); err != nil {
+		return nil, err
 	}
 	opts := valuesOptions(req.Values)
 	if req.ReuseValues && existing.CurrentRevision > 0 {

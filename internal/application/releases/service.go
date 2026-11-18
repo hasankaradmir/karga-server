@@ -9,6 +9,7 @@ import (
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -16,7 +17,7 @@ import (
 var (
 	ErrLocked      = errors.New("another operation is running on this release")
 	ErrInterrupted = errors.New("a previous operation on this release was interrupted")
-	ErrExists      = errors.New("release already exists")
+	ErrExists      = release.ErrExists
 )
 
 // DefaultHistoryMax is how many revisions are kept per release unless a request says otherwise (D13).
