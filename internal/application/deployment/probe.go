@@ -180,12 +180,18 @@ func (e *Env) checkProbe(ctx context.Context, st ports.WorkloadStatus, s *resour
 		return false, nil // failures in the start period do not count
 	}
 	ps.failures++
-	retries := hc.Retries
-	if retries == 0 {
-		retries = 3
-	}
+	retries := ProbeRetries(hc)
 	if ps.failures >= retries {
 		return false, fmt.Errorf("workload %s is unhealthy: %s check on %s failed %d times: %w", name, hc.Type, addr, ps.failures, ps.lastErr)
 	}
 	return false, nil
+}
+
+// ProbeRetries is how many failed probes in a row make a workload unhealthy: the health check's
+// retries, 3 by default.
+func ProbeRetries(hc *resource.HealthCheck) int {
+	if hc.Retries > 0 {
+		return hc.Retries
+	}
+	return 3
 }

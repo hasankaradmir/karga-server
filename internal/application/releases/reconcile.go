@@ -191,29 +191,62 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 	if force {
 		s.c.repairs.reset(name)
 	}
-	switch {
-	case rel.Paused:
-		res.Skipped = "paused"
-	case rel.Status != release.StatusDeployed || rel.CurrentRevision == 0:
-		res.Skipped = fmt.Sprintf("the release is %s; karga reconciles deployed releases only", rel.Status)
-	}
-	if _, err := s.c.store.RunningOperation(ctx, name); err == nil {
-		res.Skipped = "an operation is running"
-	} else if !errors.Is(err, ports.ErrNotFound) {
-		return nil, err
-	}
-	if res.Skipped != "" {
+	if res.Skipped, err = s.skipReason(ctx, rel); err != nil || res.Skipped != "" {
+		if err != nil {
+			return nil, err
+		}
 		return res, nil
 	}
-	rt := s.c.rt
 	applied, err := s.c.store.ListResources(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	present, err := existing(ctx, rt, name, applied)
+	present, err := existing(ctx, s.c.rt, name, applied)
 	if err != nil {
 		return nil, err
 	}
+	todo := s.diagnose(ctx, name, applied, present)
+	res.GaveUp = s.c.repairs.gaveUp(name, s.c.now())
+	if len(todo) == 0 {
+		return res, nil
+	}
+	op, err := s.c.begin(ctx, name, ReconcileOperation, rel.CurrentRevision, false, release.Options{})
+	if err != nil {
+		if errors.Is(err, ErrLocked) || errors.Is(err, ErrInterrupted) {
+			res.Skipped = "an operation is running"
+			return res, nil
+		}
+		return nil, err
+	}
+	err = s.act(ctx, &op, rel, present, todo, res)
+	s.c.finish(ctx, op, err)
+	res.GaveUp = s.c.repairs.gaveUp(name, s.c.now())
+	return res, nil
+}
+
+// skipReason says why rel is not repaired now ("" if it is): paused, not deployed, or an
+// operation running on it.
+func (s *Lifecycle) skipReason(ctx context.Context, rel release.Release) (string, error) {
+	why := ""
+	switch {
+	case rel.Paused:
+		why = "paused"
+	case rel.Status != release.StatusDeployed || rel.CurrentRevision == 0:
+		why = fmt.Sprintf("the release is %s; karga reconciles deployed releases only", rel.Status)
+	}
+	if _, err := s.c.store.RunningOperation(ctx, rel.Name); err == nil {
+		why = "an operation is running"
+	} else if !errors.Is(err, ports.ErrNotFound) {
+		return "", err
+	}
+	return why, nil
+}
+
+// diagnose compares what release name should run with what the runtime has and returns the repairs
+// to make now: what is missing is recreated, a stopped or unhealthy container restarted, the
+// gateway synced if an exposure has none. Repairs waiting out their backoff, or given up on, are
+// left out.
+func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present []release.AppliedResource) []planned {
 	now := s.c.now()
 	var todo []planned
 	add := func(p planned) {
@@ -222,14 +255,11 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 			todo = append(todo, p)
 		}
 	}
-	missing := false
 	for _, a := range applied {
 		if !slices.ContainsFunc(present, func(p release.AppliedResource) bool { return p.Kind == a.Kind && p.Name == a.Name }) {
-			missing = true
+			add(planned{key: name + "/plan", action: "create"})
+			break
 		}
-	}
-	if missing {
-		add(planned{key: name + "/plan", action: "create"})
 	}
 	exposed := false
 	for _, a := range present {
@@ -242,7 +272,7 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 			continue
 		}
 		key := name + "/" + a.Kind + "/" + a.Name
-		st, err := rt.GetWorkload(ctx, a.RuntimeName)
+		st, err := s.c.rt.GetWorkload(ctx, a.RuntimeName)
 		if err != nil {
 			continue
 		}
@@ -261,37 +291,24 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 			if err != nil || !ok || w.HealthCheck == nil || w.HealthCheck.Type == resource.HealthExec {
 				continue
 			}
-			if s.c.env.ProbeHealth(ctx, st, w) == ports.HealthUnhealthy {
-				retries := w.HealthCheck.Retries
-				if retries == 0 {
-					retries = 3
-				}
-				if s.c.repairs.probeFailed(key, retries) {
-					add(planned{key, a.Kind, a.Name, "restart", a.RuntimeName, failed})
-				}
-			} else {
+			if s.c.env.ProbeHealth(ctx, st, w) != ports.HealthUnhealthy {
 				s.c.repairs.probeOK(key)
+			} else if s.c.repairs.probeFailed(key, deployment.ProbeRetries(w.HealthCheck)) {
+				add(planned{key, a.Kind, a.Name, "restart", a.RuntimeName, failed})
 			}
 		}
 	}
 	if exposed {
-		if st, err := rt.GetWorkload(ctx, gateway.ContainerName); err != nil || st.State != ports.StateRunning {
+		if st, err := s.c.rt.GetWorkload(ctx, gateway.ContainerName); err != nil || st.State != ports.StateRunning {
 			add(planned{key: name + "/gateway", kind: "Gateway", name: gateway.ContainerName, action: "sync"})
 		}
 	}
-	res.GaveUp = s.c.repairs.gaveUp(name, now)
-	if len(todo) == 0 {
-		return res, nil
-	}
+	return todo
+}
 
-	op, err := s.c.begin(ctx, name, ReconcileOperation, rel.CurrentRevision, false, release.Options{})
-	if err != nil {
-		if errors.Is(err, ErrLocked) || errors.Is(err, ErrInterrupted) {
-			res.Skipped = "an operation is running"
-			return res, nil
-		}
-		return nil, err
-	}
+// act makes the repairs of todo as steps of op and returns their errors.
+func (s *Lifecycle) act(ctx context.Context, op *release.Operation, rel release.Release, present []release.AppliedResource, todo []planned, res *ReconcileResult) error {
+	rt := s.c.rt
 	var errs []error
 	step := func(p planned, err error) {
 		st := release.Step{Kind: p.kind, Name: p.name, Action: p.action, Status: deployment.StepDone}
@@ -303,7 +320,7 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 		op.Steps = append(op.Steps, st)
 		s.c.repairs.done(p.key, s.c.now(), err)
 		if err == nil && p.failed != nil {
-			s.healed(ctx, rt, name, *p.failed)
+			s.healed(ctx, rt, rel.Name, *p.failed)
 		}
 	}
 	for _, p := range todo {
@@ -320,7 +337,7 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 			_, err := gateway.Sync(ctx, rt, s.c.env.Host(), s.c.home)
 			step(p, err)
 		case "create":
-			steps, err := s.recreate(ctx, rt, &op, rel, present)
+			steps, err := s.recreate(ctx, rt, op, rel, present)
 			res.Actions = append(res.Actions, steps...)
 			if err != nil {
 				errs = append(errs, err)
@@ -328,9 +345,7 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 			s.c.repairs.done(p.key, s.c.now(), err)
 		}
 	}
-	s.c.finish(ctx, op, errors.Join(errs...))
-	res.GaveUp = s.c.repairs.gaveUp(name, s.c.now())
-	return res, nil
+	return errors.Join(errs...)
 }
 
 // recreate creates what is missing from the current revision, through the same plan and executor as
