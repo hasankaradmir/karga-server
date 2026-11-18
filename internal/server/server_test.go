@@ -37,7 +37,9 @@ func start(t *testing.T, home string) *api.Client {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- s.Serve(ctx, l, time.Second) }()
+	// The grace outlasts net/http's 5 s for a connection that never sent a request: the client's
+	// transport may dial one it then does not use, and Shutdown waits for it.
+	go func() { done <- s.Serve(ctx, l, 10*time.Second) }()
 	t.Cleanup(func() {
 		cancel()
 		if err := <-done; err != nil {
