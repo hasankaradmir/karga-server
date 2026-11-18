@@ -118,15 +118,15 @@ func (e *Env) replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecReq
 	if behind {
 		progress(ctx, c.Kind, c.Name, PhaseSwitch, "switching traffic to %s", next)
 		alias := BackendAlias(c.Name, req.Revision)
-		if err := writeProxy(ctx, rt, e.Proxies, req, svcs, map[string]string{c.Name: alias}); err != nil {
+		if err := e.writeProxy(ctx, rt, req, svcs, map[string]string{c.Name: alias}); err != nil {
 			return false, stopNext(err)
 		}
-		if err := envoyErr(ctx, rt, ProxyName(req.Release), e.Proxies.WaitReady(ctx, ProxyDir(req.Home, req.Release), proxyWant(svcs, c.Name, alias), proxyops.ProxyReadyTimeout)); err != nil {
+		if err := envoyErr(ctx, rt, ProxyName(req.Release), e.host.Proxies.WaitReady(ctx, ProxyDir(e.home, req.Release), proxyWant(svcs, c.Name, alias), proxyops.ProxyReadyTimeout)); err != nil {
 			// The proxy may have routed to the new backend for a moment: count it as touched.
-			return true, stopNext(errors.Join(err, writeProxy(ctx, rt, e.Proxies, req, svcs, nil)))
+			return true, stopNext(errors.Join(err, e.writeProxy(ctx, rt, req, svcs, nil)))
 		}
 		progress(ctx, c.Kind, c.Name, PhaseDrain, "waiting up to %s for connections to %s to finish", drain, c.Applied.RuntimeName)
-		if _, err := e.Proxies.WaitDrained(ctx, ProxyDir(req.Home, req.Release), proxyClusters(svcs, c.Name), drain); err != nil {
+		if _, err := e.host.Proxies.WaitDrained(ctx, ProxyDir(e.home, req.Release), proxyClusters(svcs, c.Name), drain); err != nil {
 			return true, err
 		}
 	}
@@ -145,7 +145,7 @@ func (e *Env) replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecReq
 // with both <name> and <name>-next present the one the proxies route to is kept (the old one
 // unless they had switched); with only <name>-next it takes the canonical name and is returned with
 // an empty digest so the plan applies the workload again.
-func (e *Env) RepairReplace(ctx context.Context, rt ports.Runtime, home, rel string, applied []release.AppliedResource) ([]release.AppliedResource, error) {
+func (e *Env) RepairReplace(ctx context.Context, rt ports.Runtime, rel string, applied []release.AppliedResource) ([]release.AppliedResource, error) {
 	owned, err := managedObjects(ctx, rt, rel)
 	if err != nil {
 		return nil, err
@@ -156,7 +156,7 @@ func (e *Env) RepairReplace(ctx context.Context, rt ports.Runtime, home, rel str
 			continue
 		}
 		next := a.RuntimeName + nextSuffix
-		if owned[ports.ObjectWorkload+"/"+a.RuntimeName] && e.routedTo(ctx, rt, home, rel, a.Name, next) {
+		if owned[ports.ObjectWorkload+"/"+a.RuntimeName] && e.routedTo(ctx, rt, rel, a.Name, next) {
 			if err := proxyops.RemoveWorkload(ctx, rt, a.RuntimeName); err != nil {
 				return nil, err
 			}

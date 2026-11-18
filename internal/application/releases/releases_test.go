@@ -45,7 +45,11 @@ func newEnv(t *testing.T) *env {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	rt := fakeruntime.New().WithGateway()
-	svc := New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, home, nil, nil)
+	svc, err := New(Deps{Store: store, Runtime: func(context.Context) (ports.Runtime, error) { return rt, nil },
+		Host: &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &env{t: t, svc: svc, rt: rt, port: strconv.Itoa(runtimetest.FreePort(t))}
 }
 
@@ -468,15 +472,15 @@ func TestStateKeyAndKeyedDigests(t *testing.T) {
 		t.Fatalf("values digest not keyed: %q %v", rev.ValuesDigest, err)
 	}
 	// Another key gives another digest; the same key the same one.
-	d := e.svc.Deploy
-	a := d.Digest([]byte("pw"))
-	d.DigestKey = []byte("another-key-of-16b")
-	if d.Digest([]byte("pw")) == a {
+	a := e.svc.Deploy.Digest([]byte("pw"))
+	with := func(key []byte) *deployment.Env {
+		return deployment.NewEnv(e.svc.Deploy.Host(), deployment.EnvConfig{DigestKey: key})
+	}
+	if with([]byte("another-key-of-16b")).Digest([]byte("pw")) == a {
 		t.Fatal("digest does not depend on the key")
 	}
 	key, _ := os.ReadFile(keyPath)
-	d.DigestKey = key
-	if d.Digest([]byte("pw")) != a {
+	if with(key).Digest([]byte("pw")) != a {
 		t.Fatal("same key, different digest")
 	}
 }
@@ -486,8 +490,8 @@ func TestStateKeyCreatedOnceUnderConcurrency(t *testing.T) {
 	errs := make(chan error, 8)
 	for range 8 {
 		go func() {
-			s := &Core{Home: home, Deploy: &deployment.Env{}}
-			errs <- s.loadKey()
+			_, err := loadKey(home)
+			errs <- err
 		}()
 	}
 	for range 8 {
@@ -721,7 +725,11 @@ func TestRegisterSecretsAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got []string
-	restarted := New(e.svc.Store, e.svc.Runtime, e.svc.Deploy.Host, e.svc.Home, func(v string) { got = append(got, v) }, nil)
+	restarted, err := New(Deps{Store: e.svc.Store, Runtime: e.svc.Runtime, Host: e.svc.Deploy.Host(), Home: e.svc.Home,
+		Redact: func(v string) { got = append(got, v) }})
+	if err != nil {
+		t.Fatal(err)
+	}
 	restarted.RegisterSecrets(ctx)
 	if !slices.Contains(got, "hunter2-restart") {
 		t.Fatalf("registered %d values, not the password", len(got))

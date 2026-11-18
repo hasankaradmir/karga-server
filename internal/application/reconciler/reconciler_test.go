@@ -28,7 +28,11 @@ func TestEventTriggersRepair(t *testing.T) {
 	defer func() { _ = store.Close() }()
 	rt := fakeruntime.New().WithGateway()
 	rt.EventsC = make(chan ports.RuntimeEvent)
-	svc := releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, home, nil, nil)
+	svc, err := releases.New(releases.Deps{Store: store, Runtime: func(context.Context) (ports.Runtime, error) { return rt, nil },
+		Host: &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: releases.CommonOptions{Timeout: time.Second},
 		Name: "cache", Package: "../../../tests/testdata/redis", Values: releases.Values{Sets: packages.Sets([]string{"service.enabled=false"}...)}}, nil); err != nil {
 		t.Fatal(err)

@@ -68,10 +68,7 @@ type Gateway struct{ *Core }
 // Core is what the faces share: the state, the runtime, the locks and the deploy steps. Runtime is
 // opened lazily so read-only commands never need Docker.
 type Core struct {
-	// AllowedCaps are the Linux capabilities, besides resource.DefaultCaps, the host administrator
-	// lets packages add (karga-server --allow-capabilities).
-	AllowedCaps []string
-	Store       ports.StateStore
+	Store ports.StateStore
 	// Deploy plans and applies deployments on this host.
 	Deploy  *deployment.Env
 	Runtime func(context.Context) (ports.Runtime, error)
@@ -86,8 +83,6 @@ type Core struct {
 	// AfterChange, if set, is told the name of a release an install, upgrade or rollback changed.
 	AfterChange func(name string)
 
-	keyMu   sync.Mutex
-	key     []byte // nil until loaded: a failed load is tried again next time
 	repairs repairs
 	// busy serializes the operations of a release inside this process: a user's command waits for
 	// a reconciliation in progress instead of failing; a reconciliation skips a busy release.
@@ -95,15 +90,39 @@ type Core struct {
 	busy   map[string]*releaseLock // releases someone holds or waits for
 }
 
-// New returns a Service with process defaults filled in.
-func New(store ports.StateStore, rt func(context.Context) (ports.Runtime, error), host *proxyops.Host, home string, redact func(string), log *slog.Logger) *Service {
+// Deps are what the release service is made of.
+type Deps struct {
+	Store ports.StateStore
+	// Runtime returns the container runtime.
+	Runtime func(context.Context) (ports.Runtime, error)
+	// Host is where deployments run: its proxies and network.
+	Host *proxyops.Host
+	// Home is $KARGA_HOME; its state.key is created on first use.
+	Home string
+	// Redact registers secret values with the log redactor (nil: none).
+	Redact func(string)
+	Log    *slog.Logger
+	// AllowedCaps are the Linux capabilities, besides resource.DefaultCaps, the host administrator
+	// lets packages add (karga-server --allow-capabilities).
+	AllowedCaps []string
+}
+
+// New returns the release service of d, with process defaults filled in. It reads (or creates) the
+// state key, so every digest is keyed from the start.
+func New(d Deps) (*Service, error) {
+	key, err := loadKey(d.Home)
+	if err != nil {
+		return nil, err
+	}
 	hostname, _ := os.Hostname()
-	if redact == nil {
-		redact = func(string) {}
+	if d.Redact == nil {
+		d.Redact = func(string) {}
 	}
-	if log == nil {
-		log = slog.New(slog.DiscardHandler)
+	if d.Log == nil {
+		d.Log = slog.New(slog.DiscardHandler)
 	}
-	c := &Core{Store: store, Deploy: &deployment.Env{Host: host}, Runtime: rt, Home: home, Redact: redact, Log: log, Now: time.Now, PID: os.Getpid(), Hostname: hostname}
-	return &Service{Core: c, Lifecycle: &Lifecycle{c}, Reads: &Reads{c}, Volumes: &Volumes{c}, Gateway: &Gateway{c}}
+	env := deployment.NewEnv(d.Host, deployment.EnvConfig{Home: d.Home, DigestKey: key, Redact: d.Redact, AllowedCaps: d.AllowedCaps})
+	c := &Core{Store: d.Store, Deploy: env, Runtime: d.Runtime, Home: d.Home, Redact: d.Redact, Log: d.Log, Now: time.Now,
+		PID: os.Getpid(), Hostname: hostname}
+	return &Service{Core: c, Lifecycle: &Lifecycle{c}, Reads: &Reads{c}, Volumes: &Volumes{c}, Gateway: &Gateway{c}}, nil
 }

@@ -200,7 +200,7 @@ func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) 
 // backends lists the aliases a release proxy routes to, e.g. "karga-api-r2, karga-web-r3", for the
 // clusters whose name starts with prefix.
 func (s *Reads) backends(dir, prefix string) string {
-	eps, _ := s.Deploy.Proxies.Endpoints(dir)
+	eps, _ := s.Deploy.Host().Proxies.Endpoints(dir)
 	var out []string
 	for cluster, ep := range eps {
 		if !strings.HasPrefix(cluster, prefix) {

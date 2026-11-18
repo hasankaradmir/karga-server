@@ -123,7 +123,7 @@ func (s services) published() map[string][]int {
 }
 
 func (e *Env) proxySpecFor(s services) ProxySpec {
-	spec := ProxySpec{Image: e.Proxies.Container().Image, Limits: e.Proxies.Container().Source, Networks: map[string][]string{}, Published: s.published()}
+	spec := ProxySpec{Image: e.host.Proxies.Container().Image, Limits: e.host.Proxies.Container().Source, Networks: map[string][]string{}, Published: s.published()}
 	for _, n := range s.names() {
 		if w := s.wl[s.svc[n].Workload]; w != nil {
 			for _, net := range w.Networks {

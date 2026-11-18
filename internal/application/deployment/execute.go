@@ -35,9 +35,9 @@ func (e *Env) Execute(ctx context.Context, rt ports.Runtime, req ExecRequest) er
 	if err == nil {
 		return nil
 	}
-	if disrupted && e.Supported() {
+	if disrupted && e.host.Supported() {
 		// Point the gateway at what runs now; the error that got us here is the one to report.
-		_, _ = gateway.Sync(ctx, rt, e.Host, req.Home)
+		_, _ = gateway.Sync(ctx, rt, e.host, e.home)
 	}
 	return &ExecError{Err: err, Disrupted: disrupted}
 }
@@ -45,9 +45,6 @@ func (e *Env) Execute(ctx context.Context, rt ports.Runtime, req ExecRequest) er
 func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, disrupted *bool) error {
 	if req.Timeout == 0 {
 		req.Timeout = DefaultTimeout
-	}
-	if req.Redact == nil {
-		req.Redact = func(string) {}
 	}
 	if req.OnStep == nil {
 		req.OnStep = func(Change, release.Step) error { return nil }
@@ -79,7 +76,7 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 	if err := e.preflightLocked(ctx, rt, info, req); err != nil {
 		return err
 	}
-	paths, err := Materialize(req.Home, req.Release, req.Revision, req.Resources, req.Redact)
+	paths, err := Materialize(e.home, req.Release, req.Revision, req.Resources, e.redact)
 	if err != nil {
 		return err
 	}
@@ -102,7 +99,7 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 		}
 	}
 	if needGateway {
-		if err := rt.EnsureImage(ctx, e.Proxies.Container().Image, "if-not-present"); err != nil {
+		if err := rt.EnsureImage(ctx, e.host.Proxies.Container().Image, "if-not-present"); err != nil {
 			return fmt.Errorf("gateway: %w", err)
 		}
 	}
@@ -124,7 +121,7 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 	for _, c := range req.Plan.Changes {
 		if c.Kind == KindProxy && (c.Action == ActionDelete || c.Strategy == proxyRecreate) {
 			*disrupted = true
-			if err := report(c, ActionDelete, removeProxy(ctx, rt, req.Home, req.Release, c, c.Action == ActionDelete)); err != nil {
+			if err := report(c, ActionDelete, removeProxy(ctx, rt, e.home, req.Release, c, c.Action == ActionDelete)); err != nil {
 				return err
 			}
 		}
@@ -155,7 +152,7 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 			*disrupted, waitAll = true, true
 			var err error
 			if c.Action == ActionCreate || c.Strategy == proxyRecreate {
-				err = e.createProxy(ctx, rt, e.Proxies, req, c, svcs)
+				err = e.createProxy(ctx, rt, req, c, svcs)
 			} else {
 				err = reconnectProxy(ctx, rt, req.Release, c)
 			}
@@ -176,7 +173,7 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 		if err := proxyUp(); err != nil {
 			return err
 		}
-		if err := writeProxy(ctx, rt, e.Proxies, req, svcs, nil); err != nil {
+		if err := e.writeProxy(ctx, rt, req, svcs, nil); err != nil {
 			return err
 		}
 		progress(ctx, c.Kind, c.Name, PhaseWait, "waiting for %s", strings.Join(w.DependsOn, ", "))
@@ -190,7 +187,7 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 				maps.Copy(want, proxyWant(svcs, dep.Workload, BackendAlias(dep.Workload, rev)))
 			}
 		}
-		return envoyErr(ctx, rt, ProxyName(req.Release), e.Proxies.WaitReady(ctx, ProxyDir(req.Home, req.Release), want, req.Timeout))
+		return envoyErr(ctx, rt, ProxyName(req.Release), e.host.Proxies.WaitReady(ctx, ProxyDir(e.home, req.Release), want, req.Timeout))
 	}
 
 	for _, c := range req.Plan.Changes {
@@ -248,7 +245,7 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 		return err
 	}
 	if len(svcs.svc) > 0 {
-		if err := writeProxy(ctx, rt, e.Proxies, req, svcs, nil); err != nil {
+		if err := e.writeProxy(ctx, rt, req, svcs, nil); err != nil {
 			return err
 		}
 		want := map[string]string{}
@@ -266,16 +263,16 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 			}
 		}
 		if len(want) > 0 {
-			if err := envoyErr(ctx, rt, ProxyName(req.Release), e.Proxies.WaitReady(ctx, ProxyDir(req.Home, req.Release), want, proxyops.ProxyReadyTimeout)); err != nil {
+			if err := envoyErr(ctx, rt, ProxyName(req.Release), e.host.Proxies.WaitReady(ctx, ProxyDir(e.home, req.Release), want, proxyops.ProxyReadyTimeout)); err != nil {
 				return err
 			}
 		}
 	}
-	if e.Supported() {
+	if e.host.Supported() {
 		progress(ctx, "Gateway", gateway.ContainerName, PhaseSwitch, "updating the host gateway")
-		targets, err := gateway.Expose(ctx, rt, e.Host, req.Home, req.Release, req.Resources, exposeRoutes(svcs, paths))
+		targets, err := gateway.Expose(ctx, rt, e.host, e.home, req.Release, req.Resources, exposeRoutes(svcs, paths))
 		if err == nil {
-			err = envoyErr(ctx, rt, gateway.ContainerName, gateway.Wait(ctx, e.Host, req.Home, req.Release, targets))
+			err = envoyErr(ctx, rt, gateway.ContainerName, gateway.Wait(ctx, e.host, e.home, req.Release, targets))
 		}
 		if err != nil {
 			*disrupted = true
@@ -308,14 +305,14 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 // preflightLocked runs Preflight under the gateway lock: another release could otherwise
 // bind a gateway port between this one listing the gateway's claims and test-binding the port.
 func (e *Env) preflightLocked(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, req ExecRequest) error {
-	if e.Supported() {
-		unlock, err := gateway.Lock(req.Home)
+	if e.host.Supported() {
+		unlock, err := gateway.Lock(e.home)
 		if err != nil {
 			return err
 		}
 		defer unlock()
 	}
-	err := e.Preflight(ctx, rt, info, req.Home, req.Release, req.Supported, req.Resources, req.AllowedCaps)
+	err := e.Preflight(ctx, rt, info, req.Release, req.Supported, req.Resources)
 	return warnings(err, req.OnWarning)
 }
 

@@ -32,23 +32,18 @@ func (e *ExecError) Unwrap() error { return e.Err }
 
 // ExecRequest applies Plan, computed from Resources against the applied state, as revision Revision.
 type ExecRequest struct {
-	Home      string
 	Release   string
 	Revision  int
 	Supported []string
 	// Resources is the full desired manifest (pre-flight and materialization need all of it).
 	Resources []resource.Resource
 	Plan      Plan
-	// Redact receives every secret value before anything is logged.
-	Redact  func(string)
-	Timeout time.Duration
+	Timeout   time.Duration
 	// OnStep is called after every runtime step so the caller can record applied state and progress.
 	OnStep func(Change, release.Step) error
 	// OnProgress, if set, receives what is going on as it happens (for display only).
 	OnProgress func(Event)
 	ProxyUser  string
-	// AllowedCaps are the capabilities beyond resource.DefaultCaps workloads may add.
-	AllowedCaps []string
 	// OnWarning, if set, receives problems that do not stop the deployment.
 	OnWarning func(string)
 }

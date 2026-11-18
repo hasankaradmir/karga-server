@@ -121,14 +121,11 @@ func (s *Core) runtime(ctx context.Context) (ports.Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.Deploy.UseRuntime(info)
+	s.Deploy.Host().UseRuntime(info)
 	return rt, nil
 }
 
 func (s *Core) deploy(ctx context.Context, in deployInput) (*Result, error) {
-	if err := s.loadKey(); err != nil {
-		return nil, err
-	}
 	applied, err := s.Store.ListResources(ctx, in.Name)
 	if err != nil {
 		return nil, err
@@ -296,7 +293,7 @@ func existing(ctx context.Context, rt ports.Runtime, name string, applied []rele
 }
 
 func (s *Core) replan(ctx context.Context, rt ports.Runtime, in deployInput, applied []release.AppliedResource, plan deployment.Plan) (deployment.Plan, error) {
-	repaired, err := s.Deploy.RepairReplace(ctx, rt, s.Home, in.Name, applied)
+	repaired, err := s.Deploy.RepairReplace(ctx, rt, in.Name, applied)
 	if err != nil || len(repaired) == 0 {
 		return plan, err
 	}
@@ -368,8 +365,8 @@ func (s *Core) run(ctx context.Context, rt ports.Runtime, op *release.Operation,
 	}
 
 	execErr := s.Deploy.Execute(ctx, rt, deployment.ExecRequest{
-		Home: s.Home, Release: in.Name, Revision: in.Revision, Supported: in.Package.Runtime.Supported,
-		Resources: in.Resources, Plan: plan, Redact: s.Redact, Timeout: in.Timeout, AllowedCaps: s.AllowedCaps,
+		Release: in.Name, Revision: in.Revision, Supported: in.Package.Runtime.Supported,
+		Resources: in.Resources, Plan: plan, Timeout: in.Timeout,
 		OnStep:     func(c deployment.Change, st release.Step) error { return s.record(ctx, op, in, c, st) },
 		OnProgress: in.Progress,
 		OnWarning:  in.warn,

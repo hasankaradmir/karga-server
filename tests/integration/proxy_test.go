@@ -139,7 +139,7 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 	ctx := context.Background()
 	a, b := releaseName("it-gw-a"), releaseName("it-gw-b")
 	s, rt := service(t, a)
-	t.Cleanup(func() { _ = hostEnv.Delete(context.Background(), rt, s.Home, b, true) })
+	t.Cleanup(func() { _ = hostEnv(s.Home).Delete(context.Background(), rt, b, true) })
 	l, port := listener(t, gateway.ProtocolHTTP)
 	install := func(rel, host, content string) error {
 		_, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: rel, Package: webPkg,

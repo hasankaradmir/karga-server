@@ -74,9 +74,6 @@ func (s *Lifecycle) install(ctx context.Context, req InstallRequest, progress fu
 			if err != nil {
 				return nil, err
 			}
-			if err := s.loadKey(); err != nil {
-				return nil, err
-			}
 			valuesDigest, _, err := s.digestJSON(in.Values)
 			if err != nil {
 				return nil, err
@@ -266,7 +263,7 @@ func (s *Lifecycle) uninstall(ctx context.Context, rt ports.Runtime, rel release
 		return err
 	}
 	bg := context.WithoutCancel(ctx)
-	if err := s.Deploy.Delete(ctx, rt, s.Home, req.Name, req.DeleteVolumes); err != nil {
+	if err := s.Deploy.Delete(ctx, rt, req.Name, req.DeleteVolumes); err != nil {
 		rel.Status = release.StatusFailed
 		return errors.Join(err, s.Store.SaveRelease(bg, rel))
 	}

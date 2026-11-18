@@ -24,33 +24,27 @@ func (s *Core) digestJSON(v any) (string, []byte, error) {
 // keyFile holds the key of the state's digests of secret material.
 const keyFile = "state.key"
 
-// loadKey reads $KARGA_HOME/state.key, creating it (32 random bytes, 0600) on first use, and makes
-// it the digest key. Losing it only means secrets are re-applied once.
-func (s *Core) loadKey() error {
-	s.keyMu.Lock()
-	defer s.keyMu.Unlock()
-	if s.key == nil {
-		path := filepath.Join(s.Home, keyFile)
-		key, err := os.ReadFile(path)
-		if errors.Is(err, os.ErrNotExist) {
-			key = make([]byte, 32)
-			if _, err = rand.Read(key); err == nil {
-				err = writeNewFile(path, key)
-				if errors.Is(err, os.ErrExist) { // created meanwhile
-					key, err = os.ReadFile(path)
-				}
+// loadKey reads home/state.key, the digest key, creating it (32 random bytes, 0600) on first use.
+// Losing it only means secrets are re-applied once.
+func loadKey(home string) ([]byte, error) {
+	path := filepath.Join(home, keyFile)
+	key, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		key = make([]byte, 32)
+		if _, err = rand.Read(key); err == nil {
+			err = writeNewFile(path, key)
+			if errors.Is(err, os.ErrExist) { // created meanwhile
+				key, err = os.ReadFile(path)
 			}
 		}
-		if err == nil && len(key) < 16 {
-			err = fmt.Errorf("%s is too short; remove it to create a new key", path)
-		}
-		if err != nil {
-			return fmt.Errorf("state key: %w", err)
-		}
-		s.key = key
 	}
-	s.Deploy.DigestKey = s.key
-	return nil
+	if err == nil && len(key) < 16 {
+		err = fmt.Errorf("%s is too short; remove it to create a new key", path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("state key: %w", err)
+	}
+	return key, nil
 }
 
 // writeNewFile creates path with data atomically: the data is written to a temporary file that is

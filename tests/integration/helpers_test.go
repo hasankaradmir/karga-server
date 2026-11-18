@@ -168,12 +168,16 @@ func serviceIn(t *testing.T, home, name string) (*releases.Service, ports.Runtim
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := hostEnv.Delete(context.Background(), rt, home, name, true); err != nil {
+		if err := hostEnv(home).Delete(context.Background(), rt, name, true); err != nil {
 			t.Errorf("cleanup %s: %v", name, err)
 		}
 		_ = store.Close()
 	})
-	return releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, hostEnv.Host, home, nil, nil), rt
+	svc, err := releases.New(releases.Deps{Store: store, Runtime: func(context.Context) (ports.Runtime, error) { return rt, nil }, Host: testHost, Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc, rt
 }
 
 // listener adds a gateway listener of protocol on a free port to the shared KARGA_HOME, as the
@@ -323,5 +327,10 @@ func (p *netPinger) results() []pingResult {
 // result is the result of a pinger with one URL.
 func (p *netPinger) result() pingResult { return p.results()[0] }
 
-// hostEnv is the host every test deploys on: Envoy, the host's network.
-var hostEnv = &deployment.Env{Host: &proxyops.Host{Proxies: envoy.Proxies{}, Net: hostnet.Net{}}}
+// testHost is the host every test deploys on: Envoy, the host's network.
+var testHost = &proxyops.Host{Proxies: envoy.Proxies{}, Net: hostnet.Net{}}
+
+// hostEnv deploys on testHost with home as the state home.
+func hostEnv(home string) *deployment.Env {
+	return deployment.NewEnv(testHost, deployment.EnvConfig{Home: home})
+}

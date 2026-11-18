@@ -104,8 +104,13 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 	}
 	// The composition root: Envoy runs the proxies, the host's network runs probes and port tests.
 	host := &proxyops.Host{Proxies: envoy.Proxies{}, Net: hostnet.Net{}}
-	svc := releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, host, cfg.Home, redact, cfg.Log)
-	svc.AllowedCaps = cfg.AllowedCaps
+	svc, err := releases.New(releases.Deps{Store: store, Runtime: func(context.Context) (ports.Runtime, error) { return rt, nil },
+		Host: host, Home: cfg.Home, Redact: redact, Log: cfg.Log, AllowedCaps: cfg.AllowedCaps})
+	if err != nil {
+		_ = store.Close()
+		unlock()
+		return nil, err
+	}
 	info, err := rt.Info(ctx)
 	if err != nil {
 		_ = store.Close()

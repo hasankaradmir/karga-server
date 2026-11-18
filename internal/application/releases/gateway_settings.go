@@ -41,7 +41,7 @@ func (s *Gateway) Health(ctx context.Context) (gateway.State, error) {
 	if err != nil {
 		return gateway.State{}, err
 	}
-	return gateway.Health(ctx, rt, s.Deploy.Host, s.Home)
+	return gateway.Health(ctx, rt, s.Deploy.Host(), s.Home)
 }
 
 // SetAccessLog stores the access log setting and applies it to a running gateway.
@@ -115,7 +115,7 @@ func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settin
 	if _, err := rt.GetWorkload(ctx, gateway.ContainerName); errors.Is(err, ports.ErrNotFound) {
 		return nil // applied when a release next exposes something
 	}
-	targets, err := gateway.Sync(ctx, rt, s.Deploy.Host, s.Home)
+	targets, err := gateway.Sync(ctx, rt, s.Deploy.Host(), s.Home)
 	if err != nil {
 		return err
 	}
@@ -123,5 +123,5 @@ func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settin
 	if len(want) == 0 {
 		return nil
 	}
-	return s.Deploy.Proxies.WaitReady(ctx, gateway.Dir(s.Home), want, proxyops.ProxyReadyTimeout)
+	return s.Deploy.Host().Proxies.WaitReady(ctx, gateway.Dir(s.Home), want, proxyops.ProxyReadyTimeout)
 }

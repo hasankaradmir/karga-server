@@ -39,7 +39,7 @@ func preflight(t *testing.T, rt *fakeruntime.Runtime, release string, rs ...reso
 	if err != nil {
 		t.Fatal(err)
 	}
-	return testEnv.Preflight(context.Background(), rt, info, t.TempDir(), release, []string{"docker"}, rs, nil)
+	return envAt(t.TempDir()).Preflight(context.Background(), rt, info, release, []string{"docker"}, rs)
 }
 
 func TestPreflightOK(t *testing.T) {
@@ -56,7 +56,7 @@ func TestPreflightRuntimeAndCapabilities(t *testing.T) {
 	info, _ := rt.Info(context.Background())
 	vol := resource.Resource{Kind: resource.KindVolume, Metadata: resource.Metadata{Name: "d"},
 		Spec: &resource.VolumeSpec{Driver: "nfs", MountOptions: []string{"nocopy"}}}
-	err := testEnv.Preflight(context.Background(), rt, info, t.TempDir(), "web", []string{"podman"}, []resource.Resource{vol, webWithPort(80)}, nil)
+	err := envAt(t.TempDir()).Preflight(context.Background(), rt, info, "web", []string{"podman"}, []resource.Resource{vol, webWithPort(80)})
 	for _, want := range []string{`does not support runtime "docker"`, "volume driver nfs", "memory limit", "cpu limit", "exec healthcheck"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("missing %q in %v", want, err)
@@ -84,7 +84,7 @@ func TestPreflightExposures(t *testing.T) {
 	rt := fakeruntime.New()
 	info, _ := rt.Info(context.Background())
 	svc = serviceRes("web", "web", 80, "http", resource.Exposure{Port: "p", Listener: "busy"})
-	err = testEnv.Preflight(context.Background(), rt, info, home, "web", []string{"docker"}, []resource.Resource{webWithPort(80), svc}, nil)
+	err = envAt(home).Preflight(context.Background(), rt, info, "web", []string{"docker"}, []resource.Resource{webWithPort(80), svc})
 	if !errors.Is(err, ports.ErrPortInUse) || !strings.Contains(err.Error(), "another process on this host") {
 		t.Fatalf("host process: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestPreflightCapabilities(t *testing.T) {
 		return r
 	}
 	check := func(r resource.Resource, allowed ...string) error {
-		return testEnv.Preflight(context.Background(), rt, info, t.TempDir(), "web", []string{"docker"}, []resource.Resource{r}, allowed)
+		return envAt(t.TempDir(), allowed...).Preflight(context.Background(), rt, info, "web", []string{"docker"}, []resource.Resource{r})
 	}
 	if err := check(web("NET_BIND_SERVICE", "CAP_CHOWN")); err != nil {
 		t.Fatalf("default capabilities must pass: %v", err)

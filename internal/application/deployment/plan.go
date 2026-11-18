@@ -100,8 +100,8 @@ const (
 // Digest is "hmac-sha256:<hex>" of data under the digest key, or "sha256:<hex>" without one (tests;
 // karga-server always sets the key from $KARGA_HOME/state.key before it plans).
 func (e *Env) Digest(data []byte) string {
-	if len(e.DigestKey) > 0 {
-		m := hmac.New(sha256.New, e.DigestKey)
+	if len(e.key) > 0 {
+		m := hmac.New(sha256.New, e.key)
 		m.Write(data)
 		return "hmac-sha256:" + hex.EncodeToString(m.Sum(nil))
 	}
@@ -221,7 +221,7 @@ func (e *Env) Diff(releaseName string, desired []resource.Resource, applied []re
 
 	var plan Plan
 	var errs []string
-	if !e.Supported() && len(svcs.svc) > 0 {
+	if !e.host.Supported() && len(svcs.svc) > 0 {
 		errs = append(errs, fmt.Sprintf("services %s need karga's gateway and release proxy (Linux with a local, rootful Docker)", strings.Join(svcs.names(), ", ")))
 	}
 	for _, r := range ordered {

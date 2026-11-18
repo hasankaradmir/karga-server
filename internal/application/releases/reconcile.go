@@ -209,9 +209,6 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 	if err != nil {
 		return nil, err
 	}
-	if err := s.loadKey(); err != nil {
-		return nil, err
-	}
 	applied, err := s.Store.ListResources(ctx, name)
 	if err != nil {
 		return nil, err
@@ -323,7 +320,7 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 			}
 			step(p, err)
 		case "sync":
-			_, err := gateway.Sync(ctx, rt, s.Deploy.Host, s.Home)
+			_, err := gateway.Sync(ctx, rt, s.Deploy.Host(), s.Home)
 			step(p, err)
 		case "create":
 			steps, err := s.recreate(ctx, rt, &op, rel, present)
@@ -372,8 +369,8 @@ func (s *Lifecycle) recreate(ctx context.Context, rt ports.Runtime, op *release.
 	in.Timeout = deployment.DefaultTimeout
 	start := len(op.Steps)
 	err = s.Deploy.Execute(ctx, rt, deployment.ExecRequest{
-		Home: s.Home, Release: rel.Name, Revision: rel.CurrentRevision, Supported: rev.RuntimeSupported,
-		Resources: rs, Plan: plan, Redact: s.Redact, Timeout: in.Timeout, AllowedCaps: s.AllowedCaps,
+		Release: rel.Name, Revision: rel.CurrentRevision, Supported: rev.RuntimeSupported,
+		Resources: rs, Plan: plan, Timeout: in.Timeout,
 		OnStep: func(c deployment.Change, st release.Step) error { return s.record(ctx, op, in, c, st) },
 	})
 	return slices.Clone(op.Steps[start:]), err

@@ -15,7 +15,7 @@ import (
 
 // Delete removes every managed object of release: workloads first, then networks. Volumes are kept
 // unless deleteVolumes is set or the volume's retention is delete. Materialized files under home are removed.
-func (e *Env) Delete(ctx context.Context, rt ports.Runtime, home, release string, deleteVolumes bool) error {
+func (e *Env) Delete(ctx context.Context, rt ports.Runtime, release string, deleteVolumes bool) error {
 	objs, err := rt.ListManaged(ctx, release)
 	if err != nil {
 		return err
@@ -41,10 +41,10 @@ func (e *Env) Delete(ctx context.Context, rt ports.Runtime, home, release string
 			}
 		}
 	}
-	if home != "" {
-		errs = append(errs, os.RemoveAll(filepath.Join(home, "releases", release)), os.RemoveAll(ProxyDir(home, release)))
-		if e.Supported() {
-			_, err := gateway.Sync(ctx, rt, e.Host, home)
+	if e.home != "" {
+		errs = append(errs, os.RemoveAll(filepath.Join(e.home, "releases", release)), os.RemoveAll(ProxyDir(e.home, release)))
+		if e.host.Supported() {
+			_, err := gateway.Sync(ctx, rt, e.host, e.home)
 			errs = append(errs, err)
 		}
 	}

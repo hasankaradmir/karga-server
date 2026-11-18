@@ -45,21 +45,21 @@ func deploy(t *testing.T, rt ports.Runtime, example, release string, sets ...str
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostEnv.UseRuntime(info)
-	plan, err := hostEnv.Diff(release, rs, nil, "", nil)
+	testHost.UseRuntime(info)
+	plan, err := hostEnv(sharedHome).Diff(release, rs, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	req := deployment.ExecRequest{
-		Home: sharedHome, Release: release, Revision: 1,
+		Release: release, Revision: 1,
 		Supported: []string{"docker"}, Resources: rs, Plan: plan, Timeout: 3 * time.Minute,
 	}
 	t.Cleanup(func() {
-		if err := hostEnv.Delete(context.Background(), rt, req.Home, release, true); err != nil {
+		if err := hostEnv(sharedHome).Delete(context.Background(), rt, release, true); err != nil {
 			t.Errorf("cleanup %s: %v", release, err)
 		}
 	})
-	return req, hostEnv.Execute(context.Background(), rt, req)
+	return req, hostEnv(sharedHome).Execute(context.Background(), rt, req)
 }
 
 func managed(t *testing.T, rt ports.Runtime, release string) []ports.Object {
@@ -81,7 +81,7 @@ func TestRedis(t *testing.T) {
 	ctx := context.Background()
 	release := releaseName("it-redis")
 	l, _ := listener(t, gateway.ProtocolTCP)
-	req, err := deploy(t, rt, "redis", release, "service.listener="+l)
+	_, err := deploy(t, rt, "redis", release, "service.listener="+l)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestRedis(t *testing.T) {
 	}
 
 	// Delete keeps the data volume by default (retention: retain).
-	if err := hostEnv.Delete(ctx, rt, req.Home, release, false); err != nil {
+	if err := hostEnv(sharedHome).Delete(ctx, rt, release, false); err != nil {
 		t.Fatal(err)
 	}
 	objs := managed(t, rt, release)
