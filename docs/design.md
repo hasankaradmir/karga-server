@@ -54,7 +54,8 @@ reconciler`, the queue and the loop; `releases.Lifecycle.Repair`, the repairs) b
 
 - *Triggers:* Docker events of karga's containers (die, stop, destroy, oom, unhealthy; 2 s debounce),
   a pass over every release every 30 s (`--reconcile-interval`), the server's start, and every
-  install, upgrade or rollback. One release at a time.
+  install, upgrade or rollback. One release at a time, from a queue that holds each release once
+  and drops none (ADR-0019).
 - *Scope:* deployed releases that are not paused and have no operation running. A failed release is
   the user's (D2). Within the server a per-release mutex serializes commands and repairs: a command
   waits for a repair; a repair skips a busy release.
@@ -62,7 +63,8 @@ reconciler`, the queue and the loop; `releases.Lifecycle.Repair`, the repairs) b
   label differs from the applied digest (changed outside karga) are created from the current revision
   through the usual plan and executor, creates only, without a new revision; stopped containers are
   started; unhealthy ones (Docker's check, or karga's tcp/http check failing `retries` times) are
-  restarted; the gateway is synced if something is exposed.
+  restarted; the gateway is synced if something is exposed. A repair waits at most a minute for what
+  it recreated, so one release that does not come up holds up the others no longer than that.
 - *Backoff:* per resource, 10 s doubling to 5 min; after 5 failures in 10 minutes it gives up until
   the user acts on the release or runs `karga reconcile`.
 - Every repair is an operation of type `reconcile`; `karga events` lists them.

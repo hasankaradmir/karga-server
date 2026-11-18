@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -63,5 +64,31 @@ func TestEventTriggersRepair(t *testing.T) {
 			t.Fatal("the destroy event did not bring the container back")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// The queue holds each release once and never drops one, however many wait.
+func TestQueueKeepsEveryRelease(t *testing.T) {
+	q := NewQueue(time.Millisecond)
+	for i := range 300 {
+		q.Notify(fmt.Sprintf("r%d", i))
+		q.Notify(fmt.Sprintf("r%d", i)) // twice: once in the queue
+	}
+	got := map[string]int{}
+	deadline := time.After(5 * time.Second)
+	for len(got) < 300 {
+		select {
+		case <-q.wake:
+			for _, n := range q.take() {
+				got[n]++
+			}
+		case <-deadline:
+			t.Fatalf("%d of 300 releases came out of the queue", len(got))
+		}
+	}
+	for n, c := range got {
+		if c != 1 {
+			t.Fatalf("%s came out %d times", n, c)
+		}
 	}
 }

@@ -32,6 +32,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- A repair waited up to 5 minutes for a container that did not come up, holding every other
+  release's repairs that long, and the reconciler's queue dropped releases beyond 256. Repairs wait
+  at most a minute and are tried again with growing pauses; the queue keeps every release once
+  (ADR-0019).
 - A secret quoted in an error message (a failed connection with its password, say) reached the
   client and the operations in the state as it was; the redactor masks those too now. A first
   install that failed left its Config and Secret files on disk; they are removed with it.
@@ -78,6 +82,10 @@ First release.
   `KARGA_CLI_REF` (master without it).
 
 ### Fixed
+- A repair waited up to 5 minutes for a container that did not come up, holding every other
+  release's repairs that long, and the reconciler's queue dropped releases beyond 256. Repairs wait
+  at most a minute and are tried again with growing pauses; the queue keeps every release once
+  (ADR-0019).
 - A secret quoted in an error message (a failed connection with its password, say) reached the
   client and the operations in the state as it was; the redactor masks those too now. A first
   install that failed left its Config and Secret files on disk; they are removed with it.

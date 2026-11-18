@@ -263,6 +263,7 @@ func (s *Lifecycle) uninstall(ctx context.Context, rt ports.Runtime, rel release
 		rel.Status = release.StatusFailed
 		return errors.Join(err, s.c.store.SaveRelease(bg, rel))
 	}
+	s.c.repairs.reset(req.Name) // what was repaired, or given up on, is no more
 	if !req.KeepHistory {
 		return s.c.store.DeleteRelease(bg, req.Name)
 	}
