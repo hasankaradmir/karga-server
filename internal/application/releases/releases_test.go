@@ -859,3 +859,29 @@ func TestRollbackOfUninstalledRelease(t *testing.T) {
 		t.Fatalf("the refused rollback recorded %d operations", after-before)
 	}
 }
+
+// Runtime names are <release>-<name>: release a-b's workload app and release a's workload b-app
+// would share a container. The second install is refused before it changes anything.
+func TestRuntimeNameClashRefusedEarly(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	first := scratchPkg(t)
+	if _, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "a-b", Package: first}, nil); err != nil {
+		t.Fatal(err)
+	}
+	second := scratchPkg(t)
+	tpl, _ := os.ReadFile(filepath.Join(second, "templates", "r.yaml"))
+	if err := os.WriteFile(filepath.Join(second, "templates", "r.yaml"), []byte(strings.Replace(string(tpl), "metadata: {name: app}", "metadata: {name: b-app}", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.rt.Calls = nil
+	_, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "a", Package: second}, nil)
+	if !errors.Is(err, ports.ErrConflict) || !strings.Contains(err.Error(), `release "a-b"`) {
+		t.Fatalf("want a conflict naming release a-b, got %v", err)
+	}
+	for _, c := range e.rt.Calls {
+		if strings.HasPrefix(c, "Create") || strings.HasPrefix(c, "Delete") || strings.HasPrefix(c, "Stop") {
+			t.Fatalf("the refused install changed the runtime: %v", e.rt.Calls)
+		}
+	}
+}

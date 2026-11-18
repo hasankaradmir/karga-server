@@ -32,6 +32,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- Containers are named `<release>-<name>`, so release `a-b`'s workload `c` and release `a`'s workload
+  `b-c` share a name: the second install failed half way. It is refused before anything changes,
+  naming the release that holds the container.
 - A rollback of an uninstalled release recorded an operation before it failed; it is refused
   first, pointing at `karga install`. karga-server warns at start when `--allow-capabilities` is
   `ALL`.
