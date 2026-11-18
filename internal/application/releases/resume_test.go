@@ -2,9 +2,13 @@ package releases
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // crash leaves cache as a karga-server that stopped while running op of revision would: the release
@@ -55,7 +59,7 @@ func TestResumeFinishesAnInterruptedUpgrade(t *testing.T) {
 	e.crash("upgrade", 2, release.StatusUpgrading)
 	delete(e.rt.Workloads, "cache-redis")
 
-	e.svc.Lifecycle.Resume(context.Background())
+	<-e.svc.Lifecycle.Resume(context.Background())
 
 	if r := e.release(); r.Status != release.StatusDeployed || r.CurrentRevision != 2 {
 		t.Fatalf("release: %+v", r)
@@ -81,7 +85,7 @@ func TestResumeBeforeTheRevisionWasRecorded(t *testing.T) {
 	e := newEnv(t)
 	must[*Result](t)(e.install())
 	e.crash("upgrade", 2, release.StatusUpgrading)
-	e.svc.Lifecycle.Resume(context.Background())
+	<-e.svc.Lifecycle.Resume(context.Background())
 	if r := e.release(); r.Status != release.StatusDeployed || r.CurrentRevision != 1 {
 		t.Fatalf("release: %+v", r)
 	}
@@ -94,14 +98,14 @@ func TestResumeAbortsOtherOperationsAndUninstallsAgain(t *testing.T) {
 	e := newEnv(t)
 	must[*Result](t)(e.install())
 	e.crash("volume-backup", 1, release.StatusDeployed)
-	e.svc.Lifecycle.Resume(context.Background())
+	<-e.svc.Lifecycle.Resume(context.Background())
 	if ops := e.lastOps(1); ops[0].Status != release.OperationAborted || e.release().Status != release.StatusDeployed {
 		t.Fatalf("operation: %+v", ops[0])
 	}
 
 	// An uninstall resumes with its own options: --keep-history keeps the release, uninstalled.
 	e.crashWith("uninstall", 1, release.StatusUninstalling, release.Options{KeepHistory: true})
-	e.svc.Lifecycle.Resume(context.Background())
+	<-e.svc.Lifecycle.Resume(context.Background())
 	if r := e.release(); r.Status != release.StatusUninstalled {
 		t.Fatalf("release: %+v", r)
 	}
@@ -115,7 +119,7 @@ func TestResumeAbortsOtherOperationsAndUninstallsAgain(t *testing.T) {
 	// Without --keep-history the release goes.
 	must[*Result](t)(e.install())
 	e.crashWith("uninstall", 2, release.StatusUninstalling, release.Options{})
-	e.svc.Lifecycle.Resume(context.Background())
+	<-e.svc.Lifecycle.Resume(context.Background())
 	if _, err := e.svc.c.store.GetRelease(context.Background(), "cache"); err == nil {
 		t.Fatal("release kept by an uninstall without --keep-history")
 	}
@@ -127,5 +131,34 @@ func TestOperationsRecordTheirUser(t *testing.T) {
 	must[*Result](t)(e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "cache", Package: redisPkg, Values: e.opts()}, nil))
 	if op := e.lastOps(1)[0]; op.Actor != "alice" {
 		t.Fatalf("actor: %+v", op)
+	}
+}
+
+// Resume holds the releases it resumes from the start, resumes them in the background, and tries
+// again while the runtime is unavailable (karga-server started before Docker).
+func TestResumeWaitsForTheRuntime(t *testing.T) {
+	e := newEnv(t)
+	must[*Result](t)(e.install())
+	must[*Result](t)(e.upgrade("image.tag=7.2"))
+	e.crash("upgrade", 2, release.StatusUpgrading)
+	delete(e.rt.Workloads, "cache-redis")
+	e.rt.Fail = map[string]error{"Info:": fmt.Errorf("docker is starting: %w", ports.ErrUnavailable)}
+	resumeRetry = 20 * time.Millisecond
+	t.Cleanup(func() { resumeRetry = 5 * time.Second })
+
+	done := e.svc.Lifecycle.Resume(context.Background())
+	// The release is held: a command waits for its resume instead of meeting it interrupted.
+	if _, err := e.svc.c.locks.tryLock("cache"); !errors.Is(err, ErrLocked) {
+		t.Fatalf("the release was not held while it waits to be resumed: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond) // a few failed tries
+	e.rt.SetFail(nil)                  // Docker is up
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the resume did not finish once the runtime was back")
+	}
+	if r := e.release(); r.Status != release.StatusDeployed || r.CurrentRevision != 2 {
+		t.Fatalf("release: %+v", r)
 	}
 }

@@ -44,8 +44,9 @@ operations it starts.
 away loses only the progress. Each operation holds its release from reading its state to recording
 the outcome, so what it plans cannot go stale; others wait, and a reconciliation skips a busy
 release. On SIGTERM the server stops accepting requests and waits up to `--shutdown-grace` (5 minutes) for running
-operations. When it starts, it resumes the operations it left running before it answers requests
-or repairs anything (section 5).
+operations. When it starts, it holds the releases it left an operation running on and resumes them
+in the background before it repairs anything (section 5); a command on such a release waits for its
+resume, the others are served at once.
 
 **Reconciliation.** Desired state is each release's current revision and its applied resources;
 only install, upgrade and rollback change it. karga-server's reconciler (`internal/application/

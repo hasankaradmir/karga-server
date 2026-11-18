@@ -32,6 +32,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- karga-server answered no request until it had resumed every operation it left running, each up to
+  its timeout, and a resume that met Docker not up yet failed and left its release interrupted for
+  good. It now serves at once: commands on a release being resumed wait for it, and a resume waits
+  for Docker to answer, with growing pauses.
 - After a reboot, an operation an earlier karga-server left running could keep its release locked
   for good (`ErrLocked`, even with `--force`) when another process got its PID. Only one
   karga-server runs per home, so such an operation is interrupted, and resumed or aborted as any.
@@ -67,6 +71,10 @@ First release.
   `KARGA_CLI_REF` (master without it).
 
 ### Fixed
+- karga-server answered no request until it had resumed every operation it left running, each up to
+  its timeout, and a resume that met Docker not up yet failed and left its release interrupted for
+  good. It now serves at once: commands on a release being resumed wait for it, and a resume waits
+  for Docker to answer, with growing pauses.
 - After a reboot, an operation an earlier karga-server left running could keep its release locked
   for good (`ErrLocked`, even with `--force`) when another process got its PID. Only one
   karga-server runs per home, so such an operation is interrupted, and resumed or aborted as any.

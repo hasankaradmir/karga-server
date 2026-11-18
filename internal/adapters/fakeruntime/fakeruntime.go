@@ -123,6 +123,13 @@ func (Proxies) Version(context.Context, string) (string, error) { return "fake",
 var _ ports.ProxyControl = Proxies{}
 
 // Info implements ports.Runtime.
+// SetFail replaces Fail while the runtime is in use (Fail itself may be set before).
+func (r *Runtime) SetFail(fail map[string]error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Fail = fail
+}
+
 func (r *Runtime) Info(context.Context) (ports.RuntimeInfo, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
