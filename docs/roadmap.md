@@ -31,8 +31,9 @@ What karga does not do yet, what it does with known limits, and the open questio
 
 ## Known limitations
 
-- **One karga-server per host.** The gateway is shared by the host; two servers with different
-  `KARGA_HOME`s would fight over it.
+- **One karga-server per host.** The gateway is shared by the host: a server whose `KARGA_HOME`
+  is not the gateway's refuses to expose anything (and never removes the other's gateway); remove
+  `karga-gateway` with Docker when moving to another home.
 - **Repairs** recreate a removed volume empty; settings changed inside a running container (not in
   its spec) are not detected.
 - **Linux only.** Services need the gateway and the release proxy, which need Linux with a local

@@ -260,3 +260,25 @@ func TestLockHonoursContext(t *testing.T) {
 		t.Fatalf("want the wait to end with ctx, got %v", err)
 	}
 }
+
+// A gateway another KARGA_HOME's karga-server runs is left alone: replacing it would make the two
+// servers replace each other's for ever.
+func TestSyncRefusesAnotherHomesGateway(t *testing.T) {
+	h := testHost(true)
+	ctx := context.Background()
+	rt := fakeruntime.New("img", envoy.Image())
+	route := []Route{{Service: "web", Port: 80, Listener: "web", Host: "b.example", Path: "/"}}
+	first, second := t.TempDir(), t.TempDir()
+	proxyOf(t, rt, first, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, route)
+	if _, err := New(rt, h, first).Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	proxyOf(t, rt, second, "c", []Port{{Service: "web", Port: 80, Upstream: 4002}}, route)
+	rt.Calls = nil
+	if _, err := New(rt, h, second).Sync(ctx); !errors.Is(err, ports.ErrConflict) || !strings.Contains(err.Error(), first) {
+		t.Fatalf("want a conflict naming the other home, got %v", err)
+	}
+	if slices.Contains(rt.Calls, "DeleteWorkload:"+ContainerName) {
+		t.Fatalf("the other home's gateway was removed: %v", rt.Calls)
+	}
+}

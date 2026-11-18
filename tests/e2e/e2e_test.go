@@ -59,7 +59,11 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	// The host has one gateway, and karga-server leaves another home's alone (the integration
+	// tests' or an earlier run's).
+	_ = exec.Command("docker", "rm", "-f", "karga-gateway").Run()
 	code := m.Run()
+	_ = exec.Command("docker", "rm", "-f", "karga-gateway").Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }

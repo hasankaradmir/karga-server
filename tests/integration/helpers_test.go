@@ -59,10 +59,17 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "integration tests run on Linux with a local Docker: use make test-linux")
 		os.Exit(1)
 	}
+	// The host has one gateway, and karga-server leaves another home's alone: one an earlier run
+	// left behind would stop this run's exposures.
+	removeGateway()
 	code := m.Run()
+	removeGateway()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }
+
+// removeGateway removes the host gateway container, whichever home it serves.
+func removeGateway() { _ = exec.Command("docker", "rm", "-f", gateway.ContainerName).Run() }
 
 func requireLinux(t *testing.T) {
 	t.Helper()

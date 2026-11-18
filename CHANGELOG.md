@@ -32,6 +32,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- Two karga-servers with different `KARGA_HOME`s on one Docker replaced each other's gateway for ever,
+  and one with nothing to expose removed the other's. The gateway of another home is left alone now:
+  exposing fails with a conflict naming that home. Moving to another home, remove `karga-gateway`
+  with Docker first.
 - `volume backup --stop` kept the workloads stopped and the release held for as long as the client
   took to read the backup; the copy now goes to a temporary file under `$KARGA_HOME/tmp` (as large
   as the backup), the workloads run again, and the file is sent after.
@@ -90,6 +94,10 @@ First release.
   `KARGA_CLI_REF` (master without it).
 
 ### Fixed
+- Two karga-servers with different `KARGA_HOME`s on one Docker replaced each other's gateway for ever,
+  and one with nothing to expose removed the other's. The gateway of another home is left alone now:
+  exposing fails with a conflict naming that home. Moving to another home, remove `karga-gateway`
+  with Docker first.
 - A repair waited up to 5 minutes for a container that did not come up, holding every other
   release's repairs that long, and the reconciler's queue dropped releases beyond 256. Repairs wait
   at most a minute and are tried again with growing pauses; the queue keeps every release once
