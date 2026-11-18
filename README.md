@@ -145,14 +145,16 @@ Secrets (and what mounts them) once more on its next upgrade.
   gateway configuration and admin sockets are in `0700` directories under `$KARGA_HOME/proxies/` and
   `$KARGA_HOME/gateway/`.
 - Config and Secret files live under `$KARGA_HOME/releases/<release>/<revision>/`. That directory is
-  `0700`; the files inside are `0644` so any user in the container can read them. The state database
-  is `0600`.
-- Secret values never appear in output, logs or the database. The database keeps HMAC-SHA256
+  `0700`; the files inside are `0644` so any user in the container can read them. The state files
+  (`$KARGA_HOME/state`) are `0600` in `0700` directories.
+- Secret values never appear in output, logs or the state. The state keeps HMAC-SHA256
   digests of them (keyed by `$KARGA_HOME/state.key`, `0600`) to detect changes; without the key they
   cannot be used to guess a password. Releases written by an older karga re-apply their Secrets once.
 - TLS keys are copied into `$KARGA_HOME/gateway/certs/` (`0600`, in a `0700` directory) for the
   gateway.
 - Image pulls are anonymous; private registries are not supported yet.
+- A variable a workload takes from a Secret (`environmentFrom`) is stored only as a reference, but
+  its value is in the container's environment, which `docker inspect` shows.
 
 ## Development
 

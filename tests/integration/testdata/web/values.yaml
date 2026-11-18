@@ -26,6 +26,8 @@ echoListener: ""
 # raw=true adds a raw HTTP server on containerPort 9001 (Service web port 9001), routed at /x/ on
 # the route host: /x/slow answers after 20 seconds, /x/ws switches protocols and echoes.
 raw: false
+# envSecret, if set, is stored in Secret app-env and given to web as variable SECRET_VALUE.
+envSecret: ""
 # drain is the replace drain timeout.
 drain: 2s
 # tls.cert/tls.key (PEM) serve the route on an https listener; plain HTTP on port 80 redirects to it.

@@ -59,20 +59,29 @@ func TestReconcilerRepairsFromDockerEvents(t *testing.T) {
 		t.Fatal("no digest label on the container")
 	}
 
-	ops, err := s.Reads.Events(ctx, name, 0, 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var repairs []string
-	for _, op := range ops {
-		if op.Type == releases.ReconcileOperation {
-			for _, st := range op.Steps {
-				repairs = append(repairs, st.Action+" "+st.Name)
+	// The container runs before the reconciliation that started it is recorded as finished.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		ops, err := s.Reads.Events(ctx, name, 0, 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var repairs []string
+		for _, op := range ops {
+			if op.Type == releases.ReconcileOperation {
+				for _, st := range op.Steps {
+					repairs = append(repairs, st.Action+" "+st.Name)
+				}
 			}
 		}
-	}
-	if got := strings.Join(repairs, ","); !strings.Contains(got, "start web") || !strings.Contains(got, "create web") {
-		t.Fatalf("repairs recorded: %s", got)
+		got := strings.Join(repairs, ",")
+		if strings.Contains(got, "start web") && strings.Contains(got, "create web") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("repairs recorded: %s", got)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 	if r := currentRelease(t, s, name); r.CurrentRevision != 1 {
 		t.Fatalf("reconcile changed the revision: %+v", r)

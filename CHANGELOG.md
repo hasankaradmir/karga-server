@@ -5,6 +5,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ## [Unreleased]
 
+### Added
+- Workloads take variables from Secrets (`environmentFrom`): the state keeps the reference, the
+  value is set when the container is created, and a new value recreates the container.
+
 ### Fixed
 - The gateway cut every HTTP request after 15 seconds (Envoy's default route timeout) and refused
   WebSocket upgrades. Requests now run until done, upgrades pass through, and a stream idle for

@@ -138,8 +138,8 @@ func withoutStrategy(r resource.Resource) resource.Resource {
 }
 
 // Specs returns the canonical redacted JSON and digest of every resource. A workload's digest also
-// covers the Config and Secret resources it mounts, and a Service's the Secrets it serves TLS with,
-// so changing their content applies them again.
+// covers the Config and Secret resources it mounts or reads variables from, and a Service's the
+// Secrets it serves TLS with, so changing their content applies them again.
 func (e *Env) Specs(rs []resource.Resource) (map[Key]release.AppliedResource, error) {
 	out := map[Key]release.AppliedResource{}
 	behind := servicesOf(rs).wl
@@ -173,6 +173,10 @@ func (e *Env) Specs(rs []resource.Resource) (map[Key]release.AppliedResource, er
 					if kind != resource.KindVolume {
 						_, _ = fmt.Fprintf(h, "\n%s/%s=%s", kind, name, out[Key{kind, name}].Digest) // hash writes never fail
 					}
+				}
+				// The container's environment holds the values: a new value needs a new container.
+				for _, e := range w.EnvironmentFrom {
+					_, _ = fmt.Fprintf(h, "\nenv/%s=%s", e.Secret, out[Key{resource.KindSecret, e.Secret}].Digest)
 				}
 			}
 			if s, ok := r.Spec.(*resource.ServiceSpec); ok {

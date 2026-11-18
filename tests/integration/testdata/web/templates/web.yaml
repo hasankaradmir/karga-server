@@ -9,6 +9,16 @@ spec:
     tls.key: {{ .Values.tls.key | quote }}
 ---
 {{- end }}
+{{- if .Values.envSecret }}
+apiVersion: karga.io/v1alpha1
+kind: Secret
+metadata:
+  name: app-env
+spec:
+  values:
+    value: {{ .Values.envSecret | quote }}
+---
+{{- end }}
 apiVersion: karga.io/v1alpha1
 kind: Network
 metadata:
@@ -40,6 +50,10 @@ spec:
   image: busybox:1.37
   command: [sh, -c, "sleep {{ .Values.startDelay }}; {{ if .Values.echo }}nc -ll -p 9000 -e cat & {{ end }}{{ if .Values.raw }}nc -ll -p 9001 -e sh /www/raw.sh & {{ end }}exec httpd -f -p {{ .Values.listenPort }} -h /www"]
   networks: [web-net]
+  {{- if .Values.envSecret }}
+  environmentFrom:
+    - {name: SECRET_VALUE, secret: app-env, key: value}
+  {{- end }}
   mounts:
     - config: site
       mountPath: /www

@@ -2,6 +2,9 @@ package deployment
 
 import (
 	"fmt"
+	"maps"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -34,6 +37,25 @@ func workloadRequest(release, name string, s *resource.WorkloadSpec, lbl map[str
 		Env:           s.Environment,
 		RestartPolicy: s.RestartPolicy,
 		StopTimeout:   s.StopGrace(),
+	}
+	if len(s.EnvironmentFrom) > 0 {
+		wr.Env = maps.Clone(s.Environment)
+		if wr.Env == nil {
+			wr.Env = map[string]string{}
+		}
+		// The values come from the Secret's materialized files: the stored manifest holds only the
+		// reference, and Materialize has registered them with the log redactor.
+		for _, e := range s.EnvironmentFrom {
+			dir, ok := paths[Key{resource.KindSecret, e.Secret}]
+			if !ok {
+				return wr, fmt.Errorf("environmentFrom %s: Secret %q was not materialized", e.Name, e.Secret)
+			}
+			v, err := os.ReadFile(filepath.Join(dir, e.Key))
+			if err != nil {
+				return wr, fmt.Errorf("environmentFrom %s: %w", e.Name, err)
+			}
+			wr.Env[e.Name] = string(v)
+		}
 	}
 	for _, n := range s.Networks {
 		wr.Networks = append(wr.Networks, proxyops.RuntimeName(release, n))

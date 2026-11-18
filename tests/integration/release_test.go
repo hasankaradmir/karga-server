@@ -3,7 +3,10 @@
 package integration
 
 import (
+	"bytes"
 	"context"
+	"io/fs"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -111,5 +114,44 @@ func TestFailedUpgradeKeepsHistory(t *testing.T) {
 	}
 	if st := workload(t, rt, name+"-probe"); st.State != ports.StateRunning || st.Health != ports.HealthHealthy {
 		t.Fatalf("after rollback: %+v", st)
+	}
+}
+
+// A variable from a Secret reaches the container, never the state, and a new value recreates it.
+func TestEnvironmentFromSecret(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	name := releaseName("it-envsec")
+	s, rt := service(t, name)
+	printenv := func() string {
+		t.Helper()
+		var out bytes.Buffer
+		if code, err := rt.Exec(ctx, name+"-web", ports.ExecOptions{Cmd: []string{"printenv", "SECRET_VALUE"}, Stdout: &out, Stderr: &out}); err != nil || code != 0 {
+			t.Fatalf("printenv: %d %v %s", code, err, out.String())
+		}
+		return strings.TrimSpace(out.String())
+	}
+	first := "first-" + name
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+		Values: releases.Values{Set: []string{"envSecret=" + first, "strategy=recreate"}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := printenv(); got != first {
+		t.Fatalf("SECRET_VALUE = %q", got)
+	}
+	state := filepath.Join(sharedHome, "state", "releases", name)
+	_ = filepath.WalkDir(state, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && bytes.Contains(readFile(t, p), []byte(first)) {
+			t.Errorf("%s holds the secret value", p)
+		}
+		return nil
+	})
+	second := "second-" + name
+	if _, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+		Values: releases.Values{Set: []string{"envSecret=" + second, "strategy=recreate"}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := printenv(); got != second {
+		t.Fatalf("after upgrade SECRET_VALUE = %q", got)
 	}
 }

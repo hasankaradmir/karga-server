@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
@@ -100,5 +101,46 @@ func TestMaterializeUpdatesInPlace(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "releases", "web", "1", "configs", "c", "old")); !os.IsNotExist(err) {
 		t.Fatalf("stale file kept: %v", err)
+	}
+}
+
+// A variable from a Secret reaches the container but not the stored spec, and a new value changes
+// the workload's digest so the container is recreated.
+func TestEnvironmentFromSecret(t *testing.T) {
+	home := t.TempDir()
+	w := resource.Resource{Kind: resource.KindWorkload, Metadata: resource.Metadata{Name: "app"}, Spec: &resource.WorkloadSpec{
+		Image: "busybox:1.37", Environment: map[string]string{"MODE": "prod"},
+		EnvironmentFrom: []resource.EnvFrom{{Name: "DB_PASSWORD", Secret: "db", Key: "password"}},
+	}}
+	specs := func(password string) (map[Key]string, string, string) {
+		t.Helper()
+		rs := []resource.Resource{secretRes("db", map[string]string{"password": password}), w}
+		paths, err := Materialize(home, "web", 1, rs, func(string) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		applied, err := testEnv.Specs(rs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := applied[Key{resource.KindWorkload, "app"}]
+		return paths, a.Digest, string(a.Spec)
+	}
+	paths, d1, spec := specs("s3cret")
+	if strings.Contains(spec, "s3cret") || !strings.Contains(spec, "DB_PASSWORD") {
+		t.Fatalf("stored spec: %s", spec)
+	}
+	wr, err := workloadRequest("web", "app", w.Spec.(*resource.WorkloadSpec), nil, paths, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wr.Env["DB_PASSWORD"] != "s3cret" || wr.Env["MODE"] != "prod" {
+		t.Fatalf("env: %v", wr.Env)
+	}
+	if w.Spec.(*resource.WorkloadSpec).Environment["DB_PASSWORD"] != "" {
+		t.Fatal("the spec's environment was changed")
+	}
+	if _, d2, _ := specs("other"); d2 == d1 {
+		t.Fatal("a new secret value did not change the workload's digest")
 	}
 }
