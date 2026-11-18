@@ -32,6 +32,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- Waiting for the gateway's lock (another release changing what it exposes) could not be
+  interrupted; it ends with the operation's context now.
 - Revisions were pruned to `--history-max` only after a deployment that succeeded: an upgrade
   failing again and again kept every revision and its files. Failed deployments prune too. Temporary
   files a crash left in the state are removed when karga-server starts.

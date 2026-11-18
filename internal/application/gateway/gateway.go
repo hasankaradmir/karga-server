@@ -112,7 +112,7 @@ func findTargets(ctx context.Context, rt Runtime, home string) ([]Target, error)
 // the gateway container as needed. It returns the targets it routes to.
 func (g *Gateway) Sync(ctx context.Context) ([]Target, error) {
 	rt, h, home := g.rt, g.host, g.home
-	unlock, err := Lock(home)
+	unlock, err := Lock(ctx, home)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func (g *Gateway) Sync(ctx context.Context) ([]Target, error) {
 // lock that no other release took the same listeners, hosts or paths since the pre-flight.
 func (g *Gateway) Expose(ctx context.Context, rel string, rs []resource.Resource, routes []Route) ([]Target, error) {
 	rt, h, home := g.rt, g.host, g.home
-	unlock, err := Lock(home)
+	unlock, err := Lock(ctx, home)
 	if err != nil {
 		return nil, err
 	}

@@ -191,7 +191,7 @@ func listener(t *testing.T, protocol string) (string, int) {
 	t.Helper()
 	port := runtimetest.FreePort(t)
 	name := fmt.Sprintf("l%d", port)
-	unlock, err := gateway.Lock(sharedHome)
+	unlock, err := gateway.Lock(context.Background(), sharedHome)
 	if err != nil {
 		t.Fatal(err)
 	}

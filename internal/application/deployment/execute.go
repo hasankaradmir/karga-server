@@ -66,7 +66,7 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 // bind a gateway port between this one listing the gateway's claims and test-binding the port.
 func (e *Env) preflightLocked(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, req ExecRequest) error {
 	if e.host.Supported() {
-		unlock, err := gateway.Lock(e.home)
+		unlock, err := gateway.Lock(ctx, e.home)
 		if err != nil {
 			return err
 		}

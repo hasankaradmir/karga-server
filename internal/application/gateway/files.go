@@ -2,11 +2,13 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -110,8 +112,9 @@ func writeFile(path string, data []byte) error {
 	return fsutil.WriteFile(path, data, 0o600)
 }
 
-// Lock serializes gateway updates of releases deployed at once (release locks are per release).
-func Lock(home string) (func(), error) {
+// Lock serializes gateway updates of releases deployed at once (release locks are per release). It
+// waits until the gateway is free or ctx ends.
+func Lock(ctx context.Context, home string) (func(), error) {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return nil, err
 	}
@@ -119,11 +122,22 @@ func Lock(home string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("lock the gateway: %w", err)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return func() { _ = f.Close() }, nil // closing releases the lock
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			_ = f.Close()
+			return nil, fmt.Errorf("lock the gateway: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			_ = f.Close()
+			return nil, fmt.Errorf("waiting for the gateway: %w", ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
-	return func() { _ = f.Close() }, nil // closing releases the lock
 }
 
 func settingsPath(home string) string { return filepath.Join(home, "gateway.yaml") }

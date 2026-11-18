@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -242,5 +243,20 @@ func TestExposeChecksUnderTheLock(t *testing.T) {
 	}
 	if routes, _ := readExpose(home, "mine"); routes != nil {
 		t.Fatalf("a refused exposure was written: %+v", routes)
+	}
+}
+
+// Waiting for the gateway's lock ends with the context.
+func TestLockHonoursContext(t *testing.T) {
+	home := t.TempDir()
+	unlock, err := Lock(context.Background(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := Lock(ctx, home); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want the wait to end with ctx, got %v", err)
 	}
 }
