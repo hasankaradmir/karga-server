@@ -30,9 +30,8 @@ func (s *Lifecycle) Resume(ctx context.Context) {
 	}
 }
 
-// resumeRelease resumes the operation left running on release name, if any. Under the release's lock
-// no operation of this process runs, so one recorded with this process's PID is an earlier
-// process's that had the same PID.
+// resumeRelease resumes the operation left running on release name, if any: under the release's
+// lock no operation of this process runs, so it is an earlier process's.
 func (s *Lifecycle) resumeRelease(ctx context.Context, name string) error {
 	unlock, err := s.c.locks.lock(ctx, name)
 	if err != nil {
@@ -49,9 +48,6 @@ func (s *Lifecycle) resumeRelease(ctx context.Context, name string) error {
 	}
 	if err != nil {
 		return err
-	}
-	if op.Hostname == s.c.hostname && op.PID != s.c.pid && processAlive(op.PID) {
-		return nil // a live process still works on it
 	}
 	return s.resume(ctx, rel, op)
 }

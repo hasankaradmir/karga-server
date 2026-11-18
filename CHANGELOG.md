@@ -32,6 +32,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- After a reboot, an operation an earlier karga-server left running could keep its release locked
+  for good (`ErrLocked`, even with `--force`) when another process got its PID. Only one
+  karga-server runs per home, so such an operation is interrupted, and resumed or aborted as any.
 - A command waiting for a busy release went on waiting after its client went away (Ctrl-C), and ran
   later; it stops waiting now, as ADR-0015 says. What started still runs to the end.
 - The state store refuses a release name that is not a DNS label itself, as a second line behind
@@ -64,6 +67,9 @@ First release.
   `KARGA_CLI_REF` (master without it).
 
 ### Fixed
+- After a reboot, an operation an earlier karga-server left running could keep its release locked
+  for good (`ErrLocked`, even with `--force`) when another process got its PID. Only one
+  karga-server runs per home, so such an operation is interrupted, and resumed or aborted as any.
 - A command waiting for a busy release went on waiting after its client went away (Ctrl-C), and ran
   later; it stops waiting now, as ADR-0015 says. What started still runs to the end.
 - Repairing or resuming a release rewrote its Config and Secret directories from scratch: running

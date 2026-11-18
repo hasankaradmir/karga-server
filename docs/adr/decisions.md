@@ -19,7 +19,7 @@ directory.
 | D12 | Network and Volume changes | Refused in an upgrade (uninstall or rename instead). |
 | D13 | History | `--history-max`, default 10 revisions. |
 | D14 | Failed containers | Stopped, not removed, so their logs can be read. |
-| D15 | Interrupted operations | PID, hostname and the request's options are recorded; karga-server resumes them at start with those options, or a dead operation is aborted with `--force` (ADR-0015). |
+| D15 | Interrupted operations | PID, hostname and the request's options are recorded; karga-server resumes them at start with those options, or an interrupted operation is aborted with `--force` (ADR-0015). One left running is always an earlier process's: one karga-server runs per home and only it runs operations, so a PID another process took since (a reboot) does not keep the release locked. |
 | D16 | Replace strategy | `updateStrategy: {type: replace, drainTimeout}`: the new container starts next to the old one; eligible with read-only volumes and a health check. |
 | D17 | Strategy override | `--strategy recreate\|replace` on upgrade and rollback. |
 | D18 | Harmless failures | A failure that touched nothing running (failed pull, unhealthy replace) keeps the release status. |

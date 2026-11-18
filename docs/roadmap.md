@@ -63,7 +63,7 @@ What karga does not do yet, what it does with known limits, and the open questio
 | Access to the Docker socket is root-equivalent. | Documented; containers are never privileged; `no-new-privileges` by default. |
 | The gateway runs as root (to bind low ports in the host namespace). | Every capability but `NET_BIND_SERVICE` and `DAC_OVERRIDE` is dropped, `no-new-privileges`, digest-pinned image. |
 | A failed recreate leaves the workload down. | Pre-flight checks and image pulls happen before anything stops; the plan says recreate; replace where possible; `rollback`. |
-| An interrupted operation leaves a release locked or half applied. | Operations run in karga-server, independent of the client; a restarted server resumes the ones it left; `--force` aborts one left by another process; interrupted replaces are repaired before the next plan. |
+| An interrupted operation leaves a release locked or half applied. | Operations run in karga-server, independent of the client; a restarted server resumes the ones it left; `--force` aborts one an earlier process left; interrupted replaces are repaired before the next plan. |
 | A Podman adapter may not fit the Docker-shaped capability model. | The contract suite and capabilities are runtime-agnostic. |
 
 ## Open questions

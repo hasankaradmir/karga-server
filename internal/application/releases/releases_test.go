@@ -228,20 +228,21 @@ func TestInterruptedOperation(t *testing.T) {
 		}
 	}
 
-	// Another process that is alive. One with this process's PID is from an earlier process: stale.
+	// Only one karga-server runs on a home, and only it runs operations: one left running is from an
+	// earlier process, even when another live process got its PID since (a reboot).
 	live := exec.Command("sleep", "60")
 	if err := live.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = live.Process.Kill(); _ = live.Wait() })
 	begin(live.Process.Pid)
-	if _, err := e.upgrade("image.tag=7.2"); !errors.Is(err, ErrLocked) {
-		t.Fatalf("live lock: want ErrLocked, got %v", err)
+	if _, err := e.upgrade("image.tag=7.2"); !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("PID reused by a live process: want ErrInterrupted, got %v", err)
 	}
 	force := common()
 	force.Force = true
-	if _, err := e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: force, Name: "cache", Package: redisPkg, Values: e.opts("image.tag=7.2")}, nil); !errors.Is(err, ErrLocked) {
-		t.Fatalf("--force must not break a live operation: %v", err)
+	if _, err := e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: force, Name: "cache", Package: redisPkg, Values: e.opts("image.tag=7.1")}, nil); err != nil {
+		t.Fatalf("--force: %v", err)
 	}
 
 	begin(deadPID(t))

@@ -110,7 +110,7 @@ func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) 
 	rep := &StatusReport{Release: rel, Resources: []ResourceStatus{}}
 	if op, err := s.c.store.RunningOperation(ctx, name); err == nil {
 		rep.Interrupted = describe(op)
-		if op.Hostname == s.c.hostname && processAlive(op.PID) {
+		if op.Hostname == s.c.hostname && op.PID == s.c.pid { // this server runs it now
 			rep.Interrupted = "in progress: " + rep.Interrupted
 		}
 	} else if !errors.Is(err, ports.ErrNotFound) {

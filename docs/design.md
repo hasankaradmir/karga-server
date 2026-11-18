@@ -155,8 +155,9 @@ The state is YAML files under `$KARGA_HOME/state` (ADR-0017), mode 0600 in 0700 
 Files are replaced atomically; a transaction writes the release file last, so a crash leaves at
 most unreferenced files. `version.yaml` holds the format version; a newer one is refused.
 
-Every mutating command records an operation first. An operation whose process is alive on this
-host locks the release; one whose process is gone is aborted only with `--force`. Operations do
+Every mutating command records an operation first. One karga-server runs per home and only it runs
+operations, so an operation found running after a restart is interrupted: it is resumed, or aborted
+only with `--force`. Operations do
 not depend on their client's connection. When karga-server starts it resumes the operations it
 left running, with the options recorded on the operation (`--delete-volumes`, `--strategy`,
 `--timeout`, `--keep-history`): install, upgrade and rollback deploy their recorded revision again
