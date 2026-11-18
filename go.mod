@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/containerd/errdefs v1.0.0
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0
-	github.com/hasankaradmir/karga-sdk v0.0.0-20261117202628-841339224217
+	github.com/hasankaradmir/karga-sdk v0.1.0
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
 	go.yaml.in/yaml/v3 v3.0.6
