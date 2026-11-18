@@ -8,7 +8,9 @@
   creating packages (`packages`). The CLI renders offline (`lint`, `template`, `show`); the server
   renders what it deploys. Both must agree, so the code is shared.
 - **The API** (`api`): the request and result types, the `Backend` interface, the unix socket
-  client and the HTTP handler.
+  client and the HTTP handler. Each endpoint has its own request type with a `Validate` method; the
+  handler checks every request (release names included) before the backend sees it, so the
+  server's checks of names do not depend on each operation remembering them.
 
 Code both happen to need (a logger, file helpers, plan display) is not a reason to put it in the
 SDK: each repository keeps its own. The server has its own request, result, plan and state types;
@@ -26,7 +28,7 @@ only `internal/server/backend.go` knows the API and maps between them (`depguard
 - Renaming or removing a field, or changing its meaning, raises the major.
 
 **Errors:** the server sends an error kind with every error: not found, conflict, invalid,
-incompatible. The CLI maps them to exit codes: 1 other failure, 2 usage, 3 server unavailable or
+incompatible. Streamed responses (logs, backups, exec) keep the kind too. The CLI maps them to exit codes: 1 other failure, 2 usage, 3 server unavailable or
 incompatible, 4 not found, 5 conflict, 6 `status` unhealthy. Scripts may rely on the codes and on
 the shapes of `-o json` and `-o yaml` (the API's views), which only grow within a major.
 

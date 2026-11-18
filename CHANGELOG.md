@@ -6,6 +6,13 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Changed
+- API 3.0 (karga-sdk): karga CLIs of API 2 are refused with a message to upgrade them. Every
+  request is checked before it reaches the service: a release name must be a DNS label that does
+  not start with `karga`, for every operation (a name like `../x` could reach a path outside the
+  state before). Errors of logs, volume backups and exec keep their kind.
+- A package cannot keep karga-server rendering forever or exhaust its memory: template loops are
+  limited to 1,000,000 iterations per render and the time limit is checked as they run
+  (karga-sdk).
 - `history` shows deployed revisions a later deployment replaced as `superseded`; only the one
   that runs is `deployed`. The state is unchanged, and rollback targets are the same.
 
