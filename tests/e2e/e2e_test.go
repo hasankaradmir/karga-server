@@ -329,7 +329,7 @@ func TestRedisLifecycle(t *testing.T) {
 	if got := redis(t, port, "CONFIG GET maxmemory"); !strings.Contains(got, "268435456") {
 		t.Fatalf("maxmemory after rollback: %q", got)
 	}
-	if got := strings.Join(revisions(t, e, rel), ","); got != "1:deployed,2:deployed,3:deployed" {
+	if got := strings.Join(revisions(t, e, rel), ","); got != "1:superseded,2:superseded,3:deployed" {
 		t.Fatalf("history: %s", got)
 	}
 

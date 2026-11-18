@@ -25,7 +25,23 @@ func (s *Reads) History(ctx context.Context, name string) ([]release.Revision, e
 	if _, err := s.Store.GetRelease(ctx, name); err != nil {
 		return nil, err
 	}
-	return s.Store.ListRevisions(ctx, name)
+	revs, err := s.Store.ListRevisions(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	// Only the newest deployed revision is what runs (a failed one after it changed nothing that
+	// stayed); earlier deployed ones are shown as superseded. The state keeps them deployed:
+	// rollback looks for them.
+	newest := true
+	for i := len(revs) - 1; i >= 0; i-- {
+		if revs[i].Status == release.RevisionDeployed {
+			if !newest {
+				revs[i].Status = release.RevisionSuperseded
+			}
+			newest = false
+		}
+	}
+	return revs, nil
 }
 
 // revisionOrCurrent resolves revision 0 to the current revision.

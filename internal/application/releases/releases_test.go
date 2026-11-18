@@ -155,6 +155,11 @@ func TestUpgradeFailRollback(t *testing.T) {
 	if len(hist) != 4 || hist[3].Description != "Rollback to 2" || hist[2].Status != release.RevisionFailed {
 		t.Fatalf("history: %v", got)
 	}
+	// Only the newest deployed revision shows as deployed; the state keeps the others deployed, so
+	// an explicit rollback to one of them still works (below).
+	if hist[0].Status != release.RevisionSuperseded || hist[1].Status != release.RevisionSuperseded || hist[3].Status != release.RevisionDeployed {
+		t.Fatalf("history statuses: %v", got)
+	}
 
 	// Explicit rollback to revision 1.
 	must[*Result](t)(e.svc.Lifecycle.Rollback(context.Background(), RollbackRequest{CommonOptions: common(), Name: "cache", Revision: 1}, nil))
@@ -657,8 +662,12 @@ func TestConcurrentUpgradesSerialize(t *testing.T) {
 		t.Fatalf("revisions: %+v", hist)
 	}
 	for i, r := range hist {
-		if r.Number != i+1 || r.Status != release.RevisionDeployed {
-			t.Fatalf("revision %d: %+v", i+1, r)
+		want := release.RevisionSuperseded // every upgrade succeeded; only the last one runs
+		if i == len(hist)-1 {
+			want = release.RevisionDeployed
+		}
+		if r.Number != i+1 || r.Status != want {
+			t.Fatalf("revision %d: %s %s", i+1, r.Status, r.Description)
 		}
 	}
 	if rel := e.release(); rel.Status != release.StatusDeployed || rel.CurrentRevision != 1+len(tags) {

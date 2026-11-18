@@ -5,6 +5,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ## [Unreleased]
 
+### Changed
+- `history` shows deployed revisions a later deployment replaced as `superseded`; only the one
+  that runs is `deployed`. The state is unchanged, and rollback targets are the same.
+
 ### Added
 - `make dist` builds the release archives and `checksums.txt` without a release; `install.sh`
   installs them from `file://`. With `KARGA_SKIP_SIGNATURE=1` it no longer suggests cosign.
