@@ -735,3 +735,37 @@ func TestRegisterSecretsAfterRestart(t *testing.T) {
 		t.Fatalf("registered %v without secret files", got)
 	}
 }
+
+// A variable set from a Secret is visible through docker inspect: the plan says so, and the
+// warnings of a successful deployment keep it.
+func TestEnvironmentFromWarns(t *testing.T) {
+	e := newEnv(t)
+	dir := scratchPkg(t)
+	tpl := `apiVersion: karga.io/v1alpha1
+kind: Secret
+metadata: {name: db}
+spec:
+  values: {uri: postgres://db}
+---
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: api}
+spec:
+  image: busybox:1.37
+  command: [sleep, "300"]
+  environmentFrom:
+    - {name: DB_URI, secret: db, key: uri}
+`
+	if err := os.WriteFile(filepath.Join(dir, "templates", "api.yaml"), []byte(tpl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, dry := range []bool{true, false} {
+		res, err := e.svc.Lifecycle.Install(context.Background(), InstallRequest{CommonOptions: CommonOptions{DryRun: dry, Timeout: time.Second}, Name: "envs", Package: dir}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.ContainsFunc(res.Warnings, func(w string) bool { return strings.Contains(w, `"api" sets DB_URI from Secret "db"`) }) {
+			t.Fatalf("dry run %v: warnings %q", dry, res.Warnings)
+		}
+	}
+}

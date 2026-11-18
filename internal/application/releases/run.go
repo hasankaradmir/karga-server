@@ -152,12 +152,13 @@ func (s *Core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	res := &Result{Release: in.Name, Revision: in.Revision, Plan: plan.Summaries(), DryRun: in.DryRun, Notes: in.Notes}
+	res := &Result{Release: in.Name, Revision: in.Revision, Plan: plan.Summaries(), DryRun: in.DryRun, Notes: in.Notes,
+		Warnings: resource.Warnings(in.Resources)}
 	if in.Existing != nil {
 		res.From = in.Existing.CurrentRevision
 	}
 	if in.DryRun {
-		res.Warnings = anonymousWarnings(anon)
+		res.Warnings = append(res.Warnings, anonymousWarnings(anon)...)
 		if gone := plan.DeletedVolumes(); len(gone) > 0 && !in.DeleteVolumes {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("this %s deletes volume %s and its data; it needs --delete-volumes", in.Type, strings.Join(gone, ", ")))
 		}
@@ -205,8 +206,9 @@ func (s *Core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	if s.AfterChange != nil {
 		s.AfterChange(in.Name)
 	}
+	// Appended: the warnings of the run (the gateway's) are kept.
 	if anon, err := anonymousVolumes(ctx, rt, in.Name, in.Resources); err == nil {
-		res.Warnings = anonymousWarnings(anon)
+		res.Warnings = append(res.Warnings, anonymousWarnings(anon)...)
 	}
 	if perr := s.prune(context.WithoutCancel(ctx), in.Name, historyMax(in.HistoryMax)); perr != nil {
 		s.Log.Warn("prune history", "release", in.Name, "error", perr)
