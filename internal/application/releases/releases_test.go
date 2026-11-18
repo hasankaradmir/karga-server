@@ -841,3 +841,21 @@ func TestPruneAfterFailures(t *testing.T) {
 		}
 	}
 }
+
+// A rollback of an uninstalled release is refused before anything is recorded.
+func TestRollbackOfUninstalledRelease(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	must[*Result](t)(e.install())
+	must[*Result](t)(e.upgrade("image.tag=7.2"))
+	if _, err := e.svc.Lifecycle.Uninstall(ctx, UninstallRequest{Name: "cache", KeepHistory: true}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(e.lastOps(100))
+	if _, err := e.svc.Lifecycle.Rollback(ctx, RollbackRequest{CommonOptions: common(), Name: "cache", Revision: 1}, nil); err == nil || !strings.Contains(err.Error(), "uninstalled") {
+		t.Fatalf("rollback of an uninstalled release: %v", err)
+	}
+	if after := len(e.lastOps(100)); after != before {
+		t.Fatalf("the refused rollback recorded %d operations", after-before)
+	}
+}

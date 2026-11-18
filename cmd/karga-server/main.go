@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -60,7 +61,11 @@ func run() error {
 		return err
 	}
 	defer func() { _ = rt.Close() }()
-	srv, err := server.New(ctx, server.Config{Home: cfg.Home, Socket: *socket, Log: log, Redactor: redactor, AllowedCaps: splitList(*allowCaps), ReconcileInterval: *interval}, rt)
+	caps := splitList(*allowCaps)
+	if slices.ContainsFunc(caps, func(c string) bool { return strings.EqualFold(c, "ALL") }) {
+		log.Warn("--allow-capabilities ALL: packages may give their containers any capability, power over the host included")
+	}
+	srv, err := server.New(ctx, server.Config{Home: cfg.Home, Socket: *socket, Log: log, Redactor: redactor, AllowedCaps: caps, ReconcileInterval: *interval}, rt)
 	if err != nil {
 		return err
 	}

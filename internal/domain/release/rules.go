@@ -47,6 +47,15 @@ func (r Release) CanUpgrade() error {
 	return nil
 }
 
+// CanRollback checks that r can be rolled back: an uninstalled release has nothing running to
+// roll back and is installed again instead (its history stays for that).
+func (r Release) CanRollback() error {
+	if r.Status == StatusUninstalled {
+		return fmt.Errorf("release %s is uninstalled; use 'karga install' (its history is kept)", r.Name)
+	}
+	return nil
+}
+
 // Prunable returns the revisions (numbers, ascending) to delete so that at most keep remain, never
 // current nor one whose resources are still applied. revs are the release's revisions, ascending;
 // keep 0 keeps them all.

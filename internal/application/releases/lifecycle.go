@@ -154,6 +154,9 @@ func (s *Lifecycle) Rollback(ctx context.Context, req RollbackRequest, progress 
 	if existing == nil {
 		return nil, fmt.Errorf("release %s: %w", req.Name, ports.ErrNotFound)
 	}
+	if err := existing.CanRollback(); err != nil {
+		return nil, invalid{err}
+	}
 	target := req.Revision
 	if target == 0 {
 		if target, err = s.rollbackTarget(ctx, existing); err != nil {

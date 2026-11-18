@@ -32,6 +32,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- A rollback of an uninstalled release recorded an operation before it failed; it is refused
+  first, pointing at `karga install`. karga-server warns at start when `--allow-capabilities` is
+  `ALL`.
 - Two karga-servers with different `KARGA_HOME`s on one Docker replaced each other's gateway for ever,
   and one with nothing to expose removed the other's. The gateway of another home is left alone now:
   exposing fails with a conflict naming that home. Moving to another home, remove `karga-gateway`
