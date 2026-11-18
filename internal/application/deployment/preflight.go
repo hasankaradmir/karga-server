@@ -18,7 +18,8 @@ import (
 // hold). What the same release already holds is allowed (an upgrade keeps it).
 // allowedCaps are the capabilities, besides resource.DefaultCaps, the host administrator allows
 // packages to add.
-func (e *Env) Preflight(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, release string, supported []string, rs []resource.Resource) error {
+// Problems that do not stop the deployment are returned as warnings.
+func (e *Env) Preflight(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, release string, supported []string, rs []resource.Resource) (warnings []string, err error) {
 	var errs []error
 	if !slices.Contains(supported, info.Name) {
 		errs = append(errs, fmt.Errorf("package does not support runtime %q (runtime.supported: %v)", info.Name, supported))
@@ -56,9 +57,11 @@ func (e *Env) Preflight(ctx context.Context, rt ports.Runtime, info ports.Runtim
 	}
 
 	if e.host.Supported() {
-		errs = append(errs, gateway.Check(ctx, rt, e.host, e.home, release, rs)...)
+		var gwErr error
+		warnings, gwErr = gateway.Check(ctx, rt, e.host, e.home, release, rs)
+		errs = append(errs, gwErr)
 	}
-	return errors.Join(errs...)
+	return warnings, errors.Join(errs...)
 }
 
 // capName is a capability name without the optional CAP_ prefix, in upper case.

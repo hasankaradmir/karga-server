@@ -312,37 +312,13 @@ func (e *Env) preflightLocked(ctx context.Context, rt ports.Runtime, info ports.
 		}
 		defer unlock()
 	}
-	err := e.Preflight(ctx, rt, info, req.Release, req.Supported, req.Resources)
-	return warnings(err, req.OnWarning)
-}
-
-// warnings passes the gateway.Warnings in err to warn and returns the rest.
-func warnings(err error, warn func(string)) error {
-	if err == nil {
-		return nil
-	}
-	var rest []error
-	for _, e := range unjoin(err) {
-		if gateway.IsWarning(e) {
-			if warn != nil {
-				warn(e.Error())
-			}
-			continue
+	warnings, err := e.Preflight(ctx, rt, info, req.Release, req.Supported, req.Resources)
+	if req.OnWarning != nil {
+		for _, w := range warnings {
+			req.OnWarning(w)
 		}
-		rest = append(rest, e)
 	}
-	return errors.Join(rest...)
-}
-
-func unjoin(err error) []error {
-	if j, ok := err.(interface{ Unwrap() []error }); ok {
-		var out []error
-		for _, e := range j.Unwrap() {
-			out = append(out, unjoin(e)...)
-		}
-		return out
-	}
-	return []error{err}
+	return err
 }
 
 func workloadOf(c Change) (*resource.WorkloadSpec, bool) {

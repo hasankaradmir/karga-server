@@ -123,7 +123,11 @@ func TestCheckExposures(t *testing.T) {
 	check := func(e resource.Exposure) string {
 		svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
 			Workload: "w", Ports: []resource.ServicePort{{Name: "p", Port: 80, TargetPort: "p"}}, Expose: []resource.Exposure{e}}}
-		return errorsText(Check(ctx, rt, h, home, "mine", []resource.Resource{svc}))
+		_, err := Check(ctx, rt, h, home, "mine", []resource.Resource{svc}) // warnings: ports a test cannot bind
+		if err == nil {
+			return ""
+		}
+		return err.Error()
 	}
 	tls := &resource.ExposureTLS{Secret: "mycert"}
 	for _, tt := range []struct {
@@ -144,17 +148,6 @@ func TestCheckExposures(t *testing.T) {
 			t.Errorf("%+v: want %q, got %q", tt.e, tt.want, got)
 		}
 	}
-}
-
-// errorsText joins the errors of Check, leaving out warnings (ports a test cannot bind).
-func errorsText(errs []error) string {
-	var s []string
-	for _, e := range errs {
-		if !IsWarning(e) {
-			s = append(s, e.Error())
-		}
-	}
-	return strings.Join(s, "; ")
 }
 
 func TestSettings(t *testing.T) {

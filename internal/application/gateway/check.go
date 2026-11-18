@@ -12,28 +12,18 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
-// Warning is a problem Check found that does not stop a deployment.
-type Warning string
-
-func (w Warning) Error() string { return string(w) }
-
-// IsWarning reports whether err is a Warning.
-func IsWarning(err error) bool {
-	var w Warning
-	return errors.As(err, &w)
-}
-
 // Check refuses exposures of release rel that the gateway cannot serve: an unknown listener, a
 // listener of another protocol, or a tcp listener, host and path or certificate another release
 // already holds. It binds a listener nobody uses yet once, to see that no other process holds it.
-func Check(ctx context.Context, rt Runtime, h *proxyops.Host, home, rel string, rs []resource.Resource) []error {
+// What it cannot check, but does not stop a deployment, it returns as warnings.
+func Check(ctx context.Context, rt Runtime, h *proxyops.Host, home, rel string, rs []resource.Resource) (warnings []string, err error) {
 	settings, err := ReadSettings(home)
 	if err != nil {
-		return []error{err}
+		return nil, err
 	}
 	targets, err := findTargets(ctx, rt, home)
 	if err != nil {
-		return []error{err}
+		return nil, err
 	}
 	type owner struct{ release, service string }
 	tcp := map[string]owner{}    // listener -> owner
@@ -101,12 +91,12 @@ func Check(ctx context.Context, rt Runtime, h *proxyops.Host, home, rel string, 
 					case taken:
 						errs = append(errs, fmt.Errorf("%s: %s:%d is taken by another process on this host: %w", where, ip, l.Port, ports.ErrPortInUse))
 					case err != nil:
-						errs = append(errs, Warning(fmt.Sprintf("%s:%d could not be checked (%v); if another process holds it, the gateway reports it when it starts",
-							ip, l.Port, errors.Unwrap(err))))
+						warnings = append(warnings, fmt.Sprintf("%s:%d could not be checked (%v); if another process holds it, the gateway reports it when it starts",
+							ip, l.Port, errors.Unwrap(err)))
 					}
 				}
 			}
 		}
 	}
-	return errs
+	return warnings, errors.Join(errs...)
 }

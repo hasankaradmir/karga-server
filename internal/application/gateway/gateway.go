@@ -114,14 +114,9 @@ func Expose(ctx context.Context, rt Runtime, h *proxyops.Host, home, rel string,
 		return nil, err
 	}
 	defer unlock()
-	var errs []error
-	for _, err := range Check(ctx, rt, h, home, rel, rs) {
-		if !IsWarning(err) {
-			errs = append(errs, err)
-		}
-	}
-	if len(errs) > 0 {
-		return nil, errors.Join(errs...)
+	// Preflight reported the warnings; this check runs again under the lock only for the errors.
+	if _, err := Check(ctx, rt, h, home, rel, rs); err != nil {
+		return nil, err
 	}
 	if err := WriteExpose(home, rel, routes); err != nil {
 		return nil, err
