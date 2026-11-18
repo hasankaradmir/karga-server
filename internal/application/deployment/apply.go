@@ -72,6 +72,8 @@ type ExecRequest struct {
 	ProxyUser string
 	// AllowedCaps are the capabilities beyond resource.DefaultCaps workloads may add.
 	AllowedCaps []string
+	// OnWarning, if set, receives problems that do not stop the deployment.
+	OnWarning func(string)
 }
 
 func labels(release string, revision int, kind, name string) map[string]string {
@@ -345,11 +347,8 @@ func execute(ctx context.Context, rt ports.Runtime, req ExecRequest, disrupted *
 		}
 	}
 	if runtimeops.Supported.Load() {
-		if err := gateway.WriteExpose(req.Home, req.Release, exposeRoutes(svcs, paths)); err != nil {
-			return err
-		}
 		progress(ctx, "Gateway", gateway.ContainerName, PhaseSwitch, "updating the host gateway")
-		targets, err := gateway.Sync(ctx, rt, req.Proxies, req.Home)
+		targets, err := gateway.Expose(ctx, rt, req.Proxies, req.Home, req.Release, req.Resources, exposeRoutes(svcs, paths))
 		if err == nil {
 			err = envoyErr(ctx, rt, gateway.ContainerName, gateway.Wait(ctx, req.Proxies, req.Home, req.Release, targets))
 		}
@@ -391,7 +390,37 @@ func preflightLocked(ctx context.Context, rt ports.Runtime, info ports.RuntimeIn
 		}
 		defer unlock()
 	}
-	return Preflight(ctx, rt, info, req.Home, req.Release, req.Supported, req.Resources, req.AllowedCaps)
+	err := Preflight(ctx, rt, info, req.Home, req.Release, req.Supported, req.Resources, req.AllowedCaps)
+	return warnings(err, req.OnWarning)
+}
+
+// warnings passes the gateway.Warnings in err to warn and returns the rest.
+func warnings(err error, warn func(string)) error {
+	if err == nil {
+		return nil
+	}
+	var rest []error
+	for _, e := range unjoin(err) {
+		if gateway.IsWarning(e) {
+			if warn != nil {
+				warn(e.Error())
+			}
+			continue
+		}
+		rest = append(rest, e)
+	}
+	return errors.Join(rest...)
+}
+
+func unjoin(err error) []error {
+	if j, ok := err.(interface{ Unwrap() []error }); ok {
+		var out []error
+		for _, e := range j.Unwrap() {
+			out = append(out, unjoin(e)...)
+		}
+		return out
+	}
+	return []error{err}
 }
 
 func workloadOf(c Change) (*resource.WorkloadSpec, bool) {

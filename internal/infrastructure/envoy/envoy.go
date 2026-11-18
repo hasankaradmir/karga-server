@@ -55,6 +55,14 @@ const (
 	adminSocket   = "admin.sock"
 )
 
+// Overload limits of every karga Envoy.
+const (
+	MaxHeapBytes       = 100 << 20
+	MaxConnections     = 4096
+	heapMonitor        = "envoy.resource_monitors.fixed_heap"
+	connectionsMonitor = "envoy.resource_monitors.global_downstream_max_connections"
+)
+
 // The configuration model is the application's (ports): Envoy renders it.
 type (
 	Cluster      = ports.ProxyCluster
@@ -113,7 +121,29 @@ func Bootstrap(node string, socketMode int) ([]byte, error) {
 			},
 		}
 	}
+	trigger := func(monitor string, at float64) map[string]any {
+		return map[string]any{"name": monitor, "threshold": map[string]any{"value": at}}
+	}
 	return toYAML(map[string]any{
+		// Within the container's 128Mi: shed load before the kernel kills Envoy, and cap
+		// connections so a flood cannot exhaust it.
+		"overload_manager": map[string]any{
+			"refresh_interval": "0.25s",
+			"resource_monitors": []any{
+				map[string]any{"name": heapMonitor, "typed_config": map[string]any{
+					"@type":               "type.googleapis.com/envoy.extensions.resource_monitors.fixed_heap.v3.FixedHeapConfig",
+					"max_heap_size_bytes": MaxHeapBytes,
+				}},
+				map[string]any{"name": connectionsMonitor, "typed_config": map[string]any{
+					"@type":                             "type.googleapis.com/envoy.extensions.resource_monitors.downstream_connections.v3.DownstreamConnectionsConfig",
+					"max_active_downstream_connections": MaxConnections,
+				}},
+			},
+			"actions": []any{
+				map[string]any{"name": "envoy.overload_actions.shrink_heap", "triggers": []any{trigger(heapMonitor, 0.90)}},
+				map[string]any{"name": "envoy.overload_actions.stop_accepting_requests", "triggers": []any{trigger(heapMonitor, 0.98)}},
+			},
+		},
 		"node":  map[string]any{"id": node, "cluster": "karga"},
 		"admin": map[string]any{"address": map[string]any{"pipe": map[string]any{"path": MountPath + "/" + adminSocket, "mode": socketMode}}},
 		"dynamic_resources": map[string]any{

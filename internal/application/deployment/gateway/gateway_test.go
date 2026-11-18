@@ -145,10 +145,13 @@ func TestCheckExposures(t *testing.T) {
 	}
 }
 
+// errorsText joins the errors of Check, leaving out warnings (ports a test cannot bind).
 func errorsText(errs []error) string {
 	var s []string
 	for _, e := range errs {
-		s = append(s, e.Error())
+		if !IsWarning(e) {
+			s = append(s, e.Error())
+		}
 	}
 	return strings.Join(s, "; ")
 }
@@ -226,3 +229,26 @@ func (f *fakeProxies) WaitDrained(context.Context, string, []string, time.Durati
 }
 
 func init() { runtimeops.Proxies = fakeruntime.Proxies{} }
+
+// Expose checks again under the gateway lock: what another release took meanwhile is refused and
+// nothing is written.
+func TestExposeChecksUnderTheLock(t *testing.T) {
+	withProxySupport(t, true)
+	ctx := context.Background()
+	home := t.TempDir()
+	rt := fakeruntime.New("img")
+	proxyOf(t, rt, home, "other", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{
+		{Service: "web", Port: 80, Listener: "web", Host: "a.example", Path: "/"},
+	})
+	svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
+		Workload: "w", Ports: []resource.ServicePort{{Name: "p", Port: 80, TargetPort: "p"}},
+		Expose: []resource.Exposure{{Port: "p", Listener: "web", Host: "a.example", Path: "/"}}}}
+	_, err := Expose(ctx, rt, &fakeProxies{}, home, "mine", []resource.Resource{svc},
+		[]Route{{Service: "s", Port: 80, Listener: "web", Host: "a.example", Path: "/"}})
+	if err == nil || !strings.Contains(err.Error(), "already routed to other/web") {
+		t.Fatalf("Expose: %v", err)
+	}
+	if routes, _ := ReadExpose(home, "mine"); routes != nil {
+		t.Fatalf("a refused exposure was written: %+v", routes)
+	}
+}

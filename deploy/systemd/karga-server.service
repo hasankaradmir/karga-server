@@ -18,7 +18,8 @@ RuntimeDirectoryMode=0750
 UMask=0007
 Restart=on-failure
 RestartSec=2s
-# karga-server lets running operations finish for up to 5 minutes when it stops.
+# karga-server lets running operations finish for --shutdown-grace (5 minutes) when it stops:
+# keep this above it.
 TimeoutStopSec=330
 LimitNOFILE=65536
 # It needs no capabilities: Docker does the privileged work through its socket.

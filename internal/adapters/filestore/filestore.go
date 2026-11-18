@@ -594,10 +594,18 @@ type operationFile struct {
 	PID        int            `yaml:"pid"`
 	Hostname   string         `yaml:"hostname"`
 	Actor      string         `yaml:"actor,omitempty"`
+	Options    optionsFile    `yaml:"options,omitempty"`
 	Steps      []release.Step `yaml:"steps"`
 	Error      string         `yaml:"error,omitempty"`
 	StartedAt  time.Time      `yaml:"startedAt"`
 	FinishedAt time.Time      `yaml:"finishedAt,omitempty"`
+}
+
+type optionsFile struct {
+	DeleteVolumes bool          `yaml:"deleteVolumes,omitempty"`
+	Strategy      string        `yaml:"strategy,omitempty"`
+	Timeout       time.Duration `yaml:"timeout,omitempty"`
+	KeepHistory   bool          `yaml:"keepHistory,omitempty"`
 }
 
 func toFile(op release.Operation) operationFile {
@@ -606,12 +614,12 @@ func toFile(op release.Operation) operationFile {
 		steps = []release.Step{}
 	}
 	return operationFile{ID: op.ID, Release: op.Release, Type: op.Type, Revision: op.Revision, Status: string(op.Status), PID: op.PID,
-		Hostname: op.Hostname, Actor: op.Actor, Steps: steps, Error: op.Error, StartedAt: op.StartedAt, FinishedAt: op.FinishedAt}
+		Hostname: op.Hostname, Actor: op.Actor, Options: optionsFile(op.Options), Steps: steps, Error: op.Error, StartedAt: op.StartedAt, FinishedAt: op.FinishedAt}
 }
 
 func (f operationFile) operation() release.Operation {
 	return release.Operation{ID: f.ID, Release: f.Release, Type: f.Type, Revision: f.Revision, Status: release.OperationStatus(f.Status),
-		PID: f.PID, Hostname: f.Hostname, Actor: f.Actor, Steps: f.Steps, Error: f.Error, StartedAt: f.StartedAt, FinishedAt: f.FinishedAt}
+		PID: f.PID, Hostname: f.Hostname, Actor: f.Actor, Options: release.Options(f.Options), Steps: f.Steps, Error: f.Error, StartedAt: f.StartedAt, FinishedAt: f.FinishedAt}
 }
 
 func operationsPath(rel string) string { return "operations/" + rel + ".yaml" }

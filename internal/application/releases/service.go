@@ -142,9 +142,9 @@ func describe(op release.Operation) string {
 
 // begin records a running operation; the caller holds the release's lock. A live process holding the
 // release always wins; a dead one is only overridden with force (D15).
-func (s *Service) begin(ctx context.Context, rel, typ string, revision int, force bool) (release.Operation, error) {
+func (s *Service) begin(ctx context.Context, rel, typ string, revision int, force bool, opts release.Options) (release.Operation, error) {
 	op := release.Operation{Release: rel, Type: typ, Revision: revision, Status: release.OperationRunning,
-		PID: s.PID, Hostname: s.Hostname, Actor: actorOf(ctx), StartedAt: s.Now()}
+		PID: s.PID, Hostname: s.Hostname, Actor: actorOf(ctx), Options: opts, StartedAt: s.Now()}
 	id, err := s.Store.BeginOperation(ctx, op, func(running release.Operation) error {
 		// Under the release mutex no operation of this process runs: one with its PID is from an
 		// earlier process that got the same PID (a container's PID 1).
@@ -348,6 +348,8 @@ type deployInput struct {
 	Notes string
 	// Progress, if set, receives what the deployment is doing as it happens.
 	Progress func(api.Event)
+	// warn receives problems that do not stop the deployment (they become the result's warnings).
+	warn func(string)
 	// resumed deploys a revision that is already recorded, for an operation a stopped karga-server left.
 	resumed bool
 }
@@ -428,12 +430,14 @@ func (s *Service) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	if in.resumed {
 		opType = ResumeOperation
 	}
-	op, err := s.begin(ctx, in.Name, opType, in.Revision, in.Force)
+	op, err := s.begin(ctx, in.Name, opType, in.Revision, in.Force,
+		release.Options{DeleteVolumes: in.DeleteVolumes, Strategy: in.Strategy, Timeout: time.Duration(in.Timeout)})
 	if err != nil {
 		return nil, err
 	}
 	if plan, err = s.reconcile(ctx, rt, in, recorded, plan); err == nil {
 		res.Plan = plan.Wire()
+		in.warn = func(w string) { res.Warnings = append(res.Warnings, w) }
 		err = s.run(ctx, rt, &op, in, plan)
 	}
 	s.finish(ctx, op, err)
@@ -624,6 +628,7 @@ func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operati
 		Resources: in.Resources, Plan: plan, Redact: s.Redact, Timeout: time.Duration(in.Timeout), AllowedCaps: s.AllowedCaps,
 		OnStep:     func(c deployment.Change, st release.Step) error { return s.record(ctx, op, in, c, st) },
 		OnProgress: in.Progress,
+		OnWarning:  in.warn,
 	})
 
 	bg := context.WithoutCancel(ctx)

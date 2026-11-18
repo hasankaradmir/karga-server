@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/packages"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
@@ -16,9 +17,10 @@ import (
 const ResumeOperation = "resume"
 
 // Resume finishes the operations a stopped karga-server left running. Install, upgrade and rollback
-// deploy their revision again: the executor skips what is already done. Uninstall runs again, keeping
-// volumes and history (its options are not recorded). Other operations are aborted; the reconciler
-// starts what they stopped.
+// deploy their revision again: the executor skips what is already done. Uninstall runs again. Each
+// resumes with the options its request gave (--delete-volumes, --keep-history, --strategy,
+// --timeout), recorded with the operation. Other operations are aborted; the reconciler starts what
+// they stopped.
 func (s *Service) Resume(ctx context.Context) {
 	rels, err := s.Store.ListReleases(ctx)
 	if err != nil {
@@ -66,7 +68,8 @@ func (s *Service) resume(ctx context.Context, rel release.Release, op release.Op
 	case "install", "upgrade", "rollback", ResumeOperation:
 		return s.redeploy(ctx, rel, op)
 	case "uninstall":
-		_, err := s.uninstallRelease(ctx, UninstallRequest{Name: rel.Name, KeepHistory: true, Force: true})
+		_, err := s.uninstallRelease(ctx, UninstallRequest{Name: rel.Name, Force: true,
+			KeepHistory: op.Options.KeepHistory, DeleteVolumes: op.Options.DeleteVolumes})
 		return err
 	}
 	op.Status, op.Error = release.OperationAborted, "interrupted: karga-server stopped"
@@ -105,8 +108,9 @@ func (s *Service) redeploy(ctx context.Context, rel release.Release, op release.
 	}
 	p := packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
 	_, err = s.deploy(ctx, deployInput{
-		// The interrupted operation passed the volume check: its plan was allowed to delete volumes.
-		CommonOptions: CommonOptions{DeleteVolumes: true, Force: true},
+		// The request's own choices: a volume it was not allowed to delete is not deleted now either.
+		CommonOptions: CommonOptions{DeleteVolumes: op.Options.DeleteVolumes, Timeout: api.Duration(op.Options.Timeout), Force: true},
+		Strategy:      op.Options.Strategy,
 		Name:          rel.Name, Type: op.Type, Description: rev.Description, resumed: true,
 		Package: p, PackageDigest: rev.PackageDigest, Overrides: rev.Values, Values: rev.ValuesAll,
 		Resources: rs, Revision: rev.Number, Existing: &rel, Notes: rev.Notes,

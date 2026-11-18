@@ -46,6 +46,20 @@ First release.
 - Repairs no longer update a release proxy (after a server upgrade, for example); they only create
   what is missing.
 - The Envoy admin client no longer keeps a connection pool per proxy.
+- An interrupted operation resumes with the options its request gave (`--delete-volumes`,
+  `--keep-history`, `--strategy`, `--timeout`): before, a resume assumed volumes could be deleted
+  and an uninstall kept the history.
+- What a release exposes is checked again under the gateway lock just before it is written: two
+  releases deploying at once can no longer take the same listener, host or path. A gateway port
+  karga-server cannot test (below 1024, without privileges) gives a warning instead of passing
+  silently.
+- A live `karga volume backup` no longer holds the release (a slow client blocked deployments); a
+  `--stop` backup still does, as an operation.
+- Rootless Docker does not get karga's gateway and release proxy (their host ports and probes need a
+  rootful daemon); Services there are refused with a clear message.
+- karga's Envoys have an overload manager: they shed load at 100 MiB of heap and accept at most
+  4096 connections, within their 128 MiB limit.
+- `--shutdown-grace` sets how long running operations may take to finish on stop (5m).
 - A repair waiting out its backoff is tried again when it may run, even if no Docker event follows
   (a container removed while the reconciler looked at it stayed down).
 

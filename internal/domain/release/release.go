@@ -119,11 +119,21 @@ type Operation struct {
 	PID      int
 	Hostname string
 	// Actor is who asked for it: a user of the karga CLI, or karga-server (repairs, resumes).
-	Actor      string
+	Actor string
+	// Options are the request's choices, so an interrupted operation resumes as it was asked.
+	Options    Options
 	Steps      []Step
 	Error      string
 	StartedAt  time.Time
 	FinishedAt time.Time
+}
+
+// Options are the choices of the request that started an operation.
+type Options struct {
+	DeleteVolumes bool
+	Strategy      string
+	Timeout       time.Duration
+	KeepHistory   bool
 }
 
 // Step is one runtime action of an operation.

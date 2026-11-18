@@ -40,7 +40,7 @@ operations it starts.
 **Operations and restarts.** Operations do not depend on the client's connection: a client that goes
 away loses only the progress. Each operation holds its release from reading its state to recording
 the outcome, so what it plans cannot go stale; others wait, and a reconciliation skips a busy
-release. On SIGTERM the server stops accepting requests and waits up to 5 minutes for running
+release. On SIGTERM the server stops accepting requests and waits up to `--shutdown-grace` (5 minutes) for running
 operations. When it starts, it resumes the operations it left running before it answers requests
 or repairs anything (section 5).
 
@@ -206,7 +206,7 @@ Progress events (pull, create, wait, switch, drain, stop, done) are reported as 
 
 ## 8. Traffic: Services, the release proxy and the gateway (ADR-0011)
 
-Karga's Envoys need the runtime capability `karga.host-gateway` (Linux with a local Docker daemon:
+Karga's Envoys need the runtime capability `karga.host-gateway` (Linux with a local, rootful Docker daemon:
 bind-mounted configuration and admin sockets, inotify, the host network). Without it a plan with
 Services is refused.
 

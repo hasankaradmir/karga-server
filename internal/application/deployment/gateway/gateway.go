@@ -402,6 +402,44 @@ func Sync(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyControl, hom
 		return nil, err
 	}
 	defer unlock()
+	return syncLocked(ctx, rt, px, home)
+}
+
+// Expose records what release rel exposes and syncs the gateway, checking again under the gateway
+// lock that no other release took the same listeners, hosts or paths since the pre-flight.
+func Expose(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyControl, home, rel string, rs []resource.Resource, routes []Route) ([]Target, error) {
+	unlock, err := Lock(home)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	var errs []error
+	for _, err := range Check(ctx, rt, home, rel, rs) {
+		if !IsWarning(err) {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	if err := WriteExpose(home, rel, routes); err != nil {
+		return nil, err
+	}
+	return syncLocked(ctx, rt, px, home)
+}
+
+// Warning is a problem Check found that does not stop a deployment.
+type Warning string
+
+func (w Warning) Error() string { return string(w) }
+
+// IsWarning reports whether err is a Warning.
+func IsWarning(err error) bool {
+	var w Warning
+	return errors.As(err, &w)
+}
+
+func syncLocked(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyControl, home string) ([]Target, error) {
 	targets, err := findTargets(ctx, rt, home)
 	if err != nil {
 		return nil, err
@@ -694,8 +732,12 @@ func Check(ctx context.Context, rt ports.Runtime, home, rel string, rs []resourc
 			if !inUse[l.Name] && !tested[l.Name] {
 				tested[l.Name] = true
 				for _, ip := range settings.Listen {
-					if runtimeops.PortTaken("tcp", ip, l.Port) {
+					switch taken, err := runtimeops.PortTaken("tcp", ip, l.Port); {
+					case taken:
 						errs = append(errs, fmt.Errorf("%s: %s:%d is taken by another process on this host: %w", where, ip, l.Port, ports.ErrPortInUse))
+					case err != nil:
+						errs = append(errs, Warning(fmt.Sprintf("%s:%d could not be checked (%v); if another process holds it, the gateway reports it when it starts",
+							ip, l.Port, errors.Unwrap(err))))
 					}
 				}
 			}

@@ -193,7 +193,7 @@ func Diff(releaseName string, desired []resource.Resource, applied []release.App
 	var plan Plan
 	var errs []string
 	if !runtimeops.Supported.Load() && len(svcs.svc) > 0 {
-		errs = append(errs, fmt.Sprintf("services %s need karga's gateway and release proxy (Linux with a local Docker)", strings.Join(svcs.names(), ", ")))
+		errs = append(errs, fmt.Sprintf("services %s need karga's gateway and release proxy (Linux with a local, rootful Docker)", strings.Join(svcs.names(), ", ")))
 	}
 	for _, r := range ordered {
 		w, ok := r.Spec.(*resource.WorkloadSpec)

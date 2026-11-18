@@ -52,3 +52,9 @@ func TestContextHost(t *testing.T) {
 		t.Error("unknown context: expected error")
 	}
 }
+
+func TestRootless(t *testing.T) {
+	if !rootless([]string{"name=seccomp,profile=builtin", "name=rootless", "name=cgroupns"}) || rootless([]string{"name=seccomp,profile=builtin"}) {
+		t.Fatal("rootless detection")
+	}
+}

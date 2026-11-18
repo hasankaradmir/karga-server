@@ -9,7 +9,14 @@ import (
 
 // crash leaves cache as a karga-server that stopped while running op of revision would: the release
 // in progress, the revision pending, the operation running with a process that is gone.
+// crash records the operation without options.
 func (e *env) crash(op string, revision int, status release.Status) {
+	e.t.Helper()
+	e.crashWith(op, revision, status, release.Options{})
+}
+
+// crashWith is crash for an operation started with opts.
+func (e *env) crashWith(op string, revision int, status release.Status, opts release.Options) {
 	e.t.Helper()
 	ctx := context.Background()
 	rel := e.release()
@@ -26,7 +33,7 @@ func (e *env) crash(op string, revision int, status release.Status) {
 		}
 	}
 	if _, err := e.svc.Store.BeginOperation(ctx, release.Operation{Release: "cache", Type: op, Revision: revision,
-		Status: release.OperationRunning, PID: 1 << 22, Hostname: e.svc.Hostname, StartedAt: e.svc.Now()}, nil); err != nil {
+		Status: release.OperationRunning, PID: 1 << 22, Hostname: e.svc.Hostname, Options: opts, StartedAt: e.svc.Now()}, nil); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -92,13 +99,25 @@ func TestResumeAbortsOtherOperationsAndUninstallsAgain(t *testing.T) {
 		t.Fatalf("operation: %+v", ops[0])
 	}
 
-	e.crash("uninstall", 1, release.StatusUninstalling)
+	// An uninstall resumes with its own options: --keep-history keeps the release, uninstalled.
+	e.crashWith("uninstall", 1, release.StatusUninstalling, release.Options{KeepHistory: true})
 	e.svc.Resume(context.Background())
 	if r := e.release(); r.Status != release.StatusUninstalled {
 		t.Fatalf("release: %+v", r)
 	}
 	if _, ok := e.rt.Workloads["cache-redis"]; ok {
 		t.Fatal("workload left after the resumed uninstall")
+	}
+	if len(e.rt.Volumes) == 0 {
+		t.Fatal("the resumed uninstall deleted volumes it was not asked to")
+	}
+
+	// Without --keep-history the release goes.
+	must[*Result](t)(e.install())
+	e.crashWith("uninstall", 2, release.StatusUninstalling, release.Options{})
+	e.svc.Resume(context.Background())
+	if _, err := e.svc.Store.GetRelease(context.Background(), "cache"); err == nil {
+		t.Fatal("release kept by an uninstall without --keep-history")
 	}
 }
 

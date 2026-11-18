@@ -13,7 +13,7 @@ running the server.
 
 ## Requirements
 
-- Linux with a local Docker Engine and systemd (amd64 or arm64). karga-server connects through
+- Linux with a local, rootful Docker Engine (not rootless) and systemd (amd64 or arm64). karga-server connects through
   `DOCKER_HOST` or the default Docker socket.
 - Go 1.27 to build.
 
@@ -47,14 +47,15 @@ $ karga version                          # the CLI's and the server's version an
 - **Flags:** `--home` (or `KARGA_HOME`; default `$XDG_DATA_HOME/karga` or `~/.local/share/karga`,
   `/var/lib/karga` for the service), `--socket` (or `KARGA_SOCKET`; default
   `/run/karga/karga.sock`), `--reconcile-interval` (default 30s; `0` repairs only on container
-  events), `--allow-capabilities` (see below), `--version`. It logs text to stderr (the journal),
+  events), `--allow-capabilities` (see below), `--shutdown-grace` (default 5m: how long running
+  operations may take to finish on stop; keep the unit's `TimeoutStopSec` above it), `--version`. It logs text to stderr (the journal),
   with every secret value it knows masked. One server owns a `KARGA_HOME`.
 - **Compatibility:** the CLI and the server work together when they speak the same major API
   version (`2.x`), whatever their release versions; otherwise every command says which one to
   upgrade.
 - **Operations** run in the server: a client that goes away (Ctrl-C) does not stop them. Operations
   on one release run one after the other, from planning to the end. On `systemctl stop` the server
-  waits up to 5 minutes for running operations (the unit's `TimeoutStopSec` allows it). Killed in
+  waits up to `--shutdown-grace` (5 minutes) for running operations (the unit's `TimeoutStopSec` allows it). Killed in
   the middle of one, it finishes the operation when it starts again, before it answers requests
   (`resume` in `karga events`). Every operation records the user of the CLI that asked for it, as
   the kernel reports it on the socket.

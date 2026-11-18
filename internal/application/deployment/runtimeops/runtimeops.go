@@ -61,11 +61,11 @@ func IPOverlap(a, b string) bool {
 	return unspecified(a) || unspecified(b)
 }
 
-// PortTaken test-binds a host port. Only "address in use" counts: karga usually runs without root,
-// and Docker or the gateway bind privileged ports that karga itself may not.
-func PortTaken(protocol, ip string, port int) bool {
+// PortTaken test-binds a host port: taken when another process holds it. err says the port could
+// not be tested: karga-server runs without privileges, and binding a port below 1024 needs them
+// (Docker binds the gateway's ports as root).
+func PortTaken(protocol, ip string, port int) (taken bool, err error) {
 	addr := net.JoinHostPort(ip, strconv.Itoa(port))
-	var err error
 	if protocol == "udp" {
 		var c net.PacketConn
 		if c, err = net.ListenPacket("udp", addr); err == nil {
@@ -77,7 +77,13 @@ func PortTaken(protocol, ip string, port int) bool {
 			_ = l.Close()
 		}
 	}
-	return errors.Is(err, syscall.EADDRINUSE)
+	switch {
+	case errors.Is(err, syscall.EADDRINUSE):
+		return true, nil
+	case errors.Is(err, syscall.EACCES):
+		return false, err
+	}
+	return false, nil
 }
 
 // Supported is set by UseProxies: karga's proxies rely on bind-mounted unix sockets, inotify

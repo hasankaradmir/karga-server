@@ -258,7 +258,8 @@ func (s *Service) uninstallRelease(ctx context.Context, req UninstallRequest) (*
 		res.Plan, err = deployment.DeletePlan(ctx, rt, req.Name, req.DeleteVolumes)
 		return res, err
 	}
-	op, err := s.begin(ctx, req.Name, "uninstall", existing.CurrentRevision, req.Force)
+	op, err := s.begin(ctx, req.Name, "uninstall", existing.CurrentRevision, req.Force,
+		release.Options{DeleteVolumes: req.DeleteVolumes, KeepHistory: req.KeepHistory})
 	if err != nil {
 		return nil, err
 	}

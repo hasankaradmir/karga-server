@@ -36,7 +36,7 @@ func probeReachable(s *resource.WorkloadSpec) string {
 	if !kargaProbes(s) || runtimeops.Supported.Load() {
 		return ""
 	}
-	return fmt.Sprintf("healthCheck type %s needs Linux with a local Docker (karga checks the container's address); use type exec", s.HealthCheck.Type)
+	return fmt.Sprintf("healthCheck type %s needs Linux with a local, rootful Docker (karga checks the container's address); use type exec", s.HealthCheck.Type)
 }
 
 // probeAddr is where karga reaches the health check port of a running container.

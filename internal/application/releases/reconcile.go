@@ -298,7 +298,7 @@ func (s *Service) Reconcile(ctx context.Context, name string, force bool) (*Reco
 		return res, nil
 	}
 
-	op, err := s.begin(ctx, name, ReconcileOperation, rel.CurrentRevision, false)
+	op, err := s.begin(ctx, name, ReconcileOperation, rel.CurrentRevision, false, release.Options{})
 	if err != nil {
 		if errors.Is(err, ErrLocked) || errors.Is(err, ErrInterrupted) {
 			res.Skipped = "an operation is running"

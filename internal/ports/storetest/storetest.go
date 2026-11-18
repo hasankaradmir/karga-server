@@ -129,14 +129,15 @@ func releaseRevisionResource(t *testing.T, s ports.StateStore) {
 
 func operations(t *testing.T, s ports.StateStore) {
 	ctx := context.Background()
-	op := release.Operation{Release: "web", Type: "install", Revision: 1, PID: 42, Hostname: "h", Actor: "alice", StartedAt: time.Now()}
+	opts := release.Options{DeleteVolumes: true, Strategy: "replace", Timeout: 90 * time.Second, KeepHistory: true}
+	op := release.Operation{Release: "web", Type: "install", Revision: 1, PID: 42, Hostname: "h", Actor: "alice", Options: opts, StartedAt: time.Now()}
 	id, err := s.BeginOperation(ctx, op, nil)
 	must(t, err)
 	must(t, s.SaveOperationSteps(ctx, id, []release.Step{{Kind: "Workload", Name: "redis", Action: "create", Status: "done"}}))
 
 	running, err := s.RunningOperation(ctx, "web")
 	must(t, err)
-	if running.ID != id || running.PID != 42 || running.Actor != "alice" || len(running.Steps) != 1 {
+	if running.ID != id || running.PID != 42 || running.Actor != "alice" || running.Options != opts || len(running.Steps) != 1 {
 		t.Fatalf("running: %+v", running)
 	}
 

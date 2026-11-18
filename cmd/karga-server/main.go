@@ -35,6 +35,7 @@ func run() error {
 	socket := flag.String("socket", envOr("KARGA_SOCKET", api.DefaultSocket), "unix socket the CLI connects to")
 	interval := flag.Duration("reconcile-interval", server.DefaultReconcileInterval, "time between reconciliations of every release (0: only on container events)")
 	allowCaps := flag.String("allow-capabilities", "", "comma-separated Linux capabilities packages may add beyond Docker's default set, e.g. NET_ADMIN (ALL: any; each one gives containers power over the host)")
+	grace := flag.Duration("shutdown-grace", 5*time.Minute, "how long running operations may take to finish when the server stops (keep the systemd unit's TimeoutStopSec above it)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -68,7 +69,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	return srv.Serve(ctx, l, 5*time.Minute)
+	return srv.Serve(ctx, l, *grace)
 }
 
 func envOr(key, def string) string {

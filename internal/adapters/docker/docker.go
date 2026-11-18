@@ -128,7 +128,10 @@ func (r *Runtime) Info(ctx context.Context) (ports.RuntimeInfo, error) {
 		info.Capabilities = append(info.Capabilities, ports.CapResourcesCPU)
 	}
 	info.Capabilities = append(info.Capabilities, ports.CapHealthcheckExec)
-	if goruntime.GOOS == "linux" && strings.HasPrefix(r.c.DaemonHost(), "unix://") {
+	// The gateway binds the host's ports in the host network namespace and the probes reach
+	// containers by address: a local, rootful daemon on Linux. A rootless daemon has its own network
+	// namespace, where neither works.
+	if goruntime.GOOS == "linux" && strings.HasPrefix(r.c.DaemonHost(), "unix://") && !rootless(res.Info.SecurityOptions) {
 		info.Capabilities = append(info.Capabilities, ports.CapHostGateway)
 	}
 	return info, nil
@@ -171,4 +174,14 @@ func (r *Runtime) DeleteVolume(ctx context.Context, name string) error {
 	defer cancel()
 	_, err := r.c.VolumeRemove(ctx, name, client.VolumeRemoveOptions{})
 	return ignoreNotFound(wrap(err, "delete volume "+name))
+}
+
+// rootless reports whether the daemon's security options say it runs rootless.
+func rootless(opts []string) bool {
+	for _, o := range opts {
+		if strings.Contains(o, "name=rootless") {
+			return true
+		}
+	}
+	return false
 }

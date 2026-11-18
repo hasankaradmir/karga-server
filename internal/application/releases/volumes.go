@@ -16,6 +16,7 @@ import (
 	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -104,24 +105,32 @@ func pause(ctx context.Context, rt ports.Runtime, ms []mounter) (func() error, e
 
 // BackupVolume writes req.Volume to w.
 func (s *Service) BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) (err error) {
-	unlock, err := s.lock(ctx, req.Release, false)
-	if err != nil {
-		return err
+	// A live copy only reads: it holds nothing, so a slow client never blocks the release. A copy
+	// with --stop stops workloads and holds the release, as an operation, until they run again.
+	if req.Stop {
+		unlock, err := s.lock(ctx, req.Release, false)
+		if err != nil {
+			return err
+		}
+		defer unlock()
 	}
-	defer unlock()
 	ms, err := s.mounters(ctx, req.Release, req.Volume)
 	if err != nil {
 		return err
 	}
-	rel, err := s.Store.GetRelease(ctx, req.Release)
-	if err != nil {
-		return err
+	if req.Stop {
+		rel, err := s.Store.GetRelease(ctx, req.Release)
+		if err != nil {
+			return err
+		}
+		op, err := s.begin(ctx, req.Release, "volume-backup", rel.CurrentRevision, false, release.Options{})
+		if err != nil {
+			return err
+		}
+		defer func() { s.finish(ctx, op, err) }()
+	} else {
+		s.Log.Info("volume backup", "release", req.Release, "volume", req.Volume, "user", actorOf(ctx))
 	}
-	op, err := s.begin(ctx, req.Release, "volume-backup", rel.CurrentRevision, false)
-	if err != nil {
-		return err
-	}
-	defer func() { s.finish(ctx, op, err) }()
 	rt, err := s.Runtime(ctx)
 	if err != nil {
 		return err
@@ -198,7 +207,7 @@ func (s *Service) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r
 	if err != nil {
 		return err
 	}
-	op, err := s.begin(ctx, req.Release, "volume-restore", rel.CurrentRevision, false)
+	op, err := s.begin(ctx, req.Release, "volume-restore", rel.CurrentRevision, false, release.Options{})
 	if err != nil {
 		return err
 	}
