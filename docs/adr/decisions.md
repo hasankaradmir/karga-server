@@ -33,5 +33,8 @@ directory.
 | D27 | Server and CLI | karga-server owns state and runtime; the CLI is its client on a local unix socket (ADR-0012). |
 | D28 | Reconciliation | karga-server repairs deployed, unpaused releases toward their current revision (missing or changed objects, stopped or unhealthy containers), never creating revisions; backoff, then give up. |
 | D29 | Start order | `dependsOn` names Services; the executor waits for them (ready and routed by the release proxy) before the dependent workload; not part of the workload's digest. |
+| D30 | Template limits | Templates run under a budget: `range` loops at most 1,000,000 iterations per render, the time limit checked as they run, karga's own overflow-safe `until`, `seq`, `repeat` and `indent`; a render takes at most 10 s and writes at most 16 MiB. |
+| D31 | Lifecycle rules | What an install, upgrade, rollback or prune may do is decided in `internal/domain/release` (`Install`, `CanUpgrade`, `CanRollback`, `Prunable`, the status transitions), without I/O, before an operation is recorded. |
+| D32 | Confirmations | The SDK names each request's risk (`Risk()`); karga-server refuses one with a risk that is not `Confirmed`; the CLI asks with the same text, or takes `--yes` (ADR-0016). |
 
 D23 was not used.

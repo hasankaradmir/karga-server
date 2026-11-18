@@ -74,7 +74,7 @@ func removeGateway() { _ = exec.Command("docker", "rm", "-f", gateway.ContainerN
 func requireLinux(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
-		t.Skip("the proxy only runs on Linux (ADR-009)")
+		t.Skip("the proxy only runs on Linux (ADR-0009)")
 	}
 }
 

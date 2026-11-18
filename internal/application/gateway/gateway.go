@@ -1,4 +1,4 @@
-// Package gateway runs the host gateway (ADR-011): one Envoy in the host network namespace that
+// Package gateway runs the host gateway (ADR-0011): one Envoy in the host network namespace that
 // serves the listeners the host's administrator defines and forwards to the release proxies'
 // loopback upstream ports. Packages only attach Services to listeners; they cannot open one.
 package gateway

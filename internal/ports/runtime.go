@@ -27,7 +27,7 @@ const (
 	CapResourcesMemory = "resources.memory"
 	CapResourcesCPU    = "resources.cpu"
 	CapHealthcheckExec = "healthcheck.exec"
-	// CapHostGateway: karga can run its Envoy gateway and release proxies (ADR-010): a Linux host
+	// CapHostGateway: karga can run its Envoy gateway and release proxies (ADR-0010): a Linux host
 	// whose Docker daemon is local, so bind mounts, unix sockets and the host network are shared.
 	CapHostGateway = "karga.host-gateway"
 )
