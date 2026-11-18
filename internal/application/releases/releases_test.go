@@ -783,3 +783,32 @@ spec:
 		}
 	}
 }
+
+// A command that waits for a busy release stops waiting when its client goes away, though the
+// operation's own context is never canceled (ADR-0015).
+func TestLockWaitEndsWithTheClient(t *testing.T) {
+	e := newEnv(t)
+	must[*Result](t)(e.install())
+	unlock, err := e.svc.c.locks.lock(context.Background(), "cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	client, cancel := context.WithCancel(context.Background())
+	ctx := WithWait(context.WithoutCancel(client), client)
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "cache", Package: redisPkg, Values: e.opts("image.tag=7.2")}, nil)
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("want the wait to end with the client, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the command kept waiting for the lock after its client went away")
+	}
+}

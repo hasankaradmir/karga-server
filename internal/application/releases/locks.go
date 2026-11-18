@@ -20,17 +20,34 @@ type opLocks struct {
 }
 
 // lock takes release rel for one operation, from reading its state to recording the outcome, so
-// what an operation plans cannot go stale before it runs. It waits until rel is free or ctx ends.
-// Call the returned function to let go.
+// what an operation plans cannot go stale before it runs. It waits until rel is free or the wait's
+// context (WithWait; ctx otherwise) ends. Call the returned function to let go.
 func (o *opLocks) lock(ctx context.Context, rel string) (func(), error) {
 	l := o.ref(rel)
+	wait := waitContext(ctx)
 	select {
 	case l.ch <- struct{}{}:
 		return o.unlock(rel, l), nil
-	case <-ctx.Done():
+	case <-wait.Done():
 		o.unref(rel)
-		return nil, fmt.Errorf("waiting for the operation running on %s: %w", rel, ctx.Err())
+		return nil, fmt.Errorf("waiting for the operation running on %s: %w", rel, wait.Err())
 	}
+}
+
+type waitKey struct{}
+
+// WithWait bounds by wait what an operation on ctx waits for before it changes anything (a busy
+// release's lock), without canceling the operation: a command whose client went away stops
+// waiting, one that started goes on (ADR-0015).
+func WithWait(ctx, wait context.Context) context.Context {
+	return context.WithValue(ctx, waitKey{}, wait)
+}
+
+func waitContext(ctx context.Context) context.Context {
+	if w, ok := ctx.Value(waitKey{}).(context.Context); ok {
+		return w
+	}
+	return ctx
 }
 
 // tryLock is lock without waiting: it fails with ErrLocked when rel is busy.

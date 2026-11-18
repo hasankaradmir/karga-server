@@ -32,6 +32,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- A command waiting for a busy release went on waiting after its client went away (Ctrl-C), and ran
+  later; it stops waiting now, as ADR-0015 says. What started still runs to the end.
 - The state store refuses a release name that is not a DNS label itself, as a second line behind
   the API's check: names build its paths, so `../x` reached outside the state.
 - writeOnly values under a map or a list of the values schema (`additionalProperties`, `items`, …)
@@ -62,6 +64,8 @@ First release.
   `KARGA_CLI_REF` (master without it).
 
 ### Fixed
+- A command waiting for a busy release went on waiting after its client went away (Ctrl-C), and ran
+  later; it stops waiting now, as ADR-0015 says. What started still runs to the end.
 - Repairing or resuming a release rewrote its Config and Secret directories from scratch: running
   containers were left with an empty, deleted directory. They are now updated in place.
 - Two commands on one release could plan against the same state and take the same revision; the

@@ -6,7 +6,9 @@
 
 - **Release lock.** An operation holds its release from reading its state (planning) to recording
   its end, inside the server process. A user's command waits for it (bounded by the request's
-  context); the reconciler tries it and skips a busy release. Entries of idle releases are freed.
+  context: the client's, `api.ClientContext`, though the operation itself runs on one its going away
+  does not cancel); the reconciler tries it and skips a busy release. Entries of idle releases are
+  freed.
 - **Gateway lock.** Changes to the host gateway (what releases expose, its settings, the pre-flight
   check of host ports and routes) run under one host-wide lock, and the check runs again under it
   just before an exposure is written, so two releases cannot claim the same port or route.
