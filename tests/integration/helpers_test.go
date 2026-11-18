@@ -24,6 +24,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
+
 	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/docker"
@@ -319,3 +322,6 @@ func (p *netPinger) results() []pingResult {
 
 // result is the result of a pinger with one URL.
 func (p *netPinger) result() pingResult { return p.results()[0] }
+
+// The real proxies, set once: tests run in parallel.
+func init() { runtimeops.Proxies = envoy.Proxies{} }

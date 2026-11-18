@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
@@ -190,7 +192,7 @@ func Diff(releaseName string, desired []resource.Resource, applied []release.App
 
 	var plan Plan
 	var errs []string
-	if !proxySupported.Load() && len(svcs.svc) > 0 {
+	if !runtimeops.Supported.Load() && len(svcs.svc) > 0 {
 		errs = append(errs, fmt.Sprintf("services %s need karga's gateway and release proxy (Linux with a local Docker)", strings.Join(svcs.names(), ", ")))
 	}
 	for _, r := range ordered {
@@ -206,7 +208,7 @@ func Diff(releaseName string, desired []resource.Resource, applied []release.App
 		r := r
 		k := keyOf(r)
 		want := specs[k]
-		c := Change{Change: api.Change{Kind: k.Kind, Name: k.Name}, Resource: &r, Spec: want.Spec, Digest: want.Digest, RuntimeName: RuntimeName(releaseName, k.Name)}
+		c := Change{Change: api.Change{Kind: k.Kind, Name: k.Name}, Resource: &r, Spec: want.Spec, Digest: want.Digest, RuntimeName: runtimeops.RuntimeName(releaseName, k.Name)}
 		if k.Kind == resource.KindService {
 			c.RuntimeName = ProxyName(releaseName) // a Service has no container; the release proxy serves it
 		}

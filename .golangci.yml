@@ -18,6 +18,21 @@ linters:
           deny:
             - pkg: github.com/hasankaradmir/karga-cli/
               desc: karga-server must not depend on the CLI
+        # The application talks to the runtime, the state and the proxies only through ports; the
+        # composition root (internal/server, cmd) picks the adapters. Tests may use the fakes.
+        application:
+          files:
+            - "**/internal/application/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/hasankaradmir/karga-server/internal/adapters
+              desc: the application uses ports, not adapters
+            - pkg: github.com/hasankaradmir/karga-server/internal/infrastructure
+              desc: the application uses ports, not infrastructure
+            - pkg: github.com/moby
+              desc: the application uses ports.Runtime, not Docker
+            - pkg: modernc.org/sqlite
+              desc: the application uses ports.StateStore, not SQLite
 
 formatters:
   enable:

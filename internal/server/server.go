@@ -14,12 +14,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
+
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/logging"
 
 	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/sqlite"
-	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/reconciler"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/config"
@@ -106,7 +109,10 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 		unlock()
 		return nil, err
 	}
-	deployment.UseProxies(info)
+	runtimeops.UseProxies(info)
+	if runtimeops.Proxies == nil {
+		runtimeops.Proxies = envoy.Proxies{}
+	}
 	s := &Server{cfg: cfg, Service: svc, store: store, unlock: unlock}
 	if cfg.ReconcileInterval >= 0 {
 		s.Loop = reconciler.New(svc, cfg.ReconcileInterval, cfg.Log)

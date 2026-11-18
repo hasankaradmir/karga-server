@@ -36,11 +36,11 @@ func TestConfigGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lds, err := sample.Listeners()
+	lds, err := Listeners(sample)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cds, err := sample.ClustersJSON()
+	cds, err := ClustersJSON(sample)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestWriteWaitsForClustersBeforeListeners(t *testing.T) {
 func TestAccessLogAndHealth(t *testing.T) {
 	cfg := sample
 	cfg.AccessLog = true
-	lds, err := cfg.Listeners()
+	lds, err := Listeners(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestAccessLogAndHealth(t *testing.T) {
 	if n := strings.Count(string(lds), "envoy.access_loggers.stdout"); n != 3 {
 		t.Fatalf("access loggers: %d, want 3", n)
 	}
-	off, _ := sample.Listeners()
+	off, _ := Listeners(sample)
 	if strings.Contains(string(off), "access_log") {
 		t.Fatal("access log on by default")
 	}

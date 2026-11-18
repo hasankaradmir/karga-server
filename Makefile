@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/hasankaradmir/karga-server/internal/version.Version=$(VERSION)
 
-.PHONY: build test test-integration test-e2e test-linux lint fmt
+.PHONY: build test test-integration test-e2e test-linux lint fmt envoy-image
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/karga-server ./cmd/karga-server
@@ -28,3 +28,7 @@ fmt:
 TARGETS ?= test-integration test-e2e
 test-linux:
 	scripts/linux-vm.sh $(TARGETS)
+
+# envoy-image prints the Envoy image karga-server runs (CI pulls it ahead of the tests).
+envoy-image:
+	@sed -n 's/^const DefaultImage = "\(.*\)"$$/\1/p' internal/infrastructure/envoy/envoy.go

@@ -108,6 +108,20 @@ func (Proxies) WaitDrained(context.Context, string, []string, time.Duration) (bo
 	return true, nil
 }
 
+// Container is Envoy's.
+func (Proxies) Container() ports.ProxyContainer { return envoy.Proxies{}.Container() }
+
+// Endpoints reads the configuration Write wrote.
+func (Proxies) Endpoints(dir string) (map[string]string, error) { return envoy.Endpoints(dir) }
+
+// Live reports every proxy live.
+func (Proxies) Live(context.Context, string) (bool, error) { return true, nil }
+
+// Version is a fixed version.
+func (Proxies) Version(context.Context, string) (string, error) { return "fake", nil }
+
+var _ ports.ProxyControl = Proxies{}
+
 // Info implements ports.Runtime.
 func (r *Runtime) Info(context.Context) (ports.RuntimeInfo, error) {
 	r.mu.Lock()

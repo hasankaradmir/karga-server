@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
@@ -109,7 +111,7 @@ func TestProbeNeedsLinux(t *testing.T) {
 		t.Fatalf("want unreachable error, got %v", err)
 	}
 	// Behind the proxy Envoy checks the same path.
-	if got := httpHealthPath(httpSpec(8080, ""), 8080); got != "/health" {
+	if got := runtimeops.HTTPHealthPath(httpSpec(8080, ""), 8080); got != "/health" {
 		t.Fatalf("envoy health path: %q", got)
 	}
 }

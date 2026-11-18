@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/packages"
 
 	"github.com/hasankaradmir/karga-sdk/api"
@@ -308,7 +310,7 @@ func (s *Service) Reconcile(ctx context.Context, name string, force bool) (*Reco
 			}
 			step(p, err)
 		case "sync":
-			_, err := gateway.Sync(ctx, rt, deployment.Proxies, s.Home)
+			_, err := gateway.Sync(ctx, rt, runtimeops.Proxies, s.Home)
 			step(p, err)
 		case "create":
 			steps, err := s.recreate(ctx, rt, &op, rel, present)
@@ -348,9 +350,7 @@ func (s *Service) recreate(ctx context.Context, rt ports.Runtime, op *release.Op
 		return nil, err
 	}
 	for i := range plan.Changes {
-		c := &plan.Changes[i]
-		proxy := c.Kind == deployment.KindProxy && c.Action != deployment.ActionDelete
-		if c.Action != deployment.ActionCreate && !proxy {
+		if c := &plan.Changes[i]; c.Action != deployment.ActionCreate {
 			c.Action = deployment.ActionUnchanged
 		}
 	}

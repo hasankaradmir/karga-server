@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/packages"
 
 	"github.com/hasankaradmir/karga-sdk/api"
@@ -71,9 +73,8 @@ type Service struct {
 	// AfterChange, if set, is told the name of a release an install, upgrade or rollback changed.
 	AfterChange func(name string)
 
-	keyOnce sync.Once
-	key     []byte
-	keyErr  error
+	keyMu   sync.Mutex
+	key     []byte // nil until loaded: a failed load is tried again next time
 	repairs repairs
 	// busy serializes the operations of a release inside this process: a user's command waits for
 	// a reconciliation in progress instead of failing; a reconciliation skips a busy release.
@@ -208,14 +209,16 @@ const keyFile = "state.key"
 // loadKey reads $KARGA_HOME/state.key, creating it (32 random bytes, 0600) on first use, and makes
 // it the digest key. Losing it only means secrets are re-applied once.
 func (s *Service) loadKey() error {
-	s.keyOnce.Do(func() {
+	s.keyMu.Lock()
+	defer s.keyMu.Unlock()
+	if s.key == nil {
 		path := filepath.Join(s.Home, keyFile)
 		key, err := os.ReadFile(path)
 		if errors.Is(err, os.ErrNotExist) {
 			key = make([]byte, 32)
 			if _, err = rand.Read(key); err == nil {
 				err = writeNewFile(path, key)
-				if errors.Is(err, os.ErrExist) { // another karga created it first
+				if errors.Is(err, os.ErrExist) { // created meanwhile
 					key, err = os.ReadFile(path)
 				}
 			}
@@ -224,16 +227,12 @@ func (s *Service) loadKey() error {
 			err = fmt.Errorf("%s is too short; remove it to create a new key", path)
 		}
 		if err != nil {
-			s.keyErr = fmt.Errorf("state key: %w", err)
-			return
+			return fmt.Errorf("state key: %w", err)
 		}
 		s.key = key
-	})
-	if s.keyErr != nil {
-		return s.keyErr
 	}
 	// shortcut: the digest key is process-wide; services of different homes in one process must
-	// not plan concurrently (karga runs one per process). Pass the key down if a daemon needs more.
+	// not plan concurrently (karga-server runs one). Pass the key down if that changes.
 	deployment.SetDigestKey(s.key)
 	return nil
 }
@@ -255,10 +254,28 @@ func writeNewFile(path string, data []byte) error {
 		_ = tmp.Close()
 		return err
 	}
+	// On disk before it is linked: after a power loss the file is whole or absent, never empty.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Link(tmp.Name(), path)
+	if err := os.Link(tmp.Name(), path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// syncDir makes the entries of dir durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }() // read-only
+	return d.Sync()
 }
 
 // encodeManifest stores resources as a JSON array with secret values replaced by digests.
@@ -360,7 +377,7 @@ func (s *Service) runtime(ctx context.Context) (ports.Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	deployment.UseProxies(info)
+	runtimeops.UseProxies(info)
 	return rt, nil
 }
 
@@ -477,7 +494,7 @@ func anonymousVolumes(ctx context.Context, rt ports.Runtime, name string, rs []r
 		if r.Kind != resource.KindWorkload {
 			continue
 		}
-		st, err := rt.GetWorkload(ctx, deployment.RuntimeName(name, r.Metadata.Name))
+		st, err := rt.GetWorkload(ctx, runtimeops.RuntimeName(name, r.Metadata.Name))
 		if errors.Is(err, ports.ErrNotFound) {
 			continue
 		}
@@ -574,10 +591,6 @@ func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operati
 	}
 	previous := rel.Status
 	rel.Status, rel.UpdatedAt = target, now
-	if err := s.Store.SaveRelease(ctx, rel); err != nil {
-		return err
-	}
-
 	manifest, manifestDigest, err := encodeManifest(in.Resources)
 	if err != nil {
 		return err
@@ -586,13 +599,23 @@ func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operati
 	if err != nil {
 		return err
 	}
-	// A resumed operation's revision is already recorded.
-	if err := s.createRevision(ctx, in, release.Revision{
-		Release: in.Name, Number: in.Revision, PackageName: in.Package.Name, PackageVersion: in.Package.Version,
-		RuntimeSupported: in.Package.Runtime.Supported, PackageDigest: in.PackageDigest, ValuesDigest: valuesDigest, ManifestDigest: manifestDigest,
-		Values: maskValues(in.Overrides, in.SecretPaths), ValuesAll: maskValues(in.Values, in.SecretPaths), Manifest: manifest,
-		Status: release.RevisionPending, Description: in.Description, CreatedAt: now, Notes: in.Notes,
-	}); err != nil {
+	// The release's new status and its new revision are recorded together: a release is never left
+	// deploying a revision that does not exist.
+	err = s.Store.InTx(ctx, func(st ports.StateStore) error {
+		if err := st.SaveRelease(ctx, rel); err != nil {
+			return err
+		}
+		if in.resumed { // a resumed operation's revision is already recorded
+			return nil
+		}
+		return st.CreateRevision(ctx, release.Revision{
+			Release: in.Name, Number: in.Revision, PackageName: in.Package.Name, PackageVersion: in.Package.Version,
+			RuntimeSupported: in.Package.Runtime.Supported, PackageDigest: in.PackageDigest, ValuesDigest: valuesDigest, ManifestDigest: manifestDigest,
+			Values: maskValues(in.Overrides, in.SecretPaths), ValuesAll: maskValues(in.Values, in.SecretPaths), Manifest: manifest,
+			Status: release.RevisionPending, Description: in.Description, CreatedAt: now, Notes: in.Notes,
+		})
+	})
+	if err != nil {
 		return err
 	}
 
@@ -613,22 +636,21 @@ func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operati
 			rel.Status = previous
 		}
 		desc := fmt.Sprintf("%s failed: %v", titled(in.Type), execErr)
-		return errors.Join(execErr,
-			s.Store.UpdateRevisionStatus(bg, in.Name, in.Revision, release.RevisionFailed, desc),
-			s.Store.SaveRelease(bg, rel))
+		return errors.Join(execErr, s.settle(bg, rel, in.Revision, release.RevisionFailed, desc))
 	}
 	rel.Status, rel.CurrentRevision = release.StatusDeployed, in.Revision
 	rel.PackageName, rel.PackageVersion = in.Package.Name, in.Package.Version
-	return errors.Join(
-		s.Store.UpdateRevisionStatus(bg, in.Name, in.Revision, release.RevisionDeployed, in.Description),
-		s.Store.SaveRelease(bg, rel))
+	return s.settle(bg, rel, in.Revision, release.RevisionDeployed, in.Description)
 }
 
-func (s *Service) createRevision(ctx context.Context, in deployInput, rev release.Revision) error {
-	if in.resumed {
-		return nil
-	}
-	return s.Store.CreateRevision(ctx, rev)
+// settle records the outcome of a revision and the release it leaves, together.
+func (s *Service) settle(ctx context.Context, rel release.Release, revision int, status release.RevisionStatus, desc string) error {
+	return s.Store.InTx(ctx, func(st ports.StateStore) error {
+		if err := st.UpdateRevisionStatus(ctx, rel.Name, revision, status, desc); err != nil {
+			return err
+		}
+		return st.SaveRelease(ctx, rel)
+	})
 }
 
 func titled(t string) string { return strings.ToUpper(t[:1]) + t[1:] }
@@ -645,7 +667,7 @@ func (s *Service) record(ctx context.Context, op *release.Operation, in deployIn
 	}
 	runtimeName := c.RuntimeName
 	if runtimeName == "" {
-		runtimeName = deployment.RuntimeName(in.Name, c.Name)
+		runtimeName = runtimeops.RuntimeName(in.Name, c.Name)
 	}
 	applied := release.AppliedResource{Kind: c.Kind, Name: c.Name, Revision: in.Revision,
 		RuntimeName: runtimeName, Spec: c.Spec, Digest: c.Digest}

@@ -6,18 +6,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
 	"github.com/hasankaradmir/karga-server/internal/adapters/sqlite"
-	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 func TestEventTriggersRepair(t *testing.T) {
 	Debounce = 50 * time.Millisecond
-	deployment.Proxies = fakeruntime.Proxies{}
+	runtimeops.Proxies = fakeruntime.Proxies{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	home := t.TempDir()

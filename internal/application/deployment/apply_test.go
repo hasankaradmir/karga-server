@@ -10,13 +10,17 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
-func init() { pollInterval = time.Millisecond }
+func init() {
+	pollInterval = time.Millisecond
+	runtimeops.Proxies = fakeruntime.Proxies{}
+}
 
 func manifest(port int) []resource.Resource {
 	return []resource.Resource{

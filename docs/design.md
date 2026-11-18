@@ -70,7 +70,7 @@ internal/application/releases   release lifecycle: install, upgrade, rollback, u
 internal/application/deployment plan (diff, strategies), execute, release proxy, probes
   .../deployment/gateway        the host gateway
   .../deployment/runtimeops     primitives shared by the executor and the gateway
-internal/ports                  Runtime and StateStore interfaces; runtime contract suite
+internal/ports                  Runtime, StateStore and ProxyControl interfaces; runtime contract suite
 internal/adapters/{docker,sqlite,fakeruntime}
 internal/infrastructure/{envoy,config}
 
@@ -82,9 +82,10 @@ maps it to the api views.
 
 The SDK depends on nothing of the CLI or the server, and the server on nothing of the CLI,
 enforced by `depguard` in each repository's `.golangci.yml`.
-The application layer talks to the container runtime and the state through `ports`; it still uses
-`infrastructure/envoy` directly for the Envoy configuration of the release proxy and the gateway
-(not enforced yet). Every
+The application layer talks to the container runtime, the state and the proxies only through
+`ports` (`Runtime`, `StateStore`, `ProxyControl` with the proxy configuration model); the
+composition root (`internal/server`) picks the adapters: Docker, SQLite and Envoy. `depguard`
+enforces it. Every
 runtime adapter passes the same contract suite (`internal/ports/runtimetest`); the fake runtime used
 by unit tests passes it too.
 

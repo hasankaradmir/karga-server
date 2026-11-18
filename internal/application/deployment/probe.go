@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -31,7 +33,7 @@ func kargaProbes(s *resource.WorkloadSpec) bool {
 
 // probeReachable says why karga could not reach the health check port of s, or "".
 func probeReachable(s *resource.WorkloadSpec) string {
-	if !kargaProbes(s) || proxySupported.Load() {
+	if !kargaProbes(s) || runtimeops.Supported.Load() {
 		return ""
 	}
 	return fmt.Sprintf("healthCheck type %s needs Linux with a local Docker (karga checks the container's address); use type exec", s.HealthCheck.Type)
@@ -40,7 +42,7 @@ func probeReachable(s *resource.WorkloadSpec) string {
 // probeAddr is where karga reaches the health check port of a running container.
 func probeAddr(st ports.WorkloadStatus, s *resource.WorkloadSpec) (string, error) {
 	port := s.HealthCheck.Port
-	if !proxySupported.Load() {
+	if !runtimeops.Supported.Load() {
 		return "", errors.New(probeReachable(s))
 	}
 	for _, n := range slices.Sorted(maps.Keys(st.IPs)) {

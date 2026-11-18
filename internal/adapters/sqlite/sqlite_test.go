@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -198,7 +199,7 @@ func TestBackupAndSchemaGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	extra := fstest.MapFS{"migrations/zzz_extra.sql": {Data: []byte("CREATE TABLE extra (x TEXT);")}}
+	extra := fstest.MapFS{fmt.Sprintf("migrations/%03d_extra.sql", len(real)+1): {Data: []byte("CREATE TABLE extra (x TEXT);")}}
 	for _, e := range real {
 		data, err := fs.ReadFile(embedded, "migrations/"+e.Name())
 		if err != nil {
@@ -239,5 +240,42 @@ func TestConcurrentOpenMigratesOnce(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Fatalf("concurrent open: %v", err)
 		}
+	}
+}
+
+func TestMigrationsNumberedWithoutGaps(t *testing.T) {
+	old := migrations
+	t.Cleanup(func() { migrations = old })
+	migrations = fstest.MapFS{"migrations/001_init.sql": {Data: []byte("SELECT 1;")}, "migrations/003_skip.sql": {Data: []byte("SELECT 1;")}}
+	if _, err := Open(context.Background(), filepath.Join(t.TempDir(), "k.db")); err == nil || !strings.Contains(err.Error(), "want a name starting with 002_") {
+		t.Fatalf("a gap must be refused: %v", err)
+	}
+}
+
+func TestInTx(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	rel := release.Release{Name: "web", Status: release.StatusDeployed}
+	boom := errors.New("boom")
+	err := s.InTx(ctx, func(st ports.StateStore) error {
+		if err := st.SaveRelease(ctx, rel); err != nil {
+			return err
+		}
+		if _, err := st.GetRelease(ctx, "web"); err != nil {
+			t.Fatalf("a transaction sees its own writes: %v", err)
+		}
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("InTx: %v", err)
+	}
+	if _, err := s.GetRelease(ctx, "web"); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("a failed transaction left its writes: %v", err)
+	}
+	if err := s.InTx(ctx, func(st ports.StateStore) error { return st.SaveRelease(ctx, rel) }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetRelease(ctx, "web"); err != nil {
+		t.Fatalf("committed write missing: %v", err)
 	}
 }

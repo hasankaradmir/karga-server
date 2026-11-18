@@ -71,7 +71,7 @@ func filterListener(name, address string, port int, filter string, cfg validated
 }
 
 // Listeners renders lds.json. Output is sorted so equal configs give equal files.
-func (c Config) Listeners() ([]byte, error) {
+func Listeners(c Config) ([]byte, error) {
 	var items []validated
 	var logs []*accesslogv3.AccessLog
 	if c.AccessLog {
@@ -122,6 +122,10 @@ func hcm(name string, router *anypb.Any, hosts []*routev3.VirtualHost, logs []*a
 		AccessLog:  logs,
 		// The gateway sees the real client address and passes it on in x-forwarded-for.
 		UseRemoteAddress: wrapperspb.Bool(true),
+		// Routes of different releases differ by path prefix: /a/../b or //b must not reach b's
+		// routes in another form than a plain /b would.
+		NormalizePath: wrapperspb.Bool(true),
+		MergeSlashes:  true,
 		HttpFilters: []*hcmv3.HttpFilter{{
 			Name: "envoy.filters.http.router", ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: router},
 		}},
@@ -234,7 +238,7 @@ func virtualHosts(routes []HTTPRoute) []*routev3.VirtualHost {
 }
 
 // ClustersJSON renders cds.json.
-func (c Config) ClustersJSON() ([]byte, error) {
+func ClustersJSON(c Config) ([]byte, error) {
 	cs := slices.Clone(c.Clusters)
 	slices.SortFunc(cs, func(a, b Cluster) int { return strings.Compare(a.Name, b.Name) })
 	var items []validated
@@ -254,9 +258,10 @@ func (c Config) ClustersJSON() ([]byte, error) {
 				Interval: durationpb.New(500 * time.Millisecond),
 				// Without these Envoy checks a cluster that has no traffic yet, or a host that failed,
 				// only every 60s: a new backend whose first check failed stayed out for a minute.
-				NoTrafficInterval:  durationpb.New(500 * time.Millisecond),
-				UnhealthyInterval:  durationpb.New(500 * time.Millisecond),
-				UnhealthyThreshold: wrapperspb.UInt32(1),
+				NoTrafficInterval: durationpb.New(500 * time.Millisecond),
+				UnhealthyInterval: durationpb.New(500 * time.Millisecond),
+				// Three failed checks in a row take a backend out: one slow answer does not flap it.
+				UnhealthyThreshold: wrapperspb.UInt32(3),
 				HealthyThreshold:   wrapperspb.UInt32(1),
 				HealthChecker:      &corev3.HealthCheck_TcpHealthCheck_{TcpHealthCheck: &corev3.HealthCheck_TcpHealthCheck{}},
 			}},

@@ -211,9 +211,9 @@ func withProxySupport(t *testing.T, on bool) {
 }
 
 // fakeProxies writes real configuration files and reports every proxy ready and drained.
-type fakeProxies struct{}
+type fakeProxies struct{ fakeruntime.Proxies }
 
-func (f *fakeProxies) Write(dir, node string, mode int, cfg envoy.Config) error {
+func (f *fakeProxies) Write(dir, node string, mode int, cfg ports.ProxyConfig) error {
 	return envoy.Write(dir, node, mode, cfg)
 }
 
@@ -224,3 +224,5 @@ func (f *fakeProxies) WaitReady(context.Context, string, map[string]string, time
 func (f *fakeProxies) WaitDrained(context.Context, string, []string, time.Duration) (bool, error) {
 	return true, nil
 }
+
+func init() { runtimeops.Proxies = fakeruntime.Proxies{} }

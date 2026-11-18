@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
@@ -58,7 +60,7 @@ func Preflight(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, ho
 		}
 	}
 
-	if proxySupported.Load() {
+	if runtimeops.Supported.Load() {
 		errs = append(errs, gateway.Check(ctx, rt, home, release, rs)...)
 	}
 	return errors.Join(errs...)

@@ -24,7 +24,6 @@ import (
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
-	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -170,8 +169,8 @@ func certName(rel, listener, host, src string) string {
 // use is what the targets attach to one listener.
 type use struct {
 	tcp    string // cluster
-	routes []envoy.HTTPRoute
-	certs  map[string]envoy.Cert
+	routes []ports.ProxyRoute
+	certs  map[string]ports.ProxyCert
 	seen   map[string]bool
 }
 
@@ -179,12 +178,12 @@ type use struct {
 // address. A listener nobody uses is not opened. Conflicts are refused by Check; if one slips
 // through anyway (two releases applied at once) the first release in name order wins. A host
 // served on an https listener also gets a redirect on the http listeners of port 80.
-func buildConfig(settings Settings, targets []Target) envoy.Config {
-	var cfg envoy.Config
+func buildConfig(settings Settings, targets []Target) ports.ProxyConfig {
+	var cfg ports.ProxyConfig
 	uses := map[string]*use{}
 	for _, t := range targets {
 		for _, p := range t.Ports {
-			cfg.Clusters = append(cfg.Clusters, envoy.Cluster{Name: Cluster(t.Release, p.Service, p.Port), Host: "127.0.0.1", Port: p.Upstream,
+			cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: Cluster(t.Release, p.Service, p.Port), Host: "127.0.0.1", Port: p.Upstream,
 				HealthPath: healthPath(t.Routes, p)})
 		}
 		for _, r := range t.Routes {
@@ -194,7 +193,7 @@ func buildConfig(settings Settings, targets []Target) envoy.Config {
 			}
 			u := uses[l.Name]
 			if u == nil {
-				u = &use{certs: map[string]envoy.Cert{}, seen: map[string]bool{}}
+				u = &use{certs: map[string]ports.ProxyCert{}, seen: map[string]bool{}}
 				uses[l.Name] = u
 			}
 			cluster := Cluster(t.Release, r.Service, r.Port)
@@ -205,10 +204,10 @@ func buildConfig(settings Settings, targets []Target) envoy.Config {
 				}
 			case !u.seen[r.Host+r.Path]:
 				u.seen[r.Host+r.Path] = true
-				u.routes = append(u.routes, envoy.HTTPRoute{Host: r.Host, Path: r.Path, Cluster: cluster})
+				u.routes = append(u.routes, ports.ProxyRoute{Host: r.Host, Path: r.Path, Cluster: cluster})
 				if _, ok := u.certs[r.Host]; l.Protocol == ProtocolHTTPS && !ok {
-					n := envoy.MountPath + "/certs/" + certName(t.Release, l.Name, r.Host, r.CertDir)
-					u.certs[r.Host] = envoy.Cert{Chain: n + ".crt", Key: n + ".key"}
+					n := runtimeops.Proxies.Container().MountPath + "/certs/" + certName(t.Release, l.Name, r.Host, r.CertDir)
+					u.certs[r.Host] = ports.ProxyCert{Chain: n + ".crt", Key: n + ".key"}
 				}
 			}
 		}
@@ -225,9 +224,9 @@ func buildConfig(settings Settings, targets []Target) envoy.Config {
 		}
 		for _, ip := range settings.Listen {
 			if l.Protocol == ProtocolTCP {
-				cfg.TCP = append(cfg.TCP, envoy.TCPListener{Address: ip, Port: l.Port, Cluster: u.tcp})
+				cfg.TCP = append(cfg.TCP, ports.ProxyTCPListener{Address: ip, Port: l.Port, Cluster: u.tcp})
 			} else {
-				hl := envoy.HTTPListener{Address: ip, Port: l.Port, Redirects: redirects, RedirectPort: redirectPort}
+				hl := ports.ProxyHTTPListener{Address: ip, Port: l.Port, Redirects: redirects, RedirectPort: redirectPort}
 				if u != nil {
 					hl.Routes = u.routes
 					if l.Protocol == ProtocolHTTPS {
@@ -252,7 +251,7 @@ func redirectHosts(s Settings, uses map[string]*use, u *use) ([]string, int) {
 			continue
 		}
 		for _, h := range slices.Sorted(maps.Keys(su.certs)) {
-			if u != nil && slices.ContainsFunc(u.routes, func(r envoy.HTTPRoute) bool { return r.Host == h }) || slices.Contains(hosts, h) {
+			if u != nil && slices.ContainsFunc(u.routes, func(r ports.ProxyRoute) bool { return r.Host == h }) || slices.Contains(hosts, h) {
 				continue
 			}
 			hosts = append(hosts, h)
@@ -365,16 +364,18 @@ func Lock(home string) (func(), error) {
 // means it must be recreated.
 const labelSource = "io.karga.gateway-source"
 
-func source(dir string) string { return dir + " " + runtimeops.EnvoyLimits + " " + envoy.Image() }
+func source(dir string) string {
+	return dir + " " + runtimeops.EnvoyLimits + " " + runtimeops.Proxies.Container().Image
+}
 
 func request(dir string) ports.WorkloadRequest {
 	return ports.WorkloadRequest{
 		Name:   ContainerName,
 		Labels: map[string]string{ports.LabelManaged: "true", LabelComponent: "gateway", labelSource: source(dir)},
-		Image:  envoy.Image(),
+		Image:  runtimeops.Proxies.Container().Image,
 		// Root only to bind low ports in the host namespace (Docker grants no ambient capabilities
 		// to other users); every capability but those two is dropped.
-		Command:         envoy.Command(),
+		Command:         runtimeops.Proxies.Container().Command,
 		User:            "0:0",
 		Env:             map[string]string{"ENVOY_UID": "0"},
 		HostNetwork:     true,
@@ -382,7 +383,7 @@ func request(dir string) ports.WorkloadRequest {
 		CapAdd:          []string{"NET_BIND_SERVICE", "DAC_OVERRIDE"},
 		NoNewPrivileges: true,
 		RestartPolicy:   "always",
-		Mounts:          []ports.Mount{{Type: ports.MountBind, Source: dir, Target: envoy.MountPath}},
+		Mounts:          []ports.Mount{{Type: ports.MountBind, Source: dir, Target: runtimeops.Proxies.Container().MountPath}},
 		MemoryBytes:     runtimeops.EnvoyMemory,
 		MilliCPU:        runtimeops.EnvoyMilliCPU,
 		PidsLimit:       runtimeops.EnvoyPids,
@@ -440,7 +441,7 @@ func Sync(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyControl, hom
 	}
 	switch {
 	case errors.Is(err, ports.ErrNotFound):
-		if err := rt.EnsureImage(ctx, envoy.Image(), "if-not-present"); err != nil {
+		if err := rt.EnsureImage(ctx, runtimeops.Proxies.Container().Image, "if-not-present"); err != nil {
 			return nil, err
 		}
 		if err := rt.CreateWorkload(ctx, request(dir)); err != nil {
@@ -543,12 +544,11 @@ func Health(ctx context.Context, rt ports.Runtime, home string) (State, error) {
 	if src := ws.Labels[labelSource]; strings.Contains(src, " ") {
 		st.Image = src[strings.LastIndex(src, " ")+1:]
 	}
-	admin := envoy.NewAdmin(Dir(home))
-	if st.Ready, err = admin.Live(ctx); err != nil {
+	if st.Ready, err = runtimeops.Proxies.Live(ctx, Dir(home)); err != nil {
 		st.Error = err.Error()
 		return st, nil
 	}
-	st.Version, _ = admin.Version(ctx)
+	st.Version, _ = runtimeops.Proxies.Version(ctx, Dir(home))
 	return st, nil
 }
 

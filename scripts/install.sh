@@ -5,6 +5,7 @@
 #   KARGA_VERSION       tag to install (default: the latest published release)
 #   KARGA_BIN_DIR       where to put the binary
 #   KARGA_DOWNLOAD_URL  download from here instead of GitHub (a mirror, or file:// for a local build)
+#   KARGA_SKIP_SIGNATURE=1  do not verify the signature (a local build has none)
 #   KARGA_SYSTEMD=0     install the binary only, without the service
 #
 # The karga CLI is installed separately: https://github.com/hasankaradmir/karga-cli
@@ -37,6 +38,19 @@ done
 want=$(grep " $archive\$" "$tmp/checksums.txt" | cut -d' ' -f1)
 got=$(sha256sum "$tmp/$archive" | cut -d' ' -f1)
 [ -n "$want" ] && [ "$want" = "$got" ] || { echo "checksum mismatch for $archive" >&2; exit 1; }
+
+# checksums.txt is signed by the release workflow (Sigstore, no key): with cosign installed, the
+# archive is proven to come from this repository's release, not only to be intact.
+if [ "${KARGA_SKIP_SIGNATURE:-0}" != 1 ] && command -v cosign >/dev/null; then
+  curl -fsSL -o "$tmp/checksums.txt.sig" "$url/checksums.txt.sig"
+  curl -fsSL -o "$tmp/checksums.txt.pem" "$url/checksums.txt.pem"
+  cosign verify-blob --certificate "$tmp/checksums.txt.pem" --signature "$tmp/checksums.txt.sig" \
+    --certificate-identity-regexp "^https://github.com/$repo/.github/workflows/release.yml@refs/tags/" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com "$tmp/checksums.txt" >/dev/null 2>&1 \
+    || { echo "the signature of checksums.txt does not verify" >&2; exit 1; }
+else
+  echo "note: install cosign to also verify the release signature" >&2
+fi
 
 as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi; }
 

@@ -12,13 +12,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
-
-	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 )
 
 // KindProxy is the derived resource for a release's Envoy proxy (ADR-011). It is not written in
@@ -127,7 +127,7 @@ func (s services) published() map[string][]int {
 }
 
 func proxySpecFor(s services) ProxySpec {
-	spec := ProxySpec{Image: envoy.Image(), Limits: envoyLimits, Networks: map[string][]string{}, Published: s.published()}
+	spec := ProxySpec{Image: runtimeops.Proxies.Container().Image, Limits: runtimeops.EnvoyLimits, Networks: map[string][]string{}, Published: s.published()}
 	for _, n := range s.names() {
 		if w := s.wl[s.svc[n].Workload]; w != nil {
 			for _, net := range w.Networks {

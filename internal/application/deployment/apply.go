@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/api"
 
 	"encoding/json"
@@ -21,7 +23,6 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
-	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -67,7 +68,7 @@ type ExecRequest struct {
 	OnProgress func(Event)
 	// Proxies controls the release proxy and the gateway (default: Envoy). ProxyUser is the uid:gid
 	// the release proxy runs as (default: the karga process user, so it can use its 0700 directory).
-	Proxies   ProxyControl
+	Proxies   runtimeops.ProxyControl
 	ProxyUser string
 	// AllowedCaps are the capabilities beyond resource.DefaultCaps workloads may add.
 	AllowedCaps []string
@@ -99,20 +100,16 @@ func Execute(ctx context.Context, rt ports.Runtime, req ExecRequest) error {
 	if err == nil {
 		return nil
 	}
-	if disrupted && proxySupported.Load() {
+	if disrupted && runtimeops.Supported.Load() {
 		// Point the gateway at what runs now; the error that got us here is the one to report.
 		_, _ = gateway.Sync(ctx, rt, proxyControl(req), req.Home)
 	}
 	return &ExecError{Err: err, Disrupted: disrupted}
 }
 
-// Proxies controls the release proxies and the gateway when a request names none. Tests that run
-// without Envoy replace it.
-var Proxies ProxyControl = EnvoyProxies{}
-
-func proxyControl(req ExecRequest) ProxyControl {
+func proxyControl(req ExecRequest) runtimeops.ProxyControl {
 	if req.Proxies == nil {
-		return Proxies
+		return runtimeops.Proxies
 	}
 	return req.Proxies
 }
@@ -178,7 +175,7 @@ func execute(ctx context.Context, rt ports.Runtime, req ExecRequest, disrupted *
 		}
 	}
 	if needGateway {
-		if err := rt.EnsureImage(ctx, envoy.Image(), "if-not-present"); err != nil {
+		if err := rt.EnsureImage(ctx, runtimeops.Proxies.Container().Image, "if-not-present"); err != nil {
 			return fmt.Errorf("gateway: %w", err)
 		}
 	}
@@ -190,7 +187,7 @@ func execute(ctx context.Context, rt ports.Runtime, req ExecRequest, disrupted *
 	for _, c := range req.Plan.Changes {
 		if c.Action == ActionDelete && c.Kind == resource.KindWorkload {
 			*disrupted = true
-			if err := report(c, ActionDelete, removeWorkload(ctx, rt, c.Applied.RuntimeName)); err != nil {
+			if err := report(c, ActionDelete, runtimeops.RemoveWorkload(ctx, rt, c.Applied.RuntimeName)); err != nil {
 				return err
 			}
 		}
@@ -259,7 +256,7 @@ func execute(ctx context.Context, rt ports.Runtime, req ExecRequest, disrupted *
 		want := map[string]string{}
 		for _, d := range w.DependsOn {
 			if dep := svcs.svc[d]; dep != nil {
-				rev, err := revisionOf(ctx, rt, RuntimeName(req.Release, dep.Workload))
+				rev, err := revisionOf(ctx, rt, runtimeops.RuntimeName(req.Release, dep.Workload))
 				if err != nil {
 					return fmt.Errorf("%s %q depends on service %s, whose workload %s does not run: %w", c.Kind, c.Name, d, dep.Workload, err)
 				}
@@ -278,7 +275,7 @@ func execute(ctx context.Context, rt ports.Runtime, req ExecRequest, disrupted *
 				return fmt.Errorf("%s %q: %w", c.Kind, c.Name, err)
 			}
 		}
-		name := RuntimeName(req.Release, c.Name)
+		name := runtimeops.RuntimeName(req.Release, c.Name)
 		lbl := labels(req.Release, req.Revision, c.Kind, c.Name)
 		var err error
 		switch s := c.Resource.Spec.(type) {
@@ -331,23 +328,23 @@ func execute(ctx context.Context, rt ports.Runtime, req ExecRequest, disrupted *
 		for _, c := range req.Plan.Changes {
 			changedService := c.Kind == resource.KindService && c.Action != ActionUnchanged && c.Action != ActionDelete
 			if svcs.wl[c.Name] != nil && c.Kind == resource.KindWorkload && (waitAll || c.Action != ActionUnchanged) {
-				if rev, err := revisionOf(ctx, rt, RuntimeName(req.Release, c.Name)); err == nil {
+				if rev, err := revisionOf(ctx, rt, runtimeops.RuntimeName(req.Release, c.Name)); err == nil {
 					maps.Copy(want, proxyWant(svcs, c.Name, BackendAlias(c.Name, rev)))
 				}
 			}
 			if s := svcs.svc[c.Name]; changedService && s != nil {
-				if rev, err := revisionOf(ctx, rt, RuntimeName(req.Release, s.Workload)); err == nil {
+				if rev, err := revisionOf(ctx, rt, runtimeops.RuntimeName(req.Release, s.Workload)); err == nil {
 					maps.Copy(want, proxyWant(svcs, s.Workload, BackendAlias(s.Workload, rev)))
 				}
 			}
 		}
 		if len(want) > 0 {
-			if err := envoyErr(ctx, rt, ProxyName(req.Release), req.Proxies.WaitReady(ctx, ProxyDir(req.Home, req.Release), want, proxyReadyTimeout)); err != nil {
+			if err := envoyErr(ctx, rt, ProxyName(req.Release), req.Proxies.WaitReady(ctx, ProxyDir(req.Home, req.Release), want, runtimeops.ProxyReadyTimeout)); err != nil {
 				return err
 			}
 		}
 	}
-	if proxySupported.Load() {
+	if runtimeops.Supported.Load() {
 		if err := gateway.WriteExpose(req.Home, req.Release, exposeRoutes(svcs, paths)); err != nil {
 			return err
 		}
@@ -387,7 +384,7 @@ func execute(ctx context.Context, rt ports.Runtime, req ExecRequest, disrupted *
 // preflightLocked runs Preflight under the gateway lock: another karga process could otherwise
 // bind a gateway port between this one listing the gateway's claims and test-binding the port.
 func preflightLocked(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, req ExecRequest) error {
-	if proxySupported.Load() {
+	if runtimeops.Supported.Load() {
 		unlock, err := gateway.Lock(req.Home)
 		if err != nil {
 			return err
@@ -442,7 +439,7 @@ func ownedOK(owned map[string]bool, kind, name string, err error) error {
 // Its anonymous volumes (image VOLUME paths no Volume covers) move to the new container, as docker
 // compose does, so their data survives the update.
 func recreateWorkload(ctx context.Context, rt ports.Runtime, c Change, owned map[string]bool, rel string, s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string, behind bool) error {
-	name := RuntimeName(rel, c.Name)
+	name := runtimeops.RuntimeName(rel, c.Name)
 	wr, err := workloadRequest(rel, c.Name, s, lbl, paths, behind)
 	if err != nil {
 		return err
@@ -507,11 +504,11 @@ func takeOver(ctx context.Context, rt ports.Runtime, name string, mounts []ports
 // touched reports whether anything that was serving traffic has been changed.
 func replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecRequest, c Change, owned map[string]bool,
 	s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string, svcs services) (touched bool, err error) {
-	name := RuntimeName(req.Release, c.Name)
+	name := runtimeops.RuntimeName(req.Release, c.Name)
 	next := name + nextSuffix
 	behind := svcs.wl[c.Name] != nil
 	if owned[ports.ObjectWorkload+"/"+next] {
-		if err := removeWorkload(ctx, rt, next); err != nil {
+		if err := runtimeops.RemoveWorkload(ctx, rt, next); err != nil {
 			return false, err
 		}
 	}
@@ -544,7 +541,7 @@ func replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecRequest, c C
 		if err := writeProxy(ctx, rt, req.Proxies, req, svcs, map[string]string{c.Name: alias}); err != nil {
 			return false, stopNext(err)
 		}
-		if err := envoyErr(ctx, rt, ProxyName(req.Release), req.Proxies.WaitReady(ctx, ProxyDir(req.Home, req.Release), proxyWant(svcs, c.Name, alias), proxyReadyTimeout)); err != nil {
+		if err := envoyErr(ctx, rt, ProxyName(req.Release), req.Proxies.WaitReady(ctx, ProxyDir(req.Home, req.Release), proxyWant(svcs, c.Name, alias), runtimeops.ProxyReadyTimeout)); err != nil {
 			// The proxy may have routed to the new backend for a moment: count it as touched.
 			return true, stopNext(errors.Join(err, writeProxy(ctx, rt, req.Proxies, req, svcs, nil)))
 		}
@@ -558,7 +555,7 @@ func replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecRequest, c C
 	if err := rt.StopWorkload(ctx, old, 0); err != nil && !errors.Is(err, ports.ErrNotFound) {
 		return true, err
 	}
-	if err := deleteWorkload(ctx, rt, old); err != nil {
+	if err := runtimeops.DeleteWorkload(ctx, rt, old); err != nil {
 		return true, err
 	}
 	return true, rt.RenameWorkload(ctx, next, name)
@@ -580,13 +577,13 @@ func Reconcile(ctx context.Context, rt ports.Runtime, home, rel string, applied 
 		}
 		next := a.RuntimeName + nextSuffix
 		if owned[ports.ObjectWorkload+"/"+a.RuntimeName] && routedTo(ctx, rt, home, rel, a.Name, next) {
-			if err := removeWorkload(ctx, rt, a.RuntimeName); err != nil {
+			if err := runtimeops.RemoveWorkload(ctx, rt, a.RuntimeName); err != nil {
 				return nil, err
 			}
 			delete(owned, ports.ObjectWorkload+"/"+a.RuntimeName)
 		}
 		if owned[ports.ObjectWorkload+"/"+a.RuntimeName] {
-			if err := removeWorkload(ctx, rt, next); err != nil {
+			if err := runtimeops.RemoveWorkload(ctx, rt, next); err != nil {
 				return nil, err
 			}
 			continue
@@ -606,7 +603,7 @@ func waitChanged(ctx context.Context, rt ports.Runtime, rel string, changed []Ch
 	targets := make([]readyTarget, len(changed))
 	for i, c := range changed {
 		w, _ := workloadOf(c)
-		targets[i] = readyTarget{RuntimeName(rel, c.Name), w}
+		targets[i] = readyTarget{runtimeops.RuntimeName(rel, c.Name), w}
 	}
 	notReady, werr := waitReady(ctx, rt, targets, timeout)
 	if werr == nil {
@@ -614,7 +611,7 @@ func waitChanged(ctx context.Context, rt ports.Runtime, rel string, changed []Ch
 	}
 	errs := []error{werr}
 	for _, c := range changed {
-		name := RuntimeName(rel, c.Name)
+		name := runtimeops.RuntimeName(rel, c.Name)
 		st, err := rt.GetWorkload(ctx, name)
 		if err == nil && !slices.Contains(notReady, name) && st.State == ports.StateRunning && st.Health != ports.HealthUnhealthy && st.Health != ports.HealthStarting {
 			continue
@@ -632,7 +629,7 @@ func waitChanged(ctx context.Context, rt ports.Runtime, rel string, changed []Ch
 // meant for the proxy.
 func workloadRequest(release, name string, s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string, behind bool) (ports.WorkloadRequest, error) {
 	wr := ports.WorkloadRequest{
-		Name:          RuntimeName(release, name),
+		Name:          runtimeops.RuntimeName(release, name),
 		Labels:        lbl,
 		Image:         s.Image,
 		Command:       s.Command,
@@ -642,12 +639,12 @@ func workloadRequest(release, name string, s *resource.WorkloadSpec, lbl map[str
 		StopTimeout:   s.StopGrace(),
 	}
 	for _, n := range s.Networks {
-		wr.Networks = append(wr.Networks, RuntimeName(release, n))
+		wr.Networks = append(wr.Networks, runtimeops.RuntimeName(release, n))
 	}
 	for _, m := range s.Mounts {
 		kind, target := m.Target()
 		if kind == resource.KindVolume {
-			wr.Mounts = append(wr.Mounts, ports.Mount{Type: ports.MountVolume, Source: RuntimeName(release, target), Target: m.MountPath, ReadOnly: m.ReadOnly})
+			wr.Mounts = append(wr.Mounts, ports.Mount{Type: ports.MountVolume, Source: runtimeops.RuntimeName(release, target), Target: m.MountPath, ReadOnly: m.ReadOnly})
 			continue
 		}
 		dir, ok := paths[Key{kind, target}]
@@ -717,7 +714,7 @@ func Delete(ctx context.Context, rt ports.Runtime, home, release string, deleteV
 				if err := rt.StopWorkload(ctx, o.Name, 0); err != nil && !errors.Is(err, ports.ErrNotFound) {
 					errs = append(errs, err)
 				}
-				errs = append(errs, deleteWorkload(ctx, rt, o.Name))
+				errs = append(errs, runtimeops.DeleteWorkload(ctx, rt, o.Name))
 			case ports.ObjectNetwork:
 				errs = append(errs, rt.DeleteNetwork(ctx, o.Name))
 			case ports.ObjectVolume:
@@ -729,8 +726,8 @@ func Delete(ctx context.Context, rt ports.Runtime, home, release string, deleteV
 	}
 	if home != "" {
 		errs = append(errs, os.RemoveAll(filepath.Join(home, "releases", release)), os.RemoveAll(ProxyDir(home, release)))
-		if proxySupported.Load() {
-			_, err := gateway.Sync(ctx, rt, Proxies, home)
+		if runtimeops.Supported.Load() {
+			_, err := gateway.Sync(ctx, rt, runtimeops.Proxies, home)
 			errs = append(errs, err)
 		}
 	}

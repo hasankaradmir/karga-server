@@ -25,6 +25,8 @@ import (
 // EnsureImage implements ports.Runtime.
 // shortcut: pulls are anonymous; private registries need credentials from docker config (planned with M4 registry auth).
 func (r *Runtime) EnsureImage(ctx context.Context, ref, policy string) error {
+	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
+	defer cancel()
 	if policy != "always" {
 		_, err := r.c.ImageInspect(ctx, ref)
 		switch {
@@ -62,6 +64,8 @@ var restartModes = map[string]container.RestartPolicyMode{
 
 // CreateWorkload implements ports.Runtime.
 func (r *Runtime) CreateWorkload(ctx context.Context, req ports.WorkloadRequest) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	mode, ok := restartModes[req.RestartPolicy]
 	if !ok {
 		return fmt.Errorf("create workload %s: unknown restart policy %q", req.Name, req.RestartPolicy)
@@ -170,6 +174,8 @@ func envList(env map[string]string) []string {
 
 // StartWorkload implements ports.Runtime.
 func (r *Runtime) StartWorkload(ctx context.Context, name string) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	_, err := r.c.ContainerStart(ctx, name, client.ContainerStartOptions{})
 	err = wrap(err, "start workload "+name)
 	if errors.Is(err, ports.ErrPortInUse) {
@@ -180,6 +186,8 @@ func (r *Runtime) StartWorkload(ctx context.Context, name string) error {
 
 // StopWorkload implements ports.Runtime.
 func (r *Runtime) StopWorkload(ctx context.Context, name string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout+callTimeout)
+	defer cancel()
 	var opts client.ContainerStopOptions
 	if timeout > 0 {
 		secs := int(timeout.Seconds())
@@ -191,6 +199,8 @@ func (r *Runtime) StopWorkload(ctx context.Context, name string, timeout time.Du
 
 // DeleteWorkload implements ports.Runtime.
 func (r *Runtime) DeleteWorkload(ctx context.Context, name string) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	// Anonymous volumes stay too: a recreate moves them to the new container.
 	_, err := r.c.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true})
 	return ignoreNotFound(wrap(err, "delete workload "+name))
@@ -198,6 +208,8 @@ func (r *Runtime) DeleteWorkload(ctx context.Context, name string) error {
 
 // GetWorkload implements ports.Runtime.
 func (r *Runtime) GetWorkload(ctx context.Context, name string) (ports.WorkloadStatus, error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	res, err := r.c.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
 	if err != nil {
 		return ports.WorkloadStatus{}, wrap(err, "inspect workload "+name)
@@ -259,6 +271,8 @@ func managedFilter(release string) client.Filters {
 
 // ListManaged implements ports.Runtime.
 func (r *Runtime) ListManaged(ctx context.Context, release string) ([]ports.Object, error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	var out []ports.Object
 	cs, err := r.c.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: managedFilter(release)})
 	if err != nil {
@@ -382,6 +396,8 @@ func (r *Runtime) ImportPath(ctx context.Context, workload, dir string, rd io.Re
 
 // ListLabeled implements ports.Runtime.
 func (r *Runtime) ListLabeled(ctx context.Context, key string) ([]ports.Object, error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	cs, err := r.c.ContainerList(ctx, client.ContainerListOptions{All: true,
 		Filters: client.Filters{}.Add("label", ports.LabelManaged+"=true").Add("label", key)})
 	if err != nil {
@@ -398,6 +414,8 @@ func (r *Runtime) ListLabeled(ctx context.Context, key string) ([]ports.Object, 
 
 // PublishedPorts implements ports.Runtime.
 func (r *Runtime) PublishedPorts(ctx context.Context) ([]ports.PublishedPort, error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	cs, err := r.c.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
 		return nil, wrap(err, "list containers")
@@ -427,12 +445,16 @@ func (r *Runtime) PublishedPorts(ctx context.Context) ([]ports.PublishedPort, er
 
 // RenameWorkload implements ports.Runtime.
 func (r *Runtime) RenameWorkload(ctx context.Context, from, to string) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	_, err := r.c.ContainerRename(ctx, from, client.ContainerRenameOptions{NewName: to})
 	return wrap(err, fmt.Sprintf("rename workload %s to %s", from, to))
 }
 
 // ConnectNetwork implements ports.Runtime.
 func (r *Runtime) ConnectNetwork(ctx context.Context, workload, net string, aliases []string) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	_, err := r.c.NetworkConnect(ctx, net, client.NetworkConnectOptions{
 		Container: workload, EndpointConfig: &network.EndpointSettings{Aliases: aliases},
 	})
@@ -441,6 +463,8 @@ func (r *Runtime) ConnectNetwork(ctx context.Context, workload, net string, alia
 
 // DisconnectNetwork implements ports.Runtime.
 func (r *Runtime) DisconnectNetwork(ctx context.Context, workload, net string) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	_, err := r.c.NetworkDisconnect(ctx, net, client.NetworkDisconnectOptions{Container: workload})
 	if err != nil && strings.Contains(err.Error(), "is not connected") {
 		return nil

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/packages"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
@@ -45,7 +47,7 @@ func deploy(t *testing.T, rt ports.Runtime, example, release string, sets ...str
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployment.UseProxies(info)
+	runtimeops.UseProxies(info)
 	plan, err := deployment.Diff(release, rs, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)

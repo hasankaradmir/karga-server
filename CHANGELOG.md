@@ -12,6 +12,13 @@ First release.
   CLI (`github.com/hasankaradmir/karga-cli`) and karga-sdk, the module both use. Each has its own
   install script; this one installs karga-server as a systemd service, without credentials.
 
+### Release
+- Releases carry an SBOM per archive and a keyless (Sigstore) signature of `checksums.txt`;
+  `install.sh` verifies it when `cosign` is installed (`KARGA_SKIP_SIGNATURE=1` skips it).
+- The release workflow runs the tests, the integration tests and the linter before it publishes; CI runs `govulncheck`, and
+  every GitHub Action is pinned by commit. The e2e job tests the CLI tag in the repository variable
+  `KARGA_CLI_REF` (master without it).
+
 ### Fixed
 - Repairing or resuming a release rewrote its Config and Secret directories from scratch: running
   containers were left with an empty, deleted directory. They are now updated in place.
@@ -28,6 +35,17 @@ First release.
 - Errors had status 400 whatever they were; they now travel with their kind (not found, conflict,
   invalid, internal).
 - `karga uninstall --dry-run` shows what would be removed.
+- Two-step state writes (a release's status with its new revision, a revision's outcome with its
+  release, an uninstall's resources) are one transaction.
+- Docker calls have deadlines (2 minutes, 30 for an image pull): a daemon that stops answering no
+  longer holds a release for ever.
+- A failed read of `state.key` is retried instead of failing every deploy until a restart, and the
+  key is synced to disk when it is created.
+- The gateway normalizes paths and merges slashes before routing by prefix, and takes a backend
+  out after three failed checks instead of one.
+- Repairs no longer update a release proxy (after a server upgrade, for example); they only create
+  what is missing.
+- The Envoy admin client no longer keeps a connection pool per proxy.
 
 ### Breaking (compared with earlier builds)
 - API 2.0 (karga-sdk): a CLI and a server work together when their major API version is the same.

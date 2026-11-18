@@ -14,7 +14,6 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
-	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -89,33 +88,12 @@ var Supported atomic.Bool
 // release service calls it once it knows the runtime, before planning.
 func UseProxies(info ports.RuntimeInfo) { Supported.Store(info.Has(ports.CapHostGateway)) }
 
-// ProxyControl writes an Envoy's configuration and reads its state, for the release proxies and the
-// gateway alike. The Envoy implementation is the default; tests substitute a fake.
-type ProxyControl interface {
-	Write(dir, node string, socketMode int, cfg envoy.Config) error
-	// WaitReady waits until each cluster routes to a healthy endpoint (cluster -> DNS name or ip:port).
-	WaitReady(ctx context.Context, dir string, want map[string]string, timeout time.Duration) error
-	// WaitDrained waits until no connection is left on endpoints the clusters no longer have.
-	WaitDrained(ctx context.Context, dir string, clusters []string, timeout time.Duration) (bool, error)
-}
+// ProxyControl writes karga's proxies' configuration and reads their state.
+type ProxyControl = ports.ProxyControl
 
-// EnvoyProxies controls Envoy proxies through their directories (ADR-009, ADR-010).
-type EnvoyProxies struct{}
-
-// Write implements ProxyControl.
-func (EnvoyProxies) Write(dir, node string, socketMode int, cfg envoy.Config) error {
-	return envoy.Write(dir, node, socketMode, cfg)
-}
-
-// WaitReady implements ProxyControl.
-func (EnvoyProxies) WaitReady(ctx context.Context, dir string, want map[string]string, timeout time.Duration) error {
-	return envoy.NewAdmin(dir).WaitReady(ctx, want, timeout)
-}
-
-// WaitDrained implements ProxyControl.
-func (EnvoyProxies) WaitDrained(ctx context.Context, dir string, clusters []string, timeout time.Duration) (bool, error) {
-	return envoy.NewAdmin(dir).WaitDrained(ctx, clusters, timeout)
-}
+// Proxies controls the release proxies and the gateway: Envoy, set by karga-server at start; tests
+// substitute a fake. A request may name another (deployment.ExecRequest.Proxies).
+var Proxies ProxyControl
 
 // ProxyReadyTimeout bounds how long a proxy may take to route to a new backend.
 const ProxyReadyTimeout = 30 * time.Second

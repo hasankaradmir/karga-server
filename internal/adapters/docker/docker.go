@@ -9,6 +9,7 @@ import (
 	"os"
 	goruntime "runtime"
 	"strings"
+	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
@@ -46,6 +47,13 @@ func New(ctx context.Context) (*Runtime, error) {
 
 // Close releases the client connection.
 func (r *Runtime) Close() error { return r.c.Close() }
+
+// Deadlines of Docker calls: a daemon that stops answering must not hold an operation, and the
+// release it locks, for ever. Streams (logs, exec, copies, events) are not bounded.
+const (
+	callTimeout = 2 * time.Minute
+	pullTimeout = 30 * time.Minute
+)
 
 // unreachable explains a failed connection in terms of what the user can change.
 func unreachable(host, contextName string, err error) error {
@@ -100,6 +108,8 @@ func ignoreNotFound(err error) error {
 
 // Info implements ports.Runtime.
 func (r *Runtime) Info(ctx context.Context) (ports.RuntimeInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	res, err := r.c.Info(ctx, client.InfoOptions{})
 	if err != nil {
 		return ports.RuntimeInfo{}, wrap(err, "docker info")
@@ -126,6 +136,8 @@ func (r *Runtime) Info(ctx context.Context) (ports.RuntimeInfo, error) {
 
 // CreateNetwork implements ports.Runtime.
 func (r *Runtime) CreateNetwork(ctx context.Context, req ports.NetworkRequest) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	_, err := r.c.NetworkCreate(ctx, req.Name, client.NetworkCreateOptions{
 		Driver: req.Driver, Internal: req.Internal, Labels: req.Labels,
 	})
@@ -134,12 +146,16 @@ func (r *Runtime) CreateNetwork(ctx context.Context, req ports.NetworkRequest) e
 
 // DeleteNetwork implements ports.Runtime.
 func (r *Runtime) DeleteNetwork(ctx context.Context, name string) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	_, err := r.c.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
 	return ignoreNotFound(wrap(err, "delete network "+name))
 }
 
 // CreateVolume implements ports.Runtime. Docker returns an existing volume on create, so check first.
 func (r *Runtime) CreateVolume(ctx context.Context, req ports.VolumeRequest) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	if _, err := r.c.VolumeInspect(ctx, req.Name, client.VolumeInspectOptions{}); err == nil {
 		return fmt.Errorf("create volume %s: %w", req.Name, ports.ErrConflict)
 	} else if !cerrdefs.IsNotFound(err) {
@@ -151,6 +167,8 @@ func (r *Runtime) CreateVolume(ctx context.Context, req ports.VolumeRequest) err
 
 // DeleteVolume implements ports.Runtime.
 func (r *Runtime) DeleteVolume(ctx context.Context, name string) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	_, err := r.c.VolumeRemove(ctx, name, client.VolumeRemoveOptions{})
 	return ignoreNotFound(wrap(err, "delete volume "+name))
 }

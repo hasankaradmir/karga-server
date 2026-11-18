@@ -290,15 +290,17 @@ func (s *Service) uninstall(ctx context.Context, rt ports.Runtime, rel release.R
 	if !req.KeepHistory {
 		return s.Store.DeleteRelease(bg, req.Name)
 	}
-	applied, err := s.Store.ListResources(bg, req.Name)
-	if err != nil {
-		return err
-	}
-	for _, a := range applied {
-		if err := s.Store.DeleteResource(bg, req.Name, a.Kind, a.Name); err != nil {
+	rel.Status, rel.UpdatedAt = release.StatusUninstalled, s.Now()
+	return s.Store.InTx(bg, func(st ports.StateStore) error {
+		applied, err := st.ListResources(bg, req.Name)
+		if err != nil {
 			return err
 		}
-	}
-	rel.Status, rel.UpdatedAt = release.StatusUninstalled, s.Now()
-	return s.Store.SaveRelease(bg, rel)
+		for _, a := range applied {
+			if err := st.DeleteResource(bg, req.Name, a.Kind, a.Name); err != nil {
+				return err
+			}
+		}
+		return st.SaveRelease(bg, rel)
+	})
 }

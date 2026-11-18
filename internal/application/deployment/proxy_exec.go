@@ -11,10 +11,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
-	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -55,8 +56,8 @@ func proxyClusters(svcs services, workload string) []string {
 // proxyConfig listens on every service port and routes it to the backend alias of the container
 // running the service's workload (override names another alias per workload, for a replace). A
 // service whose workload has no container yet is left out until it has one.
-func proxyConfig(ctx context.Context, rt ports.Runtime, rel string, svcs services, override map[string]string) envoy.Config {
-	var cfg envoy.Config
+func proxyConfig(ctx context.Context, rt ports.Runtime, rel string, svcs services, override map[string]string) ports.ProxyConfig {
+	var cfg ports.ProxyConfig
 	for _, n := range svcs.names() {
 		s := svcs.svc[n]
 		w := svcs.wl[s.Workload]
@@ -65,7 +66,7 @@ func proxyConfig(ctx context.Context, rt ports.Runtime, rel string, svcs service
 		}
 		alias, ok := override[s.Workload]
 		if !ok {
-			rev, err := revisionOf(ctx, rt, RuntimeName(rel, s.Workload))
+			rev, err := revisionOf(ctx, rt, runtimeops.RuntimeName(rel, s.Workload))
 			if err != nil {
 				continue
 			}
@@ -77,15 +78,15 @@ func proxyConfig(ctx context.Context, rt ports.Runtime, rel string, svcs service
 				continue
 			}
 			cluster := proxyCluster(n, p.Port)
-			cfg.TCP = append(cfg.TCP, envoy.TCPListener{Address: "0.0.0.0", Port: p.Port, Cluster: cluster})
-			cfg.Clusters = append(cfg.Clusters, envoy.Cluster{Name: cluster, Host: alias, Port: port, DNS: true,
-				HealthPath: httpHealthPath(w, port)})
+			cfg.TCP = append(cfg.TCP, ports.ProxyTCPListener{Address: "0.0.0.0", Port: p.Port, Cluster: cluster})
+			cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: cluster, Host: alias, Port: port, DNS: true,
+				HealthPath: runtimeops.HTTPHealthPath(w, port)})
 		}
 	}
 	return cfg
 }
 
-func writeProxy(ctx context.Context, rt ports.Runtime, px ProxyControl, req ExecRequest, svcs services, override map[string]string) error {
+func writeProxy(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyControl, req ExecRequest, svcs services, override map[string]string) error {
 	return px.Write(ProxyDir(req.Home, req.Release), req.Release, 0o600, proxyConfig(ctx, rt, req.Release, svcs, override))
 }
 
@@ -102,7 +103,7 @@ func exposeRoutes(svcs services, paths map[Key]string) []gateway.Route {
 			}
 			r := gateway.Route{Service: n, Port: p.Port, Listener: e.Listener, Host: e.Host, Path: e.Path}
 			if port, ok := svcs.target(n, p); ok {
-				r.HealthPath = httpHealthPath(svcs.wl[s.Workload], port)
+				r.HealthPath = runtimeops.HTTPHealthPath(svcs.wl[s.Workload], port)
 			}
 			if e.TLS != nil {
 				r.TLSSecret, r.CertDir = e.TLS.Secret, paths[Key{resource.KindSecret, e.TLS.Secret}]
@@ -121,19 +122,19 @@ func proxyRequest(rel string, revision int, spec ProxySpec, dir, user string) (p
 		Name:          ProxyName(rel),
 		Labels:        labels(rel, revision, KindProxy, ProxyResource),
 		Image:         spec.Image,
-		Command:       envoy.Command(),
+		Command:       runtimeops.Proxies.Container().Command,
 		User:          user,
 		Sysctls:       map[string]string{"net.ipv4.ip_unprivileged_port_start": "0"},
 		RestartPolicy: "always",
-		Mounts:        []ports.Mount{{Type: ports.MountBind, Source: dir, Target: envoy.MountPath}},
-		MemoryBytes:   envoyMemory,
-		MilliCPU:      envoyMilliCPU,
-		PidsLimit:     envoyPids,
+		Mounts:        []ports.Mount{{Type: ports.MountBind, Source: dir, Target: runtimeops.Proxies.Container().MountPath}},
+		MemoryBytes:   runtimeops.EnvoyMemory,
+		MilliCPU:      runtimeops.EnvoyMilliCPU,
+		PidsLimit:     runtimeops.EnvoyPids,
 		LogMaxSize:    resource.DefaultLogMaxSize,
 		LogMaxFiles:   resource.DefaultLogMaxFiles,
 	}
 	if nets := sortedNetworks(spec); len(nets) > 0 {
-		wr.Networks, wr.Aliases = []string{RuntimeName(rel, nets[0])}, spec.Networks[nets[0]]
+		wr.Networks, wr.Aliases = []string{runtimeops.RuntimeName(rel, nets[0])}, spec.Networks[nets[0]]
 	}
 	return wr, gateway.Publish(&wr, spec.Published)
 }
@@ -148,7 +149,7 @@ func sortedNetworks(spec ProxySpec) []string {
 }
 
 // createProxy writes the configuration for what runs now and starts the release proxy.
-func createProxy(ctx context.Context, rt ports.Runtime, px ProxyControl, req ExecRequest, c Change, svcs services) error {
+func createProxy(ctx context.Context, rt ports.Runtime, px runtimeops.ProxyControl, req ExecRequest, c Change, svcs services) error {
 	if err := writeProxy(ctx, rt, px, req, svcs, nil); err != nil {
 		return err
 	}
@@ -160,7 +161,7 @@ func createProxy(ctx context.Context, rt ports.Runtime, px ProxyControl, req Exe
 		return err
 	}
 	for _, n := range sortedNetworks(*c.Proxy)[1:] {
-		if err := rt.ConnectNetwork(ctx, wr.Name, RuntimeName(req.Release, n), c.Proxy.Networks[n]); err != nil {
+		if err := rt.ConnectNetwork(ctx, wr.Name, runtimeops.RuntimeName(req.Release, n), c.Proxy.Networks[n]); err != nil {
 			return err
 		}
 	}
@@ -173,11 +174,11 @@ func reconnectProxy(ctx context.Context, rt ports.Runtime, rel string, c Change)
 	var old ProxySpec
 	_ = json.Unmarshal(c.Applied.Spec, &old)
 	for _, n := range changedNetworks(old, *c.Proxy) {
-		if err := rt.DisconnectNetwork(ctx, c.RuntimeName, RuntimeName(rel, n)); err != nil {
+		if err := rt.DisconnectNetwork(ctx, c.RuntimeName, runtimeops.RuntimeName(rel, n)); err != nil {
 			return err
 		}
 		if aliases := c.Proxy.Networks[n]; len(aliases) > 0 {
-			if err := rt.ConnectNetwork(ctx, c.RuntimeName, RuntimeName(rel, n), aliases); err != nil {
+			if err := rt.ConnectNetwork(ctx, c.RuntimeName, runtimeops.RuntimeName(rel, n), aliases); err != nil {
 				return err
 			}
 		}
@@ -188,7 +189,7 @@ func reconnectProxy(ctx context.Context, rt ports.Runtime, rel string, c Change)
 // removeProxy deletes a proxy container; with dropConfig its directory goes too. A per-workload
 // proxy of an earlier karga version had its own directory below the release's.
 func removeProxy(ctx context.Context, rt ports.Runtime, home, rel string, c Change, dropConfig bool) error {
-	if err := removeWorkload(ctx, rt, c.Applied.RuntimeName); err != nil {
+	if err := runtimeops.RemoveWorkload(ctx, rt, c.Applied.RuntimeName); err != nil {
 		return err
 	}
 	if !dropConfig {
@@ -216,7 +217,7 @@ func routedTo(ctx context.Context, rt ports.Runtime, home, rel, name, next strin
 	if err != nil {
 		return false
 	}
-	eps, _ := envoy.Endpoints(ProxyDir(home, rel))
+	eps, _ := runtimeops.Proxies.Endpoints(ProxyDir(home, rel))
 	for _, ep := range eps {
 		if strings.HasPrefix(ep, BackendAlias(name, rev)+":") {
 			return true

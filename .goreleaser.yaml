@@ -29,6 +29,17 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# An SBOM per archive, and checksums.txt signed without a key (Sigstore, the workflow's identity):
+# install.sh verifies it when cosign is installed.
+sboms:
+  - artifacts: archive
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    certificate: "${artifact}.pem"
+    signature: "${artifact}.sig"
+    args: ["sign-blob", "--yes", "--output-certificate=${certificate}", "--output-signature=${signature}", "${artifact}"]
+
 changelog:
   disable: true # release notes come from CHANGELOG.md
 

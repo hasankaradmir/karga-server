@@ -81,7 +81,9 @@
                     }
                   }
                 ],
-                "use_remote_address": true
+                "use_remote_address": true,
+                "normalize_path": true,
+                "merge_slashes": true
               }
             }
           ],
@@ -215,7 +217,9 @@
                     }
                   }
                 ],
-                "use_remote_address": true
+                "use_remote_address": true,
+                "normalize_path": true,
+                "merge_slashes": true
               }
             }
           ]

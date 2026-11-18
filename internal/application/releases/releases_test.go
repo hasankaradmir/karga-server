@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
@@ -28,7 +30,7 @@ import (
 const redisPkg = "../../../tests/testdata/redis"
 
 // Tests run without Envoy: proxy and gateway configuration is written, readiness is assumed.
-func init() { deployment.Proxies = fakeruntime.Proxies{} }
+func init() { runtimeops.Proxies = fakeruntime.Proxies{} }
 
 type env struct {
 	t    *testing.T

@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // MountPath is where the proxy directory is mounted inside the Envoy container.
@@ -50,55 +52,50 @@ const (
 	adminSocket   = "admin.sock"
 )
 
-// Cluster is an upstream with one endpoint. With DNS the host is a name resolved continuously
-// (container restarts and IP changes do not matter); otherwise it is an IP address.
-type Cluster struct {
-	Name string
-	Host string
-	Port int
-	DNS  bool
-	// HealthPath makes the health check an HTTP GET of that path (2xx/3xx); empty: a TCP connect.
-	HealthPath string
+// The configuration model is the application's (ports): Envoy renders it.
+type (
+	Cluster      = ports.ProxyCluster
+	TCPListener  = ports.ProxyTCPListener
+	HTTPListener = ports.ProxyHTTPListener
+	Cert         = ports.ProxyCert
+	HTTPRoute    = ports.ProxyRoute
+	Config       = ports.ProxyConfig
+)
+
+// Proxies implements ports.ProxyControl with Envoy (ADR-009, ADR-010).
+type Proxies struct{}
+
+var _ ports.ProxyControl = Proxies{}
+
+// Container implements ports.ProxyControl.
+func (Proxies) Container() ports.ProxyContainer {
+	return ports.ProxyContainer{Image: Image(), Command: Command(), MountPath: MountPath}
 }
 
-// TCPListener proxies every connection on Address:Port to Cluster.
-type TCPListener struct {
-	Address string
-	Port    int
-	Cluster string
+// Write implements ports.ProxyControl.
+func (Proxies) Write(dir, node string, socketMode int, cfg Config) error {
+	return Write(dir, node, socketMode, cfg)
 }
 
-// HTTPListener serves HTTP on Address:Port and routes requests by Host header and path prefix.
-// With Certs it serves HTTPS: each host gets its certificate by SNI. Redirects lists hosts whose
-// plain requests are sent to HTTPS on RedirectPort.
-type HTTPListener struct {
-	Address      string
-	Port         int
-	Routes       []HTTPRoute
-	Certs        map[string]Cert // host -> certificate files, inside the container
-	Redirects    []string
-	RedirectPort int
+// Endpoints implements ports.ProxyControl.
+func (Proxies) Endpoints(dir string) (map[string]string, error) { return Endpoints(dir) }
+
+// WaitReady implements ports.ProxyControl.
+func (Proxies) WaitReady(ctx context.Context, dir string, want map[string]string, timeout time.Duration) error {
+	return NewAdmin(dir).WaitReady(ctx, want, timeout)
 }
 
-// Cert is a certificate chain and private key, as file paths Envoy reads.
-type Cert struct {
-	Chain, Key string
+// WaitDrained implements ports.ProxyControl.
+func (Proxies) WaitDrained(ctx context.Context, dir string, clusters []string, timeout time.Duration) (bool, error) {
+	return NewAdmin(dir).WaitDrained(ctx, clusters, timeout)
 }
 
-// HTTPRoute sends requests for Host whose path starts with Path to Cluster.
-type HTTPRoute struct {
-	Host    string
-	Path    string
-	Cluster string
-}
+// Live implements ports.ProxyControl.
+func (Proxies) Live(ctx context.Context, dir string) (bool, error) { return NewAdmin(dir).Live(ctx) }
 
-// Config is the dynamic part of a proxy: listeners (lds.json) and clusters (cds.json).
-// AccessLog writes a line per request (HTTP) or connection (TCP) to stdout.
-type Config struct {
-	TCP       []TCPListener
-	HTTP      []HTTPListener
-	Clusters  []Cluster
-	AccessLog bool
+// Version implements ports.ProxyControl.
+func (Proxies) Version(ctx context.Context, dir string) (string, error) {
+	return NewAdmin(dir).Version(ctx)
 }
 
 // Bootstrap is the static part: an admin API on a unix socket and file-based LDS/CDS. socketMode is
@@ -152,11 +149,11 @@ func Write(dir, node string, socketMode int, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	cds, err := cfg.ClustersJSON()
+	cds, err := ClustersJSON(cfg)
 	if err != nil {
 		return err
 	}
-	lds, err := cfg.Listeners()
+	lds, err := Listeners(cfg)
 	if err != nil {
 		return err
 	}
@@ -276,23 +273,30 @@ func (a *Admin) Version(ctx context.Context) (string, error) {
 
 // Admin reads a proxy's admin API through the unix socket in its directory.
 type Admin struct {
+	sock   string
 	client *http.Client
 }
 
+// adminTransport is shared by every Admin and keeps no connections: a long-running server would
+// otherwise gather an idle pool for every proxy it ever talked to. It dials the socket the request's
+// context names (every proxy has the same host name, so a kept connection could reach another one).
+var adminTransport = &http.Transport{
+	DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "unix", ctx.Value(adminSocketKey{}).(string))
+	},
+	DisableKeepAlives: true,
+}
+
+type adminSocketKey struct{}
+
 // NewAdmin returns a client for the proxy whose directory is dir.
 func NewAdmin(dir string) *Admin {
-	sock := filepath.Join(dir, adminSocket)
-	return &Admin{client: &http.Client{
-		Timeout: 2 * time.Second,
-		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", sock)
-		}},
-	}}
+	return &Admin{sock: filepath.Join(dir, adminSocket), client: &http.Client{Timeout: 2 * time.Second, Transport: adminTransport}}
 }
 
 func (a *Admin) get(ctx context.Context, path string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://envoy"+path, nil)
+	req, err := http.NewRequestWithContext(context.WithValue(ctx, adminSocketKey{}, a.sock), http.MethodGet, "http://envoy"+path, nil)
 	if err != nil {
 		return nil, err
 	}

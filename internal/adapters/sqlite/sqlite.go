@@ -33,6 +33,31 @@ var migrations fs.FS = embedded
 // Store is a SQLite-backed ports.StateStore.
 type Store struct {
 	db *sql.DB
+	// q runs the queries: the database, or the transaction of InTx.
+	q  querier
+	tx *sql.Tx
+}
+
+type querier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// InTx implements ports.StateStore: fn's writes through the store it is given all happen or none.
+// Inside InTx, fn's store runs InTx calls in the same transaction.
+func (s *Store) InTx(ctx context.Context, fn func(ports.StateStore) error) error {
+	if s.tx != nil {
+		return fn(s)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(&Store{db: s.db, q: tx, tx: tx}); err != nil {
+		return errors.Join(err, tx.Rollback())
+	}
+	return tx.Commit()
 }
 
 var _ ports.StateStore = (*Store)(nil)
@@ -60,7 +85,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, q: db}
 	if err := s.migrate(ctx, path); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate %s: %w", path, err)
@@ -100,6 +125,12 @@ func (s *Store) migrate(ctx context.Context, path string) error {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
+	// A migration's number is its schema version: they must be numbered 001, 002, ... without gaps.
+	for i, n := range names {
+		if want := fmt.Sprintf("%03d_", i+1); !strings.HasPrefix(n, want) {
+			return fmt.Errorf("migration %s: want a name starting with %s", n, want)
+		}
+	}
 
 	var version int
 	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
@@ -169,7 +200,7 @@ func notFound(err error, what string) error {
 
 // GetRelease implements ports.StateStore.
 func (s *Store) GetRelease(ctx context.Context, name string) (release.Release, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT name, package_name, package_version, current_revision, status, created_at, updated_at, paused
+	row := s.q.QueryRowContext(ctx, `SELECT name, package_name, package_version, current_revision, status, created_at, updated_at, paused
 		FROM releases WHERE name = ?`, name)
 	r, err := scanRelease(row)
 	return r, notFound(err, "release "+name)
@@ -189,7 +220,7 @@ func scanRelease(row scanner) (release.Release, error) {
 
 // ListReleases implements ports.StateStore.
 func (s *Store) ListReleases(ctx context.Context) ([]release.Release, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, package_name, package_version, current_revision, status, created_at, updated_at, paused
+	rows, err := s.q.QueryContext(ctx, `SELECT name, package_name, package_version, current_revision, status, created_at, updated_at, paused
 		FROM releases ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -208,7 +239,7 @@ func (s *Store) ListReleases(ctx context.Context) ([]release.Release, error) {
 
 // SaveRelease implements ports.StateStore.
 func (s *Store) SaveRelease(ctx context.Context, r release.Release) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO releases (name, package_name, package_version, current_revision, status, created_at, updated_at, paused)
+	_, err := s.q.ExecContext(ctx, `INSERT INTO releases (name, package_name, package_version, current_revision, status, created_at, updated_at, paused)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (name) DO UPDATE SET package_name = excluded.package_name, package_version = excluded.package_version,
 			current_revision = excluded.current_revision, status = excluded.status, updated_at = excluded.updated_at,
@@ -219,7 +250,7 @@ func (s *Store) SaveRelease(ctx context.Context, r release.Release) error {
 
 // DeleteRelease implements ports.StateStore.
 func (s *Store) DeleteRelease(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM releases WHERE name = ?`, name)
+	_, err := s.q.ExecContext(ctx, `DELETE FROM releases WHERE name = ?`, name)
 	return err
 }
 
@@ -241,7 +272,7 @@ func (s *Store) CreateRevision(ctx context.Context, rev release.Revision) error 
 	if len(manifest) == 0 {
 		manifest = json.RawMessage("[]")
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO revisions (release, revision, package_name, package_version, runtime_supported,
+	_, err = s.q.ExecContext(ctx, `INSERT INTO revisions (release, revision, package_name, package_version, runtime_supported,
 		package_digest, values_digest, manifest_digest, values_json, values_all_json, manifest_json, status, description, created_at, notes)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rev.Release, rev.Number, rev.PackageName, rev.PackageVersion, string(supported), rev.PackageDigest, rev.ValuesDigest, rev.ManifestDigest,
@@ -258,7 +289,7 @@ func nonNil(m map[string]any) map[string]any {
 
 // UpdateRevisionStatus implements ports.StateStore.
 func (s *Store) UpdateRevisionStatus(ctx context.Context, rel string, number int, status release.RevisionStatus, description string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE revisions SET status = ?, description = ? WHERE release = ? AND revision = ?`,
+	res, err := s.q.ExecContext(ctx, `UPDATE revisions SET status = ?, description = ? WHERE release = ? AND revision = ?`,
 		string(status), description, rel, number)
 	if err != nil {
 		return err
@@ -326,14 +357,14 @@ func numbers(v any) any {
 
 // GetRevision implements ports.StateStore.
 func (s *Store) GetRevision(ctx context.Context, rel string, number int) (release.Revision, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+revisionColumns+` FROM revisions WHERE release = ? AND revision = ?`, rel, number)
+	row := s.q.QueryRowContext(ctx, `SELECT `+revisionColumns+` FROM revisions WHERE release = ? AND revision = ?`, rel, number)
 	r, err := scanRevision(row)
 	return r, notFound(err, fmt.Sprintf("revision %d of release %s", number, rel))
 }
 
 // ListRevisions implements ports.StateStore.
 func (s *Store) ListRevisions(ctx context.Context, rel string) ([]release.Revision, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+revisionColumns+` FROM revisions WHERE release = ? ORDER BY revision`, rel)
+	rows, err := s.q.QueryContext(ctx, `SELECT `+revisionColumns+` FROM revisions WHERE release = ? ORDER BY revision`, rel)
 	if err != nil {
 		return nil, err
 	}
@@ -351,13 +382,13 @@ func (s *Store) ListRevisions(ctx context.Context, rel string) ([]release.Revisi
 
 // DeleteRevision implements ports.StateStore.
 func (s *Store) DeleteRevision(ctx context.Context, rel string, number int) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM revisions WHERE release = ? AND revision = ?`, rel, number)
+	_, err := s.q.ExecContext(ctx, `DELETE FROM revisions WHERE release = ? AND revision = ?`, rel, number)
 	return err
 }
 
 // ListResources implements ports.StateStore.
 func (s *Store) ListResources(ctx context.Context, rel string) ([]release.AppliedResource, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT kind, name, revision, runtime_name, spec_json, spec_digest
+	rows, err := s.q.QueryContext(ctx, `SELECT kind, name, revision, runtime_name, spec_json, spec_digest
 		FROM resources WHERE release = ? ORDER BY kind, name`, rel)
 	if err != nil {
 		return nil, err
@@ -378,14 +409,14 @@ func (s *Store) ListResources(ctx context.Context, rel string) ([]release.Applie
 
 // SaveResource implements ports.StateStore.
 func (s *Store) SaveResource(ctx context.Context, rel string, r release.AppliedResource) error {
-	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO resources (release, kind, name, revision, runtime_name, spec_json, spec_digest)
+	_, err := s.q.ExecContext(ctx, `INSERT OR REPLACE INTO resources (release, kind, name, revision, runtime_name, spec_json, spec_digest)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, rel, r.Kind, r.Name, r.Revision, r.RuntimeName, string(r.Spec), r.Digest)
 	return err
 }
 
 // DeleteResource implements ports.StateStore.
 func (s *Store) DeleteResource(ctx context.Context, rel, kind, name string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM resources WHERE release = ? AND kind = ? AND name = ?`, rel, kind, name)
+	_, err := s.q.ExecContext(ctx, `DELETE FROM resources WHERE release = ? AND kind = ? AND name = ?`, rel, kind, name)
 	return err
 }
 
@@ -407,6 +438,9 @@ func scanOperation(row scanner) (release.Operation, error) {
 // BeginOperation implements ports.StateStore. The transaction is BEGIN IMMEDIATE (see DSN), so two
 // karga processes cannot both see "no running operation" and start at once.
 func (s *Store) BeginOperation(ctx context.Context, op release.Operation, onRunning func(release.Operation) error) (int64, error) {
+	if s.tx != nil {
+		return 0, errors.New("BeginOperation cannot run inside InTx")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -460,7 +494,7 @@ func (s *Store) FinishOperation(ctx context.Context, op release.Operation) error
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE operations SET status = ?, steps_json = ?, error = ?, revision = ?, finished_at = ? WHERE id = ?`,
+	_, err = s.q.ExecContext(ctx, `UPDATE operations SET status = ?, steps_json = ?, error = ?, revision = ?, finished_at = ? WHERE id = ?`,
 		string(op.Status), steps, op.Error, op.Revision, ts(time.Now()), op.ID)
 	return err
 }
@@ -471,13 +505,13 @@ func (s *Store) SaveOperationSteps(ctx context.Context, id int64, steps []releas
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE operations SET steps_json = ? WHERE id = ?`, js, id)
+	_, err = s.q.ExecContext(ctx, `UPDATE operations SET steps_json = ? WHERE id = ?`, js, id)
 	return err
 }
 
 // RunningOperation implements ports.StateStore.
 func (s *Store) RunningOperation(ctx context.Context, rel string) (release.Operation, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+operationColumns+` FROM operations WHERE release = ? AND status = ? ORDER BY id DESC LIMIT 1`,
+	row := s.q.QueryRowContext(ctx, `SELECT `+operationColumns+` FROM operations WHERE release = ? AND status = ? ORDER BY id DESC LIMIT 1`,
 		rel, string(release.OperationRunning))
 	op, err := scanOperation(row)
 	return op, notFound(err, "running operation of "+rel)
@@ -488,7 +522,7 @@ func (s *Store) ListOperations(ctx context.Context, rel string, afterID int64, l
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+operationColumns+` FROM operations
+	rows, err := s.q.QueryContext(ctx, `SELECT `+operationColumns+` FROM operations
 		WHERE (? = '' OR release = ?) AND id > ? ORDER BY id DESC LIMIT ?`, rel, rel, afterID, limit)
 	if err != nil {
 		return nil, err

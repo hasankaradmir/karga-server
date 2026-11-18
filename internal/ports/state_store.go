@@ -9,6 +9,10 @@ import (
 // StateStore persists releases, revisions, applied resources and operations.
 // Getters return an error wrapping ErrNotFound for missing rows.
 type StateStore interface {
+	// InTx runs fn in one transaction: the writes fn makes through the store it is given all
+	// happen, or none do (fn returned an error). BeginOperation cannot run inside it.
+	InTx(ctx context.Context, fn func(StateStore) error) error
+
 	GetRelease(ctx context.Context, name string) (release.Release, error)
 	ListReleases(ctx context.Context) ([]release.Release, error)
 	// SaveRelease inserts or updates a release.

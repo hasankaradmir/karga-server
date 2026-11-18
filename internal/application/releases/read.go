@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
@@ -18,7 +20,6 @@ import (
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
-	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -202,7 +203,7 @@ func (s *Service) Status(ctx context.Context, name string) (*StatusReport, error
 // backends lists the aliases a release proxy routes to, e.g. "karga-api-r2, karga-web-r3", for the
 // clusters whose name starts with prefix.
 func backends(dir, prefix string) string {
-	eps, _ := envoy.Endpoints(dir)
+	eps, _ := runtimeops.Proxies.Endpoints(dir)
 	var out []string
 	for cluster, ep := range eps {
 		if !strings.HasPrefix(cluster, prefix) {
@@ -318,7 +319,7 @@ func (s *Service) updateGateway(ctx context.Context, change func(*gateway.Settin
 	if _, err := rt.GetWorkload(ctx, gateway.ContainerName); errors.Is(err, ports.ErrNotFound) {
 		return nil // applied when a release next exposes something
 	}
-	targets, err := gateway.Sync(ctx, rt, deployment.Proxies, s.Home)
+	targets, err := gateway.Sync(ctx, rt, runtimeops.Proxies, s.Home)
 	if err != nil {
 		return err
 	}
@@ -326,7 +327,7 @@ func (s *Service) updateGateway(ctx context.Context, change func(*gateway.Settin
 	if len(want) == 0 {
 		return nil
 	}
-	return deployment.Proxies.WaitReady(ctx, gateway.Dir(s.Home), want, deployment.ProxyReadyTimeout)
+	return runtimeops.Proxies.WaitReady(ctx, gateway.Dir(s.Home), want, runtimeops.ProxyReadyTimeout)
 }
 
 // Exec runs a command in a running workload of a release and returns its exit code.

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
@@ -97,8 +99,8 @@ func TestIPOverlap(t *testing.T) {
 		{"127.0.0.1", "127.0.0.1", true}, {"0.0.0.0", "127.0.0.1", true}, {"::", "10.0.0.1", true},
 		{"", "127.0.0.1", true}, {"127.0.0.1", "10.0.0.1", false},
 	} {
-		if got := ipOverlap(c.a, c.b); got != c.want {
-			t.Errorf("ipOverlap(%q, %q) = %v", c.a, c.b, got)
+		if got := runtimeops.IPOverlap(c.a, c.b); got != c.want {
+			t.Errorf("runtimeops.IPOverlap(%q, %q) = %v", c.a, c.b, got)
 		}
 	}
 }

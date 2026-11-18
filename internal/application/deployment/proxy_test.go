@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/runtimeops"
+
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
@@ -12,9 +14,9 @@ import (
 // withProxySupport pretends to run on Linux (or not) for the duration of a test.
 func withProxySupport(t *testing.T, on bool) {
 	t.Helper()
-	old := proxySupported.Load()
-	proxySupported.Store(on)
-	t.Cleanup(func() { proxySupported.Store(old) })
+	old := runtimeops.Supported.Load()
+	runtimeops.Supported.Store(on)
+	t.Cleanup(func() { runtimeops.Supported.Store(old) })
 }
 
 // replaceManifest is manifest() with a replaceable workload and Service redis on port.
