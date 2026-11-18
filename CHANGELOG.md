@@ -3,7 +3,7 @@
 All notable changes are listed here, newest first ([Keep a Changelog](https://keepachangelog.com),
 [Semantic Versioning](https://semver.org)).
 
-## [Unreleased]
+## [0.1.0] - 2026-11-18
 
 First release.
 
