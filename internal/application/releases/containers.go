@@ -14,19 +14,17 @@ import (
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // Logs writes container logs to w. Several containers are prefixed "name | " per line; without
 // Follow they are shown one after the other, with Follow side by side until ctx is done.
-func (s *Reads) Logs(ctx context.Context, req LogsRequest, w io.Writer) error {
+func (s *Containers) Logs(ctx context.Context, req LogsRequest, w io.Writer) error {
 	containers, err := s.logTargets(ctx, req)
 	if err != nil {
 		return err
 	}
-	rt, err := s.Runtime(ctx)
-	if err != nil {
-		return err
-	}
+	rt := s.c.rt
 	if len(containers) == 1 {
 		return rt.Logs(ctx, containers[0].runtime, req.Tail, req.Follow, w)
 	}
@@ -56,14 +54,14 @@ func (s *Reads) Logs(ctx context.Context, req LogsRequest, w io.Writer) error {
 
 type logTarget struct{ label, runtime string }
 
-func (s *Reads) logTargets(ctx context.Context, req LogsRequest) ([]logTarget, error) {
+func (s *Containers) logTargets(ctx context.Context, req LogsRequest) ([]logTarget, error) {
 	if req.Gateway {
 		return []logTarget{{"gateway", gateway.ContainerName}}, nil
 	}
-	if _, err := s.Store.GetRelease(ctx, req.Release); err != nil {
+	if _, err := s.c.store.GetRelease(ctx, req.Release); err != nil {
 		return nil, err
 	}
-	applied, err := s.Store.ListResources(ctx, req.Release)
+	applied, err := s.c.store.ListResources(ctx, req.Release)
 	if err != nil {
 		return nil, err
 	}
@@ -140,4 +138,27 @@ func (p *prefixWriter) line(l []byte) error {
 	defer p.mu.Unlock()
 	_, err := io.WriteString(p.w, p.prefix+string(l))
 	return err
+}
+
+// Exec runs a command in a running workload of a release and returns its exit code.
+func (s *Containers) Exec(ctx context.Context, rel, workload string, opts ports.ExecOptions) (int, error) {
+	if _, err := s.c.store.GetRelease(ctx, rel); err != nil {
+		return -1, err
+	}
+	applied, err := s.c.store.ListResources(ctx, rel)
+	if err != nil {
+		return -1, err
+	}
+	var names []string
+	for _, a := range applied {
+		if a.Kind != resource.KindWorkload {
+			continue
+		}
+		if a.Name == workload {
+			rt := s.c.rt
+			return rt.Exec(ctx, a.RuntimeName, opts)
+		}
+		names = append(names, a.Name)
+	}
+	return -1, fmt.Errorf("release %s has no workload %q (workloads: %s)", rel, workload, strings.Join(names, ", "))
 }

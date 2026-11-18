@@ -139,7 +139,7 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 	ctx := context.Background()
 	a, b := releaseName("it-gw-a"), releaseName("it-gw-b")
 	s, rt := service(t, a)
-	t.Cleanup(func() { _ = hostEnv.Delete(context.Background(), rt, s.Home, b, true) })
+	t.Cleanup(func() { _ = hostEnv(sharedHome).Delete(context.Background(), rt, b, true) })
 	l, port := listener(t, gateway.ProtocolHTTP)
 	install := func(rel, host, content string) error {
 		_, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: rel, Package: webPkg,
@@ -179,7 +179,7 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 		logged.Reset()
-		if err := s.Reads.Logs(ctx, releases.LogsRequest{Gateway: true, Tail: 20}, &logged); err != nil {
+		if err := s.Containers.Logs(ctx, releases.LogsRequest{Gateway: true, Tail: 20}, &logged); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -289,7 +289,7 @@ func TestGatewayKeepsLongConnections(t *testing.T) {
 	roundTrip("before")
 	// The gateway forwards to the release proxy; the proxy switches between containers.
 	upstream := func() string {
-		eps, err := envoy.Endpoints(deployment.ProxyDir(s.Home, name))
+		eps, err := envoy.Endpoints(deployment.ProxyDir(sharedHome, name))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -20,7 +20,7 @@ import (
 )
 
 func testSettings() Settings {
-	return Settings{Listen: []string{"127.0.0.1", "10.0.0.5"}, Listeners: append(DefaultListeners(),
+	return Settings{Listen: []string{"127.0.0.1", "10.0.0.5"}, Listeners: append(defaultListeners(),
 		Listener{Name: "pg", Port: 5432, Protocol: ProtocolTCP}, Listener{Name: "unused", Port: 8080, Protocol: ProtocolHTTP})}
 }
 
@@ -45,7 +45,7 @@ func TestGatewayConfigListenersAndRedirects(t *testing.T) {
 	if len(cfg.TCP) != 2 || cfg.TCP[0].Port != 5432 || cfg.TCP[0].Cluster != "a_db_p5432" || cfg.TCP[1].Address != "10.0.0.5" {
 		t.Fatalf("tcp listeners on every listen address: %+v", cfg.TCP)
 	}
-	var tls, plain []envoy.HTTPListener
+	var tls, plain []ports.ProxyHTTPListener
 	for _, l := range cfg.HTTP {
 		switch l.Port {
 		case 443:
@@ -103,7 +103,7 @@ func proxyOf(t *testing.T, rt *fakeruntime.Runtime, home, rel string, ps []Port,
 		ports.LabelManaged: "true", ports.LabelRelease: rel, ports.LabelName: "proxy", LabelPorts: string(label)}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteExpose(home, rel, routes); err != nil {
+	if err := writeExpose(home, rel, routes); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -112,7 +112,7 @@ func TestCheckExposures(t *testing.T) {
 	h := testHost(true)
 	ctx := context.Background()
 	home := t.TempDir()
-	if err := WriteSettings(home, Settings{Listeners: append(DefaultListeners(), Listener{Name: "pg", Port: 5432, Protocol: ProtocolTCP})}); err != nil {
+	if err := WriteSettings(home, Settings{Listeners: append(defaultListeners(), Listener{Name: "pg", Port: 5432, Protocol: ProtocolTCP})}); err != nil {
 		t.Fatal(err)
 	}
 	rt := fakeruntime.New("img")
@@ -123,7 +123,11 @@ func TestCheckExposures(t *testing.T) {
 	check := func(e resource.Exposure) string {
 		svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
 			Workload: "w", Ports: []resource.ServicePort{{Name: "p", Port: 80, TargetPort: "p"}}, Expose: []resource.Exposure{e}}}
-		return errorsText(Check(ctx, rt, h, home, "mine", []resource.Resource{svc}))
+		_, err := New(rt, h, home).Check(ctx, "mine", []resource.Resource{svc}) // warnings: ports a test cannot bind
+		if err == nil {
+			return ""
+		}
+		return err.Error()
 	}
 	tls := &resource.ExposureTLS{Secret: "mycert"}
 	for _, tt := range []struct {
@@ -146,21 +150,10 @@ func TestCheckExposures(t *testing.T) {
 	}
 }
 
-// errorsText joins the errors of Check, leaving out warnings (ports a test cannot bind).
-func errorsText(errs []error) string {
-	var s []string
-	for _, e := range errs {
-		if !IsWarning(e) {
-			s = append(s, e.Error())
-		}
-	}
-	return strings.Join(s, "; ")
-}
-
 func TestSettings(t *testing.T) {
 	home := t.TempDir()
 	s, err := ReadSettings(home)
-	if err != nil || !slices.Equal(s.Listen, []string{"127.0.0.1"}) || !slices.Equal(s.Listeners, DefaultListeners()) {
+	if err != nil || !slices.Equal(s.Listen, []string{"127.0.0.1"}) || !slices.Equal(s.Listeners, defaultListeners()) {
 		t.Fatalf("defaults: %+v %v", s, err)
 	}
 	s.Listeners = append(s.Listeners, Listener{Name: "alt", Port: 80, Protocol: ProtocolHTTP})
@@ -185,21 +178,21 @@ func TestSyncFollowsExposures(t *testing.T) {
 	home := t.TempDir()
 	rt := fakeruntime.New("img", envoy.Image())
 	proxyOf(t, rt, home, "a", nil, nil)
-	if _, err := Sync(ctx, rt, h, home); err != nil {
+	if _, err := New(rt, h, home).Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.GetWorkload(ctx, ContainerName); err == nil {
 		t.Fatal("gateway started with nothing exposed")
 	}
 	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "web", Host: "b.example", Path: "/"}})
-	targets, err := Sync(ctx, rt, h, home)
+	targets, err := New(rt, h, home).Sync(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.GetWorkload(ctx, ContainerName); err != nil || len(targets) != 2 {
 		t.Fatalf("gateway: %v, targets %+v", err, targets)
 	}
-	routes, err := Routes(ctx, rt, home)
+	routes, err := New(rt, nil, home).Routes(ctx)
 	if err != nil || len(routes) != 1 || routes[0] != (Exposed{Listener: "web:80", Route: "b.example/", Release: "b", Service: "web:80", Upstream: "127.0.0.1:4001"}) {
 		t.Fatalf("routes: %+v %v", routes, err)
 	}
@@ -242,12 +235,12 @@ func TestExposeChecksUnderTheLock(t *testing.T) {
 	svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
 		Workload: "w", Ports: []resource.ServicePort{{Name: "p", Port: 80, TargetPort: "p"}},
 		Expose: []resource.Exposure{{Port: "p", Listener: "web", Host: "a.example", Path: "/"}}}}
-	_, err := Expose(ctx, rt, h, home, "mine", []resource.Resource{svc},
+	_, err := New(rt, h, home).Expose(ctx, "mine", []resource.Resource{svc},
 		[]Route{{Service: "s", Port: 80, Listener: "web", Host: "a.example", Path: "/"}})
 	if err == nil || !strings.Contains(err.Error(), "already routed to other/web") {
 		t.Fatalf("Expose: %v", err)
 	}
-	if routes, _ := ReadExpose(home, "mine"); routes != nil {
+	if routes, _ := readExpose(home, "mine"); routes != nil {
 		t.Fatalf("a refused exposure was written: %+v", routes)
 	}
 }

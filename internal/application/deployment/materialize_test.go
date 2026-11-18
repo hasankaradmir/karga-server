@@ -119,7 +119,7 @@ func TestEnvironmentFromSecret(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		applied, err := testEnv.Specs(rs)
+		applied, err := testEnv.specs(rs)
 		if err != nil {
 			t.Fatal(err)
 		}

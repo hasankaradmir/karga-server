@@ -101,6 +101,7 @@ func workloadRequest(release, name string, s *resource.WorkloadSpec, lbl map[str
 		wr.PidsLimit = *r.Pids
 	}
 	if r := s.Resources; r != nil {
+		// Decode validated both quantities; they parse.
 		if r.Memory != "" {
 			wr.MemoryBytes, _ = resource.ParseMemory(string(r.Memory))
 		}

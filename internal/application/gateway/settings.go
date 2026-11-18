@@ -53,8 +53,8 @@ func validateSettings(s Settings) error {
 	return nil
 }
 
-// DefaultListeners are the listeners a new host starts with.
-func DefaultListeners() []Listener {
+// defaultListeners are the listeners a new host starts with.
+func defaultListeners() []Listener {
 	return []Listener{{Name: "web", Port: 80, Protocol: ProtocolHTTP}, {Name: "websecure", Port: 443, Protocol: ProtocolHTTPS}}
 }
 

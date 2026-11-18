@@ -18,7 +18,8 @@ import (
 // hold). What the same release already holds is allowed (an upgrade keeps it).
 // allowedCaps are the capabilities, besides resource.DefaultCaps, the host administrator allows
 // packages to add.
-func (e *Env) Preflight(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, home, release string, supported []string, rs []resource.Resource, allowedCaps []string) error {
+// Problems that do not stop the deployment are returned as warnings.
+func (e *Env) Preflight(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, release string, supported []string, rs []resource.Resource) (warnings []string, err error) {
 	var errs []error
 	if !slices.Contains(supported, info.Name) {
 		errs = append(errs, fmt.Errorf("package does not support runtime %q (runtime.supported: %v)", info.Name, supported))
@@ -46,7 +47,7 @@ func (e *Env) Preflight(ctx context.Context, rt ports.Runtime, info ports.Runtim
 			}
 			if s.Security != nil {
 				for _, c := range s.Security.CapAdd {
-					if !capAllowed(c, allowedCaps) {
+					if !capAllowed(c, e.allowedCaps) {
 						errs = append(errs, fmt.Errorf("%s %q: capability %s is not allowed: it gives the container power over the host. "+
 							"The host administrator can allow it with karga-server --allow-capabilities %s", r.Kind, r.Metadata.Name, c, capName(c)))
 					}
@@ -55,10 +56,12 @@ func (e *Env) Preflight(ctx context.Context, rt ports.Runtime, info ports.Runtim
 		}
 	}
 
-	if e.Supported() {
-		errs = append(errs, gateway.Check(ctx, rt, e.Host, home, release, rs)...)
+	if e.host.Supported() {
+		var gwErr error
+		warnings, gwErr = gateway.New(rt, e.host, e.home).Check(ctx, release, rs)
+		errs = append(errs, gwErr)
 	}
-	return errors.Join(errs...)
+	return warnings, errors.Join(errs...)
 }
 
 // capName is a capability name without the optional CAP_ prefix, in upper case.

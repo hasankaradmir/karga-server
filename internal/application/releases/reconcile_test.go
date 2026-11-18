@@ -81,7 +81,7 @@ func TestReconcileRepairs(t *testing.T) {
 	}
 
 	// Every repair is an event.
-	ops := must[[]release.Operation](t)(e.svc.Reads.Events(ctx, "cache", 0, 10))
+	ops := must[[]release.Operation](t)(e.svc.Reads.Operations(ctx, "cache", 0, 10))
 	if len(ops) < 4 || ops[0].Type != ReconcileOperation {
 		t.Fatalf("events: %+v", ops)
 	}
@@ -124,7 +124,7 @@ func TestReconcileBacksOffAndGivesUp(t *testing.T) {
 	ctx := context.Background()
 	must[*Result](t)(e.install())
 	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
-	e.svc.Now = func() time.Time { return now }
+	e.svc.c.now = func() time.Time { return now }
 	if err := e.rt.StopWorkload(ctx, "cache-redis", 0); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestNextRepair(t *testing.T) {
 	}
 	e.rt.Fail = map[string]error{"StartWorkload:cache-redis": errors.New("busy")}
 	now := time.Now()
-	e.svc.Now = func() time.Time { return now }
+	e.svc.c.now = func() time.Time { return now }
 	must[*ReconcileResult](t)(e.svc.Lifecycle.Repair(ctx, "cache", false))
 	if at := e.svc.Lifecycle.NextRepair("cache"); !at.Equal(now.Add(repairFirstDelay)) {
 		t.Fatalf("next repair at %v, want %v", at, now.Add(repairFirstDelay))

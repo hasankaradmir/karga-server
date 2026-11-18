@@ -46,16 +46,16 @@ func TestLifecycleGolden(t *testing.T) {
 			s.Error = strings.SplitN(err.Error(), "\n", 2)[0]
 		}
 		e.rt.Calls = nil
-		if rel, err := e.svc.Store.GetRelease(ctx, "cache"); err == nil {
+		if rel, err := e.svc.c.store.GetRelease(ctx, "cache"); err == nil {
 			s.Release = fmt.Sprintf("%s, revision %d", rel.Status, rel.CurrentRevision)
 		} else {
 			s.Release = "absent"
 		}
-		revs, _ := e.svc.Store.ListRevisions(ctx, "cache")
+		revs, _ := e.svc.c.store.ListRevisions(ctx, "cache")
 		for _, r := range revs {
 			s.Revisions = append(s.Revisions, fmt.Sprintf("%d %s", r.Number, r.Status))
 		}
-		ops, _ := e.svc.Store.ListOperations(ctx, "cache", 0, 100)
+		ops, _ := e.svc.c.store.ListOperations(ctx, "cache", 0, 100)
 		for _, o := range slices.Backward(ops) {
 			s.Ops = append(s.Ops, fmt.Sprintf("%s %d %s", o.Type, o.Revision, o.Status))
 		}
@@ -91,8 +91,8 @@ func TestLifecycleGolden(t *testing.T) {
 	// the operation still running.
 	res, err = e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: CommonOptions{DryRun: true}, Name: "cache", Package: redisPkg, Values: e.opts("image.tag=7.4.3")}, nil)
 	record("dry-run upgrade", res, err)
-	if _, err := e.svc.Store.BeginOperation(ctx, release.Operation{Release: "cache", Type: "upgrade", Revision: 5,
-		PID: deadPID(t), Hostname: e.svc.Hostname, StartedAt: time.Now()}, func(release.Operation) error { return nil }); err != nil {
+	if _, err := e.svc.c.store.BeginOperation(ctx, release.Operation{Release: "cache", Type: "upgrade", Revision: 5,
+		PID: deadPID(t), Hostname: e.svc.c.hostname, StartedAt: time.Now()}, func(release.Operation) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	e.svc.Lifecycle.Resume(ctx)

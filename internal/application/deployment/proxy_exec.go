@@ -85,8 +85,8 @@ func proxyConfig(ctx context.Context, rt ports.Runtime, rel string, svcs service
 	return cfg
 }
 
-func writeProxy(ctx context.Context, rt ports.Runtime, px proxyops.ProxyControl, req ExecRequest, svcs services, override map[string]string) error {
-	return px.Write(ProxyDir(req.Home, req.Release), req.Release, 0o600, proxyConfig(ctx, rt, req.Release, svcs, override))
+func (e *Env) writeProxy(ctx context.Context, rt ports.Runtime, req ExecRequest, svcs services, override map[string]string) error {
+	return e.host.Proxies.Write(ProxyDir(e.home, req.Release), req.Release, 0o600, proxyConfig(ctx, rt, req.Release, svcs, override))
 }
 
 // exposeRoutes is what the release exposes on the gateway, written next to the proxy's
@@ -121,14 +121,14 @@ func (e *Env) proxyRequest(rel string, revision int, spec ProxySpec, dir, user s
 		Name:          ProxyName(rel),
 		Labels:        labels(rel, revision, KindProxy, ProxyResource),
 		Image:         spec.Image,
-		Command:       e.Proxies.Container().Command,
+		Command:       e.host.Proxies.Container().Command,
 		User:          user,
 		Sysctls:       map[string]string{"net.ipv4.ip_unprivileged_port_start": "0"},
 		RestartPolicy: "always",
-		Mounts:        []ports.Mount{{Type: ports.MountBind, Source: dir, Target: e.Proxies.Container().MountPath}},
-		MemoryBytes:   e.Proxies.Container().MemoryBytes,
-		MilliCPU:      e.Proxies.Container().MilliCPU,
-		PidsLimit:     e.Proxies.Container().Pids,
+		Mounts:        []ports.Mount{{Type: ports.MountBind, Source: dir, Target: e.host.Proxies.Container().MountPath}},
+		MemoryBytes:   e.host.Proxies.Container().MemoryBytes,
+		MilliCPU:      e.host.Proxies.Container().MilliCPU,
+		PidsLimit:     e.host.Proxies.Container().Pids,
 		LogMaxSize:    resource.DefaultLogMaxSize,
 		LogMaxFiles:   resource.DefaultLogMaxFiles,
 	}
@@ -148,11 +148,11 @@ func sortedNetworks(spec ProxySpec) []string {
 }
 
 // createProxy writes the configuration for what runs now and starts the release proxy.
-func (e *Env) createProxy(ctx context.Context, rt ports.Runtime, px proxyops.ProxyControl, req ExecRequest, c Change, svcs services) error {
-	if err := writeProxy(ctx, rt, px, req, svcs, nil); err != nil {
+func (e *Env) createProxy(ctx context.Context, rt ports.Runtime, req ExecRequest, c Change, svcs services) error {
+	if err := e.writeProxy(ctx, rt, req, svcs, nil); err != nil {
 		return err
 	}
-	wr, err := e.proxyRequest(req.Release, req.Revision, *c.Proxy, ProxyDir(req.Home, req.Release), req.ProxyUser)
+	wr, err := e.proxyRequest(req.Release, req.Revision, *c.Proxy, ProxyDir(e.home, req.Release), req.ProxyUser)
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func (e *Env) createProxy(ctx context.Context, rt ports.Runtime, px proxyops.Pro
 // joins a network, so each changed network is left and joined again.
 func reconnectProxy(ctx context.Context, rt ports.Runtime, rel string, c Change) error {
 	var old ProxySpec
-	_ = json.Unmarshal(c.Applied.Spec, &old)
+	_ = json.Unmarshal(c.Applied.Spec, &old) // stored by karga; unreadable reconnects every network
 	for _, n := range changedNetworks(old, *c.Proxy) {
 		if err := rt.DisconnectNetwork(ctx, c.RuntimeName, proxyops.RuntimeName(rel, n)); err != nil {
 			return err
@@ -207,7 +207,7 @@ func removeProxy(ctx context.Context, rt ports.Runtime, home, rel string, c Chan
 
 // routedTo reports whether the release proxy routes workload name to container next: then an
 // interrupted replace switched over and next is the one to keep.
-func (e *Env) routedTo(ctx context.Context, rt ports.Runtime, home, rel, name, next string) bool {
+func (e *Env) routedTo(ctx context.Context, rt ports.Runtime, rel, name, next string) bool {
 	st, err := rt.GetWorkload(ctx, next)
 	if err != nil {
 		return false
@@ -216,7 +216,7 @@ func (e *Env) routedTo(ctx context.Context, rt ports.Runtime, home, rel, name, n
 	if err != nil {
 		return false
 	}
-	eps, _ := e.Proxies.Endpoints(ProxyDir(home, rel))
+	eps, _ := e.host.Proxies.Endpoints(ProxyDir(e.home, rel))
 	for _, ep := range eps {
 		if strings.HasPrefix(ep, BackendAlias(name, rev)+":") {
 			return true

@@ -123,7 +123,7 @@ func (s services) published() map[string][]int {
 }
 
 func (e *Env) proxySpecFor(s services) ProxySpec {
-	spec := ProxySpec{Image: e.Proxies.Container().Image, Limits: e.Proxies.Container().Source, Networks: map[string][]string{}, Published: s.published()}
+	spec := ProxySpec{Image: e.host.Proxies.Container().Image, Limits: e.host.Proxies.Container().Source, Networks: map[string][]string{}, Published: s.published()}
 	for _, n := range s.names() {
 		if w := s.wl[s.svc[n].Workload]; w != nil {
 			for _, net := range w.Networks {
@@ -185,7 +185,7 @@ func (e *Env) proxyChange(releaseName string, svcs services, current map[Key]rel
 		c.Action, c.Applied = ActionUpdate, &have
 		c.Fields = fieldChanges(KindProxy, have.Spec, want.Spec)
 		var old ProxySpec
-		_ = json.Unmarshal(have.Spec, &old)
+		_ = json.Unmarshal(have.Spec, &old) // stored by karga; unreadable reads as changed: recreate
 		if old.Image != spec.Image || old.Limits != spec.Limits || !reflect.DeepEqual(old.Published, spec.Published) {
 			c.Strategy, c.StrategyReason = proxyRecreate, "image, limits or exposed ports changed: brief interruption"
 		} else {

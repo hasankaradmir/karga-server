@@ -13,7 +13,7 @@ import (
 
 func appliedFrom(t *testing.T, rs []resource.Resource) []release.AppliedResource {
 	t.Helper()
-	specs, err := testEnv.Specs(rs)
+	specs, err := testEnv.specs(rs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,9 +227,8 @@ func TestDigestSchemeUpgrade(t *testing.T) {
 	rs := append(manifest(0), secretRes("creds", map[string]string{"password": "pw"}))
 	rs[0].Spec.(*resource.WorkloadSpec).Mounts = append(rs[0].Spec.(*resource.WorkloadSpec).Mounts, resource.Mount{Secret: "creds", MountPath: "/run/creds"})
 	old := appliedFrom(t, rs) // written by a karga without keyed digests
-	testEnv.DigestKey = []byte("0123456789abcdef0123456789abcdef")
-	t.Cleanup(func() { testEnv.DigestKey = nil })
-	p, err := testEnv.Diff("cache", rs, old, "", nil)
+	keyed := NewEnv(testHost, EnvConfig{DigestKey: []byte("0123456789abcdef0123456789abcdef")})
+	p, err := keyed.Diff("cache", rs, old, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

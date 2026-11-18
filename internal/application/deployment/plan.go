@@ -100,8 +100,8 @@ const (
 // Digest is "hmac-sha256:<hex>" of data under the digest key, or "sha256:<hex>" without one (tests;
 // karga-server always sets the key from $KARGA_HOME/state.key before it plans).
 func (e *Env) Digest(data []byte) string {
-	if len(e.DigestKey) > 0 {
-		m := hmac.New(sha256.New, e.DigestKey)
+	if len(e.key) > 0 {
+		m := hmac.New(sha256.New, e.key)
 		m.Write(data)
 		return "hmac-sha256:" + hex.EncodeToString(m.Sum(nil))
 	}
@@ -137,10 +137,10 @@ func withoutStrategy(r resource.Resource) resource.Resource {
 	return r
 }
 
-// Specs returns the canonical redacted JSON and digest of every resource. A workload's digest also
+// specs returns the canonical redacted JSON and digest of every resource. A workload's digest also
 // covers the Config and Secret resources it mounts or reads variables from, and a Service's the
 // Secrets it serves TLS with, so changing their content applies them again.
-func (e *Env) Specs(rs []resource.Resource) (map[Key]release.AppliedResource, error) {
+func (e *Env) specs(rs []resource.Resource) (map[Key]release.AppliedResource, error) {
 	out := map[Key]release.AppliedResource{}
 	behind := servicesOf(rs).wl
 	pass := func(r resource.Resource) int {
@@ -203,7 +203,7 @@ func (e *Env) Diff(releaseName string, desired []resource.Resource, applied []re
 	if strategy != "" && strategy != resource.StrategyRecreate && strategy != resource.StrategyReplace {
 		return Plan{}, fmt.Errorf("unknown strategy %q (want recreate or replace)", strategy)
 	}
-	specs, err := e.Specs(desired)
+	specs, err := e.specs(desired)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -221,7 +221,7 @@ func (e *Env) Diff(releaseName string, desired []resource.Resource, applied []re
 
 	var plan Plan
 	var errs []string
-	if !e.Supported() && len(svcs.svc) > 0 {
+	if !e.host.Supported() && len(svcs.svc) > 0 {
 		errs = append(errs, fmt.Sprintf("services %s need karga's gateway and release proxy (Linux with a local, rootful Docker)", strings.Join(svcs.names(), ", ")))
 	}
 	for _, r := range ordered {

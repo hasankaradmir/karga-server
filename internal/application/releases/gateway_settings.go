@@ -14,34 +14,22 @@ import (
 
 // Routes lists what the host gateway serves, across releases.
 func (s *Gateway) Routes(ctx context.Context) ([]gateway.Exposed, error) {
-	rt, err := s.Runtime(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return gateway.Routes(ctx, rt, s.Home)
+	return s.c.gw.Routes(ctx)
 }
 
 // Settings returns the host's gateway settings and, per listener, the services using it.
 func (s *Gateway) Settings(ctx context.Context) (gateway.Settings, map[string][]string, error) {
-	settings, err := gateway.ReadSettings(s.Home)
+	settings, err := gateway.ReadSettings(s.c.home)
 	if err != nil {
 		return settings, nil, err
 	}
-	rt, err := s.Runtime(ctx)
-	if err != nil {
-		return settings, nil, err
-	}
-	users, err := gateway.Users(ctx, rt, s.Home)
+	users, err := s.c.gw.Users(ctx)
 	return settings, users, err
 }
 
 // Health reports the gateway container and whether its Envoy is ready.
 func (s *Gateway) Health(ctx context.Context) (gateway.State, error) {
-	rt, err := s.Runtime(ctx)
-	if err != nil {
-		return gateway.State{}, err
-	}
-	return gateway.Health(ctx, rt, s.Deploy.Host, s.Home)
+	return s.c.gw.Health(ctx)
 }
 
 // SetAccessLog stores the access log setting and applies it to a running gateway.
@@ -86,28 +74,25 @@ func (s *Gateway) RemoveListener(ctx context.Context, name string) error {
 // updateGateway changes the gateway settings under the gateway lock, stores them and applies them
 // to a running gateway, waiting until it routes again.
 func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settings, map[string][]string) error) error {
-	rt, err := s.runtime(ctx)
-	if err != nil {
-		return err
-	}
-	err = func() error {
-		unlock, err := gateway.Lock(s.Home)
+	rt := s.c.rt
+	err := func() error {
+		unlock, err := gateway.Lock(s.c.home)
 		if err != nil {
 			return err
 		}
 		defer unlock()
-		settings, err := gateway.ReadSettings(s.Home)
+		settings, err := gateway.ReadSettings(s.c.home)
 		if err != nil {
 			return err
 		}
-		users, err := gateway.Users(ctx, rt, s.Home)
+		users, err := s.c.gw.Users(ctx)
 		if err != nil {
 			return err
 		}
 		if err := change(&settings, users); err != nil {
 			return err
 		}
-		return gateway.WriteSettings(s.Home, settings)
+		return gateway.WriteSettings(s.c.home, settings)
 	}()
 	if err != nil {
 		return err
@@ -115,7 +100,7 @@ func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settin
 	if _, err := rt.GetWorkload(ctx, gateway.ContainerName); errors.Is(err, ports.ErrNotFound) {
 		return nil // applied when a release next exposes something
 	}
-	targets, err := gateway.Sync(ctx, rt, s.Deploy.Host, s.Home)
+	targets, err := s.c.gw.Sync(ctx)
 	if err != nil {
 		return err
 	}
@@ -123,5 +108,5 @@ func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settin
 	if len(want) == 0 {
 		return nil
 	}
-	return s.Deploy.Proxies.WaitReady(ctx, gateway.Dir(s.Home), want, proxyops.ProxyReadyTimeout)
+	return s.c.env.Host().Proxies.WaitReady(ctx, gateway.Dir(s.c.home), want, proxyops.ProxyReadyTimeout)
 }

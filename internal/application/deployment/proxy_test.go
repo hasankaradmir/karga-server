@@ -14,30 +14,38 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
-// testEnv is where the tests deploy: fake proxies, the host's network, a short poll interval.
-var testEnv = &Env{Host: &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, PollInterval: time.Millisecond}
+// testHost is where the tests deploy: fake proxies and the host's network.
+var testHost = &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}
+
+// testEnv deploys on testHost with a short poll interval, for tests that need no state home.
+var testEnv = envAt("")
+
+// envAt deploys on testHost with home as the state home, allowing caps.
+func envAt(home string, caps ...string) *Env {
+	return NewEnv(testHost, EnvConfig{Home: home, AllowedCaps: caps, PollInterval: time.Millisecond})
+}
 
 // withProxySupport pretends to run on Linux (or not) for the duration of a test.
 func withProxySupport(t *testing.T, on bool) {
 	t.Helper()
-	old := testEnv.Supported()
+	old := testHost.Supported()
 	set := func(on bool) {
 		var caps []string
 		if on {
 			caps = []string{ports.CapHostGateway}
 		}
-		testEnv.UseRuntime(ports.RuntimeInfo{Capabilities: caps})
+		testHost.UseRuntime(ports.RuntimeInfo{Capabilities: caps})
 	}
 	set(on)
 	t.Cleanup(func() { set(old) })
 }
 
 // withProxies controls the proxies with px for the duration of a test.
-func withProxies(t *testing.T, px proxyops.ProxyControl) {
+func withProxies(t *testing.T, px ports.ProxyControl) {
 	t.Helper()
-	old := testEnv.Proxies
-	testEnv.Proxies = px
-	t.Cleanup(func() { testEnv.Proxies = old })
+	old := testHost.Proxies
+	testHost.Proxies = px
+	t.Cleanup(func() { testHost.Proxies = old })
 }
 
 // replaceManifest is manifest() with a replaceable workload and Service redis on port.

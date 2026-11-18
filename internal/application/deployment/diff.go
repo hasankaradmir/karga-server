@@ -14,6 +14,7 @@ import (
 // fieldChanges lists leaf differences between two resource JSON documents. Lists compare as a whole.
 func fieldChanges(kind string, oldJS, newJS json.RawMessage) []FieldChange {
 	var o, n any
+	// Specs karga encoded itself; one that does not decode shows as every field changed.
 	_ = json.Unmarshal(oldJS, &o)
 	_ = json.Unmarshal(newJS, &n)
 	flatOld, flatNew := map[string]string{}, map[string]string{}

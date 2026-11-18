@@ -28,13 +28,22 @@ func TestEventTriggersRepair(t *testing.T) {
 	defer func() { _ = store.Close() }()
 	rt := fakeruntime.New().WithGateway()
 	rt.EventsC = make(chan ports.RuntimeEvent)
-	svc := releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, home, nil, nil)
+	q := NewQueue(50 * time.Millisecond)
+	host := &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}
+	info, err := rt.Info(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.UseRuntime(info)
+	svc, err := releases.New(releases.Deps{Store: store, Runtime: rt, Host: host, Home: home, Notify: q.Notify})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: releases.CommonOptions{Timeout: time.Second},
 		Name: "cache", Package: "../../../tests/testdata/redis", Values: releases.Values{Sets: packages.Sets([]string{"service.enabled=false"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	loop := New(svc, 0, nil) // events only
-	loop.Debounce = 50 * time.Millisecond
+	loop := New(q, svc.Reads, svc.Lifecycle, rt, Options{}) // events only
 	stopped := make(chan struct{})
 	go func() { loop.Run(ctx); close(stopped) }()
 	// The repair records its operation after the container is back: let it finish before the

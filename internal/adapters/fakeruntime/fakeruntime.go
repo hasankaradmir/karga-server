@@ -96,7 +96,7 @@ func (r *Runtime) WithGateway() *Runtime {
 type Proxies struct{}
 
 // Write writes an Envoy's configuration.
-func (Proxies) Write(dir, node string, mode int, cfg envoy.Config) error {
+func (Proxies) Write(dir, node string, mode int, cfg ports.ProxyConfig) error {
 	return envoy.Write(dir, node, mode, cfg)
 }
 

@@ -2,15 +2,15 @@
 package releases
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
+	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -18,7 +18,7 @@ import (
 var (
 	ErrLocked      = errors.New("another operation is running on this release")
 	ErrInterrupted = errors.New("a previous operation on this release was interrupted")
-	ErrExists      = errors.New("release already exists")
+	ErrExists      = release.ErrExists
 )
 
 // DefaultHistoryMax is how many revisions are kept per release unless a request says otherwise (D13).
@@ -40,70 +40,98 @@ func (e invalid) Unwrap() error { return e.error }
 
 func (invalid) Is(target error) bool { return target == ports.ErrInvalid }
 
-// Service is the release service: one Core shared by its four faces.
+// Service is the release service. Its faces share one core: the state, the runtime, the locks and
+// the deploy steps; nothing outside the package reaches it.
 type Service struct {
-	*Core
 	// Lifecycle installs, upgrades, rolls back, uninstalls, resumes and repairs releases.
 	Lifecycle *Lifecycle
-	// Reads answers questions about releases and reaches into their containers (logs, exec).
+	// Reads answers questions about releases; it changes nothing.
 	Reads *Reads
+	// Containers reach into a release's containers: logs and exec.
+	Containers *Containers
 	// Volumes backs up and restores a release's volumes.
 	Volumes *Volumes
 	// Gateway reads and changes the host gateway.
 	Gateway *Gateway
+
+	c *core
 }
 
 // Lifecycle changes releases.
-type Lifecycle struct{ *Core }
+type Lifecycle struct{ c *core }
 
 // Reads reads releases; it changes nothing.
-type Reads struct{ *Core }
+type Reads struct{ c *core }
+
+// Containers reach into a release's containers.
+type Containers struct{ c *core }
 
 // Volumes copies volume data in and out.
-type Volumes struct{ *Core }
+type Volumes struct{ c *core }
 
 // Gateway holds the host gateway's settings and health.
-type Gateway struct{ *Core }
+type Gateway struct{ c *core }
 
-// Core is what the faces share: the state, the runtime, the locks and the deploy steps. Runtime is
-// opened lazily so read-only commands never need Docker.
-type Core struct {
+// core is what the faces share. It is set up by New and does not change after.
+type core struct {
+	store ports.StateStore
+	// env plans and applies deployments on this host; gw is the host gateway.
+	env      *deployment.Env
+	gw       *gateway.Gateway
+	rt       ports.Runtime
+	home     string
+	redact   func(string) // registers secret values with the log redactor
+	log      *slog.Logger
+	now      func() time.Time
+	pid      int
+	hostname string
+	// notify is told the name of a release an install, upgrade or rollback changed.
+	notify func(name string)
+
+	repairs repairs
+	locks   opLocks
+}
+
+// Deps are what the release service is made of.
+type Deps struct {
+	Store ports.StateStore
+	// Runtime is the container runtime. Whether it can run karga's proxies is Host's to know
+	// (Host.UseRuntime, once, where the service is made).
+	Runtime ports.Runtime
+	// Host is where deployments run: its proxies and network.
+	Host *proxyops.Host
+	// Home is $KARGA_HOME; its state.key is created on first use.
+	Home string
+	// Redact registers secret values with the log redactor (nil: none).
+	Redact func(string)
+	Log    *slog.Logger
 	// AllowedCaps are the Linux capabilities, besides resource.DefaultCaps, the host administrator
 	// lets packages add (karga-server --allow-capabilities).
 	AllowedCaps []string
-	Store       ports.StateStore
-	// Deploy plans and applies deployments on this host.
-	Deploy  *deployment.Env
-	Runtime func(context.Context) (ports.Runtime, error)
-	Home    string
-	// Redact registers secret values with the log redactor.
-	Redact   func(string)
-	Log      *slog.Logger
-	Now      func() time.Time
-	PID      int
-	Hostname string
-
-	// AfterChange, if set, is told the name of a release an install, upgrade or rollback changed.
-	AfterChange func(name string)
-
-	keyMu   sync.Mutex
-	key     []byte // nil until loaded: a failed load is tried again next time
-	repairs repairs
-	// busy serializes the operations of a release inside this process: a user's command waits for
-	// a reconciliation in progress instead of failing; a reconciliation skips a busy release.
-	busyMu sync.Mutex
-	busy   map[string]*releaseLock // releases someone holds or waits for
+	// Notify, if set, is told the name of a release an install, upgrade or rollback changed (the
+	// reconciler's queue).
+	Notify func(name string)
 }
 
-// New returns a Service with process defaults filled in.
-func New(store ports.StateStore, rt func(context.Context) (ports.Runtime, error), host *proxyops.Host, home string, redact func(string), log *slog.Logger) *Service {
+// New returns the release service of d, with process defaults filled in. It reads (or creates) the
+// state key, so every digest is keyed from the start.
+func New(d Deps) (*Service, error) {
+	key, err := loadKey(d.Home)
+	if err != nil {
+		return nil, err
+	}
 	hostname, _ := os.Hostname()
-	if redact == nil {
-		redact = func(string) {}
+	if d.Redact == nil {
+		d.Redact = func(string) {}
 	}
-	if log == nil {
-		log = slog.New(slog.DiscardHandler)
+	if d.Log == nil {
+		d.Log = slog.New(slog.DiscardHandler)
 	}
-	c := &Core{Store: store, Deploy: &deployment.Env{Host: host}, Runtime: rt, Home: home, Redact: redact, Log: log, Now: time.Now, PID: os.Getpid(), Hostname: hostname}
-	return &Service{Core: c, Lifecycle: &Lifecycle{c}, Reads: &Reads{c}, Volumes: &Volumes{c}, Gateway: &Gateway{c}}
+	env := deployment.NewEnv(d.Host, deployment.EnvConfig{Home: d.Home, DigestKey: key, Redact: d.Redact, AllowedCaps: d.AllowedCaps})
+	if d.Notify == nil {
+		d.Notify = func(string) {}
+	}
+	c := &core{store: d.Store, env: env, gw: gateway.New(d.Runtime, d.Host, d.Home), rt: d.Runtime, home: d.Home, redact: d.Redact, log: d.Log, now: time.Now,
+		pid: os.Getpid(), hostname: hostname, notify: d.Notify}
+	return &Service{Lifecycle: &Lifecycle{c}, Reads: &Reads{c}, Containers: &Containers{c}, Volumes: &Volumes{c}, Gateway: &Gateway{c}, c: c}, nil
 }

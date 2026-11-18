@@ -30,7 +30,7 @@ func kargaProbes(s *resource.WorkloadSpec) bool {
 
 // probeReachable says why karga could not reach the health check port of s, or "".
 func (e *Env) probeReachable(s *resource.WorkloadSpec) string {
-	if !kargaProbes(s) || e.Supported() {
+	if !kargaProbes(s) || e.host.Supported() {
 		return ""
 	}
 	return fmt.Sprintf("healthCheck type %s needs Linux with a local, rootful Docker (karga checks the container's address); use type exec", s.HealthCheck.Type)
@@ -39,7 +39,7 @@ func (e *Env) probeReachable(s *resource.WorkloadSpec) string {
 // probeAddr is where karga reaches the health check port of a running container.
 func (e *Env) probeAddr(st ports.WorkloadStatus, s *resource.WorkloadSpec) (string, error) {
 	port := s.HealthCheck.Port
-	if !e.Supported() {
+	if !e.host.Supported() {
 		return "", errors.New(e.probeReachable(s))
 	}
 	for _, n := range slices.Sorted(maps.Keys(st.IPs)) {
@@ -57,7 +57,7 @@ func durationOr(s string, def time.Duration) time.Duration {
 
 // probe runs one tcp or http check against addr, from the host.
 func (e *Env) probe(ctx context.Context, hc *resource.HealthCheck, addr string) error {
-	return e.Net.Probe(ctx, ports.Probe{Type: hc.Type, Addr: addr, Path: hc.Path, Timeout: durationOr(hc.Timeout, 2*time.Second)})
+	return e.host.Net.Probe(ctx, ports.Probe{Type: hc.Type, Addr: addr, Path: hc.Path, Timeout: durationOr(hc.Timeout, 2*time.Second)})
 }
 
 // ProbeHealth checks a running workload once: "healthy", "unhealthy" or "unknown" (unreachable).
@@ -180,12 +180,18 @@ func (e *Env) checkProbe(ctx context.Context, st ports.WorkloadStatus, s *resour
 		return false, nil // failures in the start period do not count
 	}
 	ps.failures++
-	retries := hc.Retries
-	if retries == 0 {
-		retries = 3
-	}
+	retries := ProbeRetries(hc)
 	if ps.failures >= retries {
 		return false, fmt.Errorf("workload %s is unhealthy: %s check on %s failed %d times: %w", name, hc.Type, addr, ps.failures, ps.lastErr)
 	}
 	return false, nil
+}
+
+// ProbeRetries is how many failed probes in a row make a workload unhealthy: the health check's
+// retries, 3 by default.
+func ProbeRetries(hc *resource.HealthCheck) int {
+	if hc.Retries > 0 {
+		return hc.Retries
+	}
+	return 3
 }

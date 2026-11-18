@@ -67,11 +67,11 @@ func classify(err error) error {
 
 // Server is a running karga-server.
 type Server struct {
-	cfg     Config
-	Service *releases.Service
-	Loop    *reconciler.Loop
-	store   *filestore.Store
-	unlock  func()
+	cfg    Config
+	svc    *releases.Service
+	loop   *reconciler.Loop
+	store  *filestore.Store
+	unlock func()
 }
 
 // New opens the state in cfg.Home (taking it for this server alone) and prepares the service on rt.
@@ -104,8 +104,19 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 	}
 	// The composition root: Envoy runs the proxies, the host's network runs probes and port tests.
 	host := &proxyops.Host{Proxies: envoy.Proxies{}, Net: hostnet.Net{}}
-	svc := releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, host, cfg.Home, redact, cfg.Log)
-	svc.AllowedCaps = cfg.AllowedCaps
+	// The queue comes first: the service tells it what changed, the loop takes from it.
+	q := reconciler.NewQueue(0)
+	notify := q.Notify
+	if cfg.ReconcileInterval < 0 {
+		notify = nil
+	}
+	svc, err := releases.New(releases.Deps{Store: store, Runtime: rt,
+		Host: host, Home: cfg.Home, Redact: redact, Log: cfg.Log, AllowedCaps: cfg.AllowedCaps, Notify: notify})
+	if err != nil {
+		_ = store.Close()
+		unlock()
+		return nil, err
+	}
 	info, err := rt.Info(ctx)
 	if err != nil {
 		_ = store.Close()
@@ -113,10 +124,9 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 		return nil, err
 	}
 	host.UseRuntime(info)
-	s := &Server{cfg: cfg, Service: svc, store: store, unlock: unlock}
+	s := &Server{cfg: cfg, svc: svc, store: store, unlock: unlock}
 	if cfg.ReconcileInterval >= 0 {
-		s.Loop = reconciler.New(svc, cfg.ReconcileInterval, cfg.Log)
-		svc.AfterChange = s.Loop.Notify
+		s.loop = reconciler.New(q, svc.Reads, svc.Lifecycle, rt, reconciler.Options{Interval: cfg.ReconcileInterval, Log: cfg.Log})
 	}
 	return s, nil
 }
@@ -159,21 +169,21 @@ func (s *Server) Listen() (net.Listener, error) {
 
 // Serve answers on l until ctx is done, then waits for running operations (at most grace).
 func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration) error {
-	hs := &http.Server{Handler: api.NewServer(Backend{S: s.Service}, version.Current().Version, api.Options{TempDir: filepath.Join(s.cfg.Home, "tmp"), Classify: classify}), ReadHeaderTimeout: 10 * time.Second,
+	hs := &http.Server{Handler: api.NewServer(NewBackend(s.svc), version.Current().Version, api.Options{TempDir: filepath.Join(s.cfg.Home, "tmp"), Classify: classify}), ReadHeaderTimeout: 10 * time.Second,
 		// Operations record the user of the client process.
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context { return releases.WithActor(ctx, peerUser(c)) }}
 	// Operations a stopped karga-server left running are finished before requests are served, so a
 	// command never meets one half done; clients wait for it. Then the reconciler starts.
 	// Secret values are masked in the log from the start, not only once a release is applied again.
-	s.Service.RegisterSecrets(ctx)
-	s.Service.Lifecycle.Resume(context.WithoutCancel(ctx))
+	s.svc.RegisterSecrets(ctx)
+	s.svc.Lifecycle.Resume(context.WithoutCancel(ctx))
 	errc := make(chan error, 1)
 	go func() { errc <- hs.Serve(l) }()
 	loopDone := make(chan struct{})
 	go func() {
 		defer close(loopDone)
-		if s.Loop != nil && ctx.Err() == nil {
-			s.Loop.Run(ctx)
+		if s.loop != nil && ctx.Err() == nil {
+			s.loop.Run(ctx)
 		}
 	}()
 	s.cfg.Log.Info("karga-server listening", "socket", s.cfg.Socket, "home", s.cfg.Home, "version", version.Current().Version)

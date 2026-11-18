@@ -21,10 +21,10 @@ import (
 )
 
 // encodeManifest stores resources as a JSON array with secret values replaced by digests.
-func (s *Core) encodeManifest(rs []resource.Resource) (json.RawMessage, string, error) {
+func (s *core) encodeManifest(rs []resource.Resource) (json.RawMessage, string, error) {
 	redacted := make([]resource.Resource, len(rs))
 	for i, r := range rs {
-		redacted[i] = s.Deploy.Redacted(r)
+		redacted[i] = s.env.Redacted(r)
 	}
 	d, js, err := s.digestJSON(redacted)
 	return js, d, err
@@ -48,8 +48,8 @@ func decodeManifest(js json.RawMessage) ([]resource.Resource, error) {
 }
 
 // restoreSecrets fills secret values from the files materialized for that revision.
-func (s *Core) restoreSecrets(rel string, revision int, rs []resource.Resource) error {
-	dir := deployment.RevisionDir(s.Home, rel, revision)
+func (s *core) restoreSecrets(rel string, revision int, rs []resource.Resource) error {
+	dir := deployment.RevisionDir(s.home, rel, revision)
 	for i, r := range rs {
 		sec, ok := r.Spec.(*resource.SecretSpec)
 		if !ok {
@@ -59,7 +59,7 @@ func (s *Core) restoreSecrets(rel string, revision int, rs []resource.Resource) 
 		for k := range sec.Values {
 			b, err := os.ReadFile(filepath.Join(dir, "secrets", r.Metadata.Name, k))
 			if err != nil {
-				return fmt.Errorf("revision %d: secret %q is no longer available (%v); it may have been pruned", revision, r.Metadata.Name, err)
+				return fmt.Errorf("revision %d: secret %q is no longer available (it may have been pruned): %w", revision, r.Metadata.Name, err)
 			}
 			values[k] = string(b)
 		}
@@ -96,8 +96,8 @@ type deployInput struct {
 	resumed bool
 }
 
-func (s *Core) nextRevision(ctx context.Context, name string) (int, error) {
-	revs, err := s.Store.ListRevisions(ctx, name)
+func (s *core) nextRevision(ctx context.Context, name string) (int, error) {
+	revs, err := s.store.ListRevisions(ctx, name)
 	if err != nil {
 		return 0, err
 	}
@@ -110,45 +110,21 @@ func (s *Core) nextRevision(ctx context.Context, name string) (int, error) {
 var inProgress = []release.Status{release.StatusPending, release.StatusDeploying, release.StatusUpgrading, release.StatusUninstalling}
 
 // deploy plans the desired revision against the applied state and executes it.
-// runtime connects to the container runtime and tells the deployment package whether it can run
-// karga's proxies there.
-func (s *Core) runtime(ctx context.Context) (ports.Runtime, error) {
-	rt, err := s.Runtime(ctx)
+func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
+	applied, err := s.store.ListResources(ctx, in.Name)
 	if err != nil {
 		return nil, err
 	}
-	info, err := rt.Info(ctx)
-	if err != nil {
-		return nil, err
-	}
-	s.Deploy.UseRuntime(info)
-	return rt, nil
-}
-
-func (s *Core) deploy(ctx context.Context, in deployInput) (*Result, error) {
-	if err := s.loadKey(); err != nil {
-		return nil, err
-	}
-	applied, err := s.Store.ListResources(ctx, in.Name)
-	if err != nil {
-		return nil, err
-	}
-	// A dry run plans without a runtime if there is none (as if proxies were unavailable).
-	rt, rtErr := s.runtime(ctx)
-	if rtErr != nil && !in.DryRun {
-		return nil, rtErr
-	}
+	rt := s.rt
 	recorded := applied
-	var anon deployment.Anonymous
-	if rtErr == nil {
-		if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
-			return nil, err
-		}
-		if anon, err = anonymousVolumes(ctx, rt, in.Name, in.Resources); err != nil {
-			return nil, err
-		}
+	if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
+		return nil, err
 	}
-	plan, err := s.Deploy.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
+	anon, err := anonymousVolumes(ctx, rt, in.Name, in.Resources)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := s.env.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
 	if err != nil {
 		return nil, err
 	}
@@ -203,15 +179,15 @@ func (s *Core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	}
 	res.Status = string(release.StatusDeployed)
 	s.repairs.reset(in.Name)
-	if s.AfterChange != nil {
-		s.AfterChange(in.Name)
+	if s.notify != nil {
+		s.notify(in.Name)
 	}
 	// Appended: the warnings of the run (the gateway's) are kept.
 	if anon, err := anonymousVolumes(ctx, rt, in.Name, in.Resources); err == nil {
 		res.Warnings = append(res.Warnings, anonymousWarnings(anon)...)
 	}
 	if perr := s.prune(context.WithoutCancel(ctx), in.Name, historyMax(in.HistoryMax)); perr != nil {
-		s.Log.Warn("prune history", "release", in.Name, "error", perr)
+		s.log.Warn("prune history", "release", in.Name, "error", perr)
 	}
 	return res, nil
 }
@@ -219,13 +195,13 @@ func (s *Core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 // replan repairs leftovers of an interrupted replace and, if anything changed, plans again.
 // discard removes a release that never had a deployed revision and owns nothing in the runtime (an
 // install that failed before creating anything), so it does not linger as a failed release.
-func (s *Core) discard(ctx context.Context, name string) bool {
-	applied, err := s.Store.ListResources(ctx, name)
+func (s *core) discard(ctx context.Context, name string) bool {
+	applied, err := s.store.ListResources(ctx, name)
 	if err != nil || len(applied) > 0 {
 		return false
 	}
-	if err := s.Store.DeleteRelease(ctx, name); err != nil {
-		s.Log.Warn("remove failed release", "release", name, "error", err)
+	if err := s.store.DeleteRelease(ctx, name); err != nil {
+		s.log.Warn("remove failed release", "release", name, "error", err)
 		return false
 	}
 	return true
@@ -295,18 +271,18 @@ func existing(ctx context.Context, rt ports.Runtime, name string, applied []rele
 	return out, nil
 }
 
-func (s *Core) replan(ctx context.Context, rt ports.Runtime, in deployInput, applied []release.AppliedResource, plan deployment.Plan) (deployment.Plan, error) {
-	repaired, err := s.Deploy.RepairReplace(ctx, rt, s.Home, in.Name, applied)
+func (s *core) replan(ctx context.Context, rt ports.Runtime, in deployInput, applied []release.AppliedResource, plan deployment.Plan) (deployment.Plan, error) {
+	repaired, err := s.env.RepairReplace(ctx, rt, in.Name, applied)
 	if err != nil || len(repaired) == 0 {
 		return plan, err
 	}
 	for _, a := range repaired {
-		s.Log.Warn("repaired interrupted replace", "release", in.Name, "resource", a.Kind+"/"+a.Name)
-		if err := s.Store.SaveResource(ctx, in.Name, a); err != nil {
+		s.log.Warn("repaired interrupted replace", "release", in.Name, "resource", a.Kind+"/"+a.Name)
+		if err := s.store.SaveResource(ctx, in.Name, a); err != nil {
 			return plan, err
 		}
 	}
-	if applied, err = s.Store.ListResources(ctx, in.Name); err != nil {
+	if applied, err = s.store.ListResources(ctx, in.Name); err != nil {
 		return plan, err
 	}
 	if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
@@ -316,11 +292,11 @@ func (s *Core) replan(ctx context.Context, rt ports.Runtime, in deployInput, app
 	if err != nil {
 		return plan, err
 	}
-	return s.Deploy.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
+	return s.env.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
 }
 
-func (s *Core) run(ctx context.Context, rt ports.Runtime, op *release.Operation, in deployInput, plan deployment.Plan) error {
-	now := s.Now()
+func (s *core) run(ctx context.Context, rt ports.Runtime, op *release.Operation, in deployInput, plan deployment.Plan) error {
+	now := s.now()
 	rel := release.Release{Name: in.Name, PackageName: in.Package.Name, PackageVersion: in.Package.Version,
 		Status: release.StatusPending, CreatedAt: now, UpdatedAt: now}
 	target := release.StatusDeploying
@@ -330,7 +306,7 @@ func (s *Core) run(ctx context.Context, rt ports.Runtime, op *release.Operation,
 			// Left behind by an operation that begin just aborted.
 			rel.Status = release.StatusFailed
 		}
-		if in.Type != "install" {
+		if in.Type != release.OpInstall {
 			target = release.StatusUpgrading
 		}
 	}
@@ -349,7 +325,7 @@ func (s *Core) run(ctx context.Context, rt ports.Runtime, op *release.Operation,
 	}
 	// The release's new status and its new revision are recorded together: a release is never left
 	// deploying a revision that does not exist.
-	err = s.Store.InTx(ctx, func(st ports.StateStore) error {
+	err = s.store.InTx(ctx, func(st ports.StateStore) error {
 		if err := st.SaveRelease(ctx, rel); err != nil {
 			return err
 		}
@@ -367,16 +343,16 @@ func (s *Core) run(ctx context.Context, rt ports.Runtime, op *release.Operation,
 		return err
 	}
 
-	execErr := s.Deploy.Execute(ctx, rt, deployment.ExecRequest{
-		Home: s.Home, Release: in.Name, Revision: in.Revision, Supported: in.Package.Runtime.Supported,
-		Resources: in.Resources, Plan: plan, Redact: s.Redact, Timeout: in.Timeout, AllowedCaps: s.AllowedCaps,
+	execErr := s.env.Execute(ctx, rt, deployment.ExecRequest{
+		Release: in.Name, Revision: in.Revision, Supported: in.Package.Runtime.Supported,
+		Resources: in.Resources, Plan: plan, Timeout: in.Timeout,
 		OnStep:     func(c deployment.Change, st release.Step) error { return s.record(ctx, op, in, c, st) },
 		OnProgress: in.Progress,
 		OnWarning:  in.warn,
 	})
 
 	bg := context.WithoutCancel(ctx)
-	rel.UpdatedAt = s.Now()
+	rel.UpdatedAt = s.now()
 	if execErr != nil {
 		rel.Status = release.StatusFailed
 		// A failed replace that touched nothing leaves the release as it was (D18).
@@ -393,8 +369,8 @@ func (s *Core) run(ctx context.Context, rt ports.Runtime, op *release.Operation,
 }
 
 // settle records the outcome of a revision and the release it leaves, together.
-func (s *Core) settle(ctx context.Context, rel release.Release, revision int, status release.RevisionStatus, desc string) error {
-	return s.Store.InTx(ctx, func(st ports.StateStore) error {
+func (s *core) settle(ctx context.Context, rel release.Release, revision int, status release.RevisionStatus, desc string) error {
+	return s.store.InTx(ctx, func(st ports.StateStore) error {
 		if err := st.UpdateRevisionStatus(ctx, rel.Name, revision, status, desc); err != nil {
 			return err
 		}
@@ -407,11 +383,11 @@ func titled(t string) string { return strings.ToUpper(t[:1]) + t[1:] }
 // record persists one executor step: progress on the operation and the applied state of the resource.
 // A failed workload is stored with an empty digest so the next plan recreates it; a kept-previous
 // step (failed replace) leaves the applied state alone.
-func (s *Core) record(ctx context.Context, op *release.Operation, in deployInput, c deployment.Change, st release.Step) error {
+func (s *core) record(ctx context.Context, op *release.Operation, in deployInput, c deployment.Change, st release.Step) error {
 	ctx = context.WithoutCancel(ctx)
 	op.Steps = append(op.Steps, st)
-	s.Log.Debug("step", "operation_id", op.ID, "release", in.Name, "resource", c.Kind+"/"+c.Name, "action", st.Action, "status", st.Status)
-	if err := s.Store.SaveOperationSteps(ctx, op.ID, op.Steps); err != nil {
+	s.log.Debug("step", "operation_id", op.ID, "release", in.Name, "resource", c.Kind+"/"+c.Name, "action", st.Action, "status", st.Status)
+	if err := s.store.SaveOperationSteps(ctx, op.ID, op.Steps); err != nil {
 		return err
 	}
 	runtimeName := c.RuntimeName
@@ -424,46 +400,41 @@ func (s *Core) record(ctx context.Context, op *release.Operation, in deployInput
 	case st.Status == deployment.StepKept:
 		// The change failed before touching anything; the previous state is still what runs.
 	case st.Status == deployment.StepDone && c.Action == deployment.ActionDelete:
-		return s.Store.DeleteResource(ctx, in.Name, c.Kind, c.Name)
+		return s.store.DeleteResource(ctx, in.Name, c.Kind, c.Name)
 	case st.Status == deployment.StepDone:
-		return s.Store.SaveResource(ctx, in.Name, applied)
+		return s.store.SaveResource(ctx, in.Name, applied)
 	case (c.Kind == resource.KindWorkload || c.Kind == deployment.KindProxy) && c.Spec != nil:
 		applied.Digest = ""
-		return s.Store.SaveResource(ctx, in.Name, applied)
+		return s.store.SaveResource(ctx, in.Name, applied)
 	}
 	return nil
 }
 
 // prune keeps the newest historyMax revisions. The current revision and any revision whose files are still
 // mounted by an applied resource are never removed (D13).
-func (s *Core) prune(ctx context.Context, name string, historyMax int) error {
+func (s *core) prune(ctx context.Context, name string, historyMax int) error {
 	if historyMax <= 0 {
 		return nil
 	}
-	rel, err := s.Store.GetRelease(ctx, name)
+	rel, err := s.store.GetRelease(ctx, name)
 	if err != nil {
 		return err
 	}
-	revs, err := s.Store.ListRevisions(ctx, name)
+	revs, err := s.store.ListRevisions(ctx, name)
 	if err != nil {
 		return err
 	}
-	applied, err := s.Store.ListResources(ctx, name)
+	applied, err := s.store.ListResources(ctx, name)
 	if err != nil {
 		return err
 	}
-	keep := map[int]bool{rel.CurrentRevision: true}
-	for _, a := range applied {
-		keep[a.Revision] = true
+	inUse := make([]int, len(applied))
+	for i, a := range applied {
+		inUse[i] = a.Revision
 	}
 	var errs []error
-	// revs is ascending: everything before the newest max is a candidate.
-	for _, r := range revs[:max(0, len(revs)-historyMax)] {
-		if keep[r.Number] {
-			continue
-		}
-		errs = append(errs, s.Store.DeleteRevision(ctx, name, r.Number),
-			os.RemoveAll(deployment.RevisionDir(s.Home, name, r.Number)))
+	for _, n := range release.Prunable(revs, rel.CurrentRevision, inUse, historyMax) {
+		errs = append(errs, s.store.DeleteRevision(ctx, name, n), os.RemoveAll(deployment.RevisionDir(s.home, name, n)))
 	}
 	return errors.Join(errs...)
 }

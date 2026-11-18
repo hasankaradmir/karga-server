@@ -33,7 +33,7 @@ import (
 // up on it until the user acts on the release or runs karga reconcile.
 
 // ReconcileOperation is the operation type of reconciliation.
-const ReconcileOperation = "reconcile"
+const ReconcileOperation = release.OpReconcile
 
 // Repair backoff.
 const (
@@ -145,7 +145,7 @@ func (r *repairs) next(rel string, now time.Time) time.Time {
 
 // NextRepair is when a failed repair of release name may be tried again (zero if none waits): a
 // loop that reacts to events only must come back then, as no event may follow.
-func (s *Lifecycle) NextRepair(name string) time.Time { return s.repairs.next(name, s.Now()) }
+func (s *Lifecycle) NextRepair(name string) time.Time { return s.c.repairs.next(name, s.c.now()) }
 
 // gaveUp lists what karga stopped repairing in a release.
 func (r *repairs) gaveUp(rel string, now time.Time) map[string]string {
@@ -175,7 +175,7 @@ type planned struct {
 func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*ReconcileResult, error) {
 	// What is observed below is acted on: nothing else may change the release meanwhile. A busy
 	// release is skipped; the command working on it leaves it as it should be.
-	unlock, err := s.lock(ctx, name, true)
+	unlock, err := s.c.locks.tryLock(name)
 	if errors.Is(err, ErrLocked) {
 		return &ReconcileResult{Release: name, Skipped: "an operation is running"}, nil
 	}
@@ -183,59 +183,83 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 		return nil, err
 	}
 	defer unlock()
-	rel, err := s.Store.GetRelease(ctx, name)
+	rel, err := s.c.store.GetRelease(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	res := &ReconcileResult{Release: name}
 	if force {
-		s.repairs.reset(name)
+		s.c.repairs.reset(name)
 	}
-	switch {
-	case rel.Paused:
-		res.Skipped = "paused"
-	case rel.Status != release.StatusDeployed || rel.CurrentRevision == 0:
-		res.Skipped = fmt.Sprintf("the release is %s; karga reconciles deployed releases only", rel.Status)
-	}
-	if _, err := s.Store.RunningOperation(ctx, name); err == nil {
-		res.Skipped = "an operation is running"
-	} else if !errors.Is(err, ports.ErrNotFound) {
-		return nil, err
-	}
-	if res.Skipped != "" {
+	if res.Skipped, err = s.skipReason(ctx, rel); err != nil || res.Skipped != "" {
+		if err != nil {
+			return nil, err
+		}
 		return res, nil
 	}
-	rt, err := s.runtime(ctx)
+	applied, err := s.c.store.ListResources(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.loadKey(); err != nil {
-		return nil, err
-	}
-	applied, err := s.Store.ListResources(ctx, name)
+	present, err := existing(ctx, s.c.rt, name, applied)
 	if err != nil {
 		return nil, err
 	}
-	present, err := existing(ctx, rt, name, applied)
+	todo := s.diagnose(ctx, name, applied, present)
+	res.GaveUp = s.c.repairs.gaveUp(name, s.c.now())
+	if len(todo) == 0 {
+		return res, nil
+	}
+	op, err := s.c.begin(ctx, name, ReconcileOperation, rel.CurrentRevision, false, release.Options{})
 	if err != nil {
+		if errors.Is(err, ErrLocked) || errors.Is(err, ErrInterrupted) {
+			res.Skipped = "an operation is running"
+			return res, nil
+		}
 		return nil, err
 	}
-	now := s.Now()
+	err = s.act(ctx, &op, rel, present, todo, res)
+	s.c.finish(ctx, op, err)
+	res.GaveUp = s.c.repairs.gaveUp(name, s.c.now())
+	return res, nil
+}
+
+// skipReason says why rel is not repaired now ("" if it is): paused, not deployed, or an
+// operation running on it.
+func (s *Lifecycle) skipReason(ctx context.Context, rel release.Release) (string, error) {
+	why := ""
+	switch {
+	case rel.Paused:
+		why = "paused"
+	case rel.Status != release.StatusDeployed || rel.CurrentRevision == 0:
+		why = fmt.Sprintf("the release is %s; karga reconciles deployed releases only", rel.Status)
+	}
+	if _, err := s.c.store.RunningOperation(ctx, rel.Name); err == nil {
+		why = "an operation is running"
+	} else if !errors.Is(err, ports.ErrNotFound) {
+		return "", err
+	}
+	return why, nil
+}
+
+// diagnose compares what release name should run with what the runtime has and returns the repairs
+// to make now: what is missing is recreated, a stopped or unhealthy container restarted, the
+// gateway synced if an exposure has none. Repairs waiting out their backoff, or given up on, are
+// left out.
+func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present []release.AppliedResource) []planned {
+	now := s.c.now()
 	var todo []planned
 	add := func(p planned) {
-		ok, gaveUp, _ := s.repairs.allowed(p.key, now)
+		ok, gaveUp, _ := s.c.repairs.allowed(p.key, now)
 		if ok && !gaveUp {
 			todo = append(todo, p)
 		}
 	}
-	missing := false
 	for _, a := range applied {
 		if !slices.ContainsFunc(present, func(p release.AppliedResource) bool { return p.Kind == a.Kind && p.Name == a.Name }) {
-			missing = true
+			add(planned{key: name + "/plan", action: "create"})
+			break
 		}
-	}
-	if missing {
-		add(planned{key: name + "/plan", action: "create"})
 	}
 	exposed := false
 	for _, a := range present {
@@ -248,7 +272,7 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 			continue
 		}
 		key := name + "/" + a.Kind + "/" + a.Name
-		st, err := rt.GetWorkload(ctx, a.RuntimeName)
+		st, err := s.c.rt.GetWorkload(ctx, a.RuntimeName)
 		if err != nil {
 			continue
 		}
@@ -267,37 +291,24 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 			if err != nil || !ok || w.HealthCheck == nil || w.HealthCheck.Type == resource.HealthExec {
 				continue
 			}
-			if s.Deploy.ProbeHealth(ctx, st, w) == ports.HealthUnhealthy {
-				retries := w.HealthCheck.Retries
-				if retries == 0 {
-					retries = 3
-				}
-				if s.repairs.probeFailed(key, retries) {
-					add(planned{key, a.Kind, a.Name, "restart", a.RuntimeName, failed})
-				}
-			} else {
-				s.repairs.probeOK(key)
+			if s.c.env.ProbeHealth(ctx, st, w) != ports.HealthUnhealthy {
+				s.c.repairs.probeOK(key)
+			} else if s.c.repairs.probeFailed(key, deployment.ProbeRetries(w.HealthCheck)) {
+				add(planned{key, a.Kind, a.Name, "restart", a.RuntimeName, failed})
 			}
 		}
 	}
 	if exposed {
-		if st, err := rt.GetWorkload(ctx, gateway.ContainerName); err != nil || st.State != ports.StateRunning {
+		if st, err := s.c.rt.GetWorkload(ctx, gateway.ContainerName); err != nil || st.State != ports.StateRunning {
 			add(planned{key: name + "/gateway", kind: "Gateway", name: gateway.ContainerName, action: "sync"})
 		}
 	}
-	res.GaveUp = s.repairs.gaveUp(name, now)
-	if len(todo) == 0 {
-		return res, nil
-	}
+	return todo
+}
 
-	op, err := s.begin(ctx, name, ReconcileOperation, rel.CurrentRevision, false, release.Options{})
-	if err != nil {
-		if errors.Is(err, ErrLocked) || errors.Is(err, ErrInterrupted) {
-			res.Skipped = "an operation is running"
-			return res, nil
-		}
-		return nil, err
-	}
+// act makes the repairs of todo as steps of op and returns their errors.
+func (s *Lifecycle) act(ctx context.Context, op *release.Operation, rel release.Release, present []release.AppliedResource, todo []planned, res *ReconcileResult) error {
+	rt := s.c.rt
 	var errs []error
 	step := func(p planned, err error) {
 		st := release.Step{Kind: p.kind, Name: p.name, Action: p.action, Status: deployment.StepDone}
@@ -307,9 +318,9 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 		}
 		res.Actions = append(res.Actions, st)
 		op.Steps = append(op.Steps, st)
-		s.repairs.done(p.key, s.Now(), err)
+		s.c.repairs.done(p.key, s.c.now(), err)
 		if err == nil && p.failed != nil {
-			s.healed(ctx, rt, name, *p.failed)
+			s.healed(ctx, rt, rel.Name, *p.failed)
 		}
 	}
 	for _, p := range todo {
@@ -323,27 +334,25 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 			}
 			step(p, err)
 		case "sync":
-			_, err := gateway.Sync(ctx, rt, s.Deploy.Host, s.Home)
+			_, err := s.c.gw.Sync(ctx)
 			step(p, err)
 		case "create":
-			steps, err := s.recreate(ctx, rt, &op, rel, present)
+			steps, err := s.recreate(ctx, rt, op, rel, present)
 			res.Actions = append(res.Actions, steps...)
 			if err != nil {
 				errs = append(errs, err)
 			}
-			s.repairs.done(p.key, s.Now(), err)
+			s.c.repairs.done(p.key, s.c.now(), err)
 		}
 	}
-	s.finish(ctx, op, errors.Join(errs...))
-	res.GaveUp = s.repairs.gaveUp(name, s.Now())
-	return res, nil
+	return errors.Join(errs...)
 }
 
 // recreate creates what is missing from the current revision, through the same plan and executor as
 // an upgrade, without a new revision. Only creates are applied: anything else that differs (a newer
 // karga's defaults, for example) waits for the user's next upgrade.
 func (s *Lifecycle) recreate(ctx context.Context, rt ports.Runtime, op *release.Operation, rel release.Release, present []release.AppliedResource) ([]release.Step, error) {
-	rev, err := s.Store.GetRevision(ctx, rel.Name, rel.CurrentRevision)
+	rev, err := s.c.store.GetRevision(ctx, rel.Name, rel.CurrentRevision)
 	if err != nil {
 		return nil, err
 	}
@@ -351,14 +360,14 @@ func (s *Lifecycle) recreate(ctx context.Context, rt ports.Runtime, op *release.
 	if err != nil {
 		return nil, err
 	}
-	if err := s.restoreSecrets(rel.Name, rev.Number, rs); err != nil {
+	if err := s.c.restoreSecrets(rel.Name, rev.Number, rs); err != nil {
 		return nil, err
 	}
 	anon, err := anonymousVolumes(ctx, rt, rel.Name, rs)
 	if err != nil {
 		return nil, err
 	}
-	plan, err := s.Deploy.Diff(rel.Name, rs, present, "", anon)
+	plan, err := s.c.env.Diff(rel.Name, rs, present, "", anon)
 	if err != nil {
 		return nil, err
 	}
@@ -371,10 +380,10 @@ func (s *Lifecycle) recreate(ctx context.Context, rt ports.Runtime, op *release.
 		Package: pkgOf(rev), Existing: &rel}
 	in.Timeout = deployment.DefaultTimeout
 	start := len(op.Steps)
-	err = s.Deploy.Execute(ctx, rt, deployment.ExecRequest{
-		Home: s.Home, Release: rel.Name, Revision: rel.CurrentRevision, Supported: rev.RuntimeSupported,
-		Resources: rs, Plan: plan, Redact: s.Redact, Timeout: in.Timeout, AllowedCaps: s.AllowedCaps,
-		OnStep: func(c deployment.Change, st release.Step) error { return s.record(ctx, op, in, c, st) },
+	err = s.c.env.Execute(ctx, rt, deployment.ExecRequest{
+		Release: rel.Name, Revision: rel.CurrentRevision, Supported: rev.RuntimeSupported,
+		Resources: rs, Plan: plan, Timeout: in.Timeout,
+		OnStep: func(c deployment.Change, st release.Step) error { return s.c.record(ctx, op, in, c, st) },
 	})
 	return slices.Clone(op.Steps[start:]), err
 }
@@ -390,34 +399,30 @@ func (s *Lifecycle) healed(ctx context.Context, rt ports.Runtime, rel string, a 
 		return // a container of another revision (a failed upgrade's) stays failed
 	}
 	a.Digest = st.Labels[ports.LabelDigest]
-	if err := s.Store.SaveResource(context.WithoutCancel(ctx), rel, a); err != nil {
-		s.Log.Warn("reconcile: record repaired workload", "release", rel, "workload", a.Name, "error", err)
+	if err := s.c.store.SaveResource(context.WithoutCancel(ctx), rel, a); err != nil {
+		s.c.log.Warn("reconcile: record repaired workload", "release", rel, "workload", a.Name, "error", err)
 	}
 }
 
+// pkgOf is the package metadata a revision records.
 func pkgOf(rev release.Revision) packages.Metadata {
 	return packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
 }
 
 // Pause stops (or with paused false, resumes) reconciliation of a release.
 func (s *Lifecycle) Pause(ctx context.Context, name string, paused bool) error {
-	unlock, err := s.lock(ctx, name, false)
+	unlock, err := s.c.locks.lock(ctx, name)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	rel, err := s.Store.GetRelease(ctx, name)
+	rel, err := s.c.store.GetRelease(ctx, name)
 	if err != nil {
 		return err
 	}
 	rel.Paused = paused
 	if !paused {
-		s.repairs.reset(name)
+		s.c.repairs.reset(name)
 	}
-	return s.Store.SaveRelease(ctx, rel)
-}
-
-// Events lists the operations of a release (all for ""), newest first.
-func (s *Reads) Events(ctx context.Context, name string, afterID int64, limit int) ([]release.Operation, error) {
-	return s.Store.ListOperations(ctx, name, afterID, limit)
+	return s.c.store.SaveRelease(ctx, rel)
 }

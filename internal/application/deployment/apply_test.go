@@ -74,6 +74,7 @@ func (tr *tracker) onStep(rev int) func(Change, release.Step) error {
 }
 
 type request struct {
+	home     string
 	strategy string
 	t        *testing.T
 	rt       *fakeruntime.Runtime
@@ -82,20 +83,21 @@ type request struct {
 }
 
 func newRequest(t *testing.T, port int) *request {
-	return &request{t: t, rt: fakeruntime.New(), tr: &tracker{applied: map[Key]release.AppliedResource{}},
-		req: ExecRequest{Home: t.TempDir(), Release: "cache", Revision: 1, Supported: []string{"docker"}, Resources: manifest(port), Timeout: time.Second}}
+	return &request{t: t, home: t.TempDir(), rt: fakeruntime.New(), tr: &tracker{applied: map[Key]release.AppliedResource{}},
+		req: ExecRequest{Release: "cache", Revision: 1, Supported: []string{"docker"}, Resources: manifest(port), Timeout: time.Second}}
 }
 
 // run plans r.req.Resources against the tracked state and executes it.
 func (r *request) run() error {
 	r.t.Helper()
-	plan, err := testEnv.Diff("cache", r.req.Resources, r.tr.list(), r.strategy, nil)
+	env := envAt(r.home)
+	plan, err := env.Diff("cache", r.req.Resources, r.tr.list(), r.strategy, nil)
 	if err != nil {
 		return err
 	}
 	r.req.Plan = plan
 	r.req.OnStep = r.tr.onStep(r.req.Revision)
-	return testEnv.Execute(context.Background(), r.rt, r.req)
+	return env.Execute(context.Background(), r.rt, r.req)
 }
 
 func TestExecuteInstall(t *testing.T) {
@@ -286,7 +288,7 @@ func TestDelete(t *testing.T) {
 			t.Fatal(err)
 		}
 		rt := r.rt
-		if err := testEnv.Delete(ctx, rt, r.req.Home, r.req.Release, deleteVolumes); err != nil {
+		if err := envAt(r.home).Delete(ctx, rt, r.req.Release, deleteVolumes); err != nil {
 			t.Fatal(err)
 		}
 		if len(rt.Workloads) != 0 || len(rt.Networks) != 0 {
@@ -425,7 +427,7 @@ func TestReconcile(t *testing.T) {
 	// Both present: the unfinished new container is removed.
 	create("web-app")
 	create("web-app-next")
-	repaired, err := testEnv.RepairReplace(ctx, rt, t.TempDir(), "web", applied)
+	repaired, err := envAt(t.TempDir()).RepairReplace(ctx, rt, "web", applied)
 	if err != nil || len(repaired) != 0 || rt.Workloads["web-app-next"] != nil || rt.Workloads["web-app"] == nil {
 		t.Fatalf("both present: %v %v %v", repaired, err, rt.Workloads)
 	}
@@ -435,7 +437,7 @@ func TestReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	create("web-app-next")
-	repaired, err = testEnv.RepairReplace(ctx, rt, t.TempDir(), "web", applied)
+	repaired, err = envAt(t.TempDir()).RepairReplace(ctx, rt, "web", applied)
 	if err != nil || len(repaired) != 1 || repaired[0].Digest != "" || rt.Workloads["web-app"] == nil {
 		t.Fatalf("only -next: %v %v %v", repaired, err, rt.Workloads)
 	}

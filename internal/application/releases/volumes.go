@@ -40,7 +40,7 @@ type mounter struct {
 
 // mounters lists the workloads of a release that mount volume.
 func (s *Volumes) mounters(ctx context.Context, rel, volume string) ([]mounter, error) {
-	applied, err := s.Store.ListResources(ctx, rel)
+	applied, err := s.c.store.ListResources(ctx, rel)
 	if err != nil {
 		return nil, err
 	}
@@ -96,12 +96,12 @@ func pause(ctx context.Context, rt ports.Runtime, ms []mounter) (func() error, e
 	return resume, nil
 }
 
-// BackupVolume writes req.Volume to w.
-func (s *Volumes) BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) (err error) {
+// Backup writes req.Volume to w.
+func (s *Volumes) Backup(ctx context.Context, req VolumeBackupRequest, w io.Writer) (err error) {
 	// A live copy only reads: it holds nothing, so a slow client never blocks the release. A copy
 	// with --stop stops workloads and holds the release, as an operation, until they run again.
 	if req.Stop {
-		unlock, err := s.lock(ctx, req.Release, false)
+		unlock, err := s.c.locks.lock(ctx, req.Release)
 		if err != nil {
 			return err
 		}
@@ -112,22 +112,19 @@ func (s *Volumes) BackupVolume(ctx context.Context, req VolumeBackupRequest, w i
 		return err
 	}
 	if req.Stop {
-		rel, err := s.Store.GetRelease(ctx, req.Release)
+		rel, err := s.c.store.GetRelease(ctx, req.Release)
 		if err != nil {
 			return err
 		}
-		op, err := s.begin(ctx, req.Release, "volume-backup", rel.CurrentRevision, false, release.Options{})
+		op, err := s.c.begin(ctx, req.Release, "volume-backup", rel.CurrentRevision, false, release.Options{})
 		if err != nil {
 			return err
 		}
-		defer func() { s.finish(ctx, op, err) }()
+		defer func() { s.c.finish(ctx, op, err) }()
 	} else {
-		s.Log.Info("volume backup", "release", req.Release, "volume", req.Volume, "user", actorOf(ctx))
+		s.c.log.Info("volume backup", "release", req.Release, "volume", req.Volume, "user", actorOf(ctx))
 	}
-	rt, err := s.Runtime(ctx)
-	if err != nil {
-		return err
-	}
+	rt := s.c.rt
 	if req.Stop {
 		resume, perr := pause(ctx, rt, ms)
 		defer func() { err = errors.Join(err, resume()) }()
@@ -138,15 +135,18 @@ func (s *Volumes) BackupVolume(ctx context.Context, req VolumeBackupRequest, w i
 	src := ms[0]
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
-	man, _ := yaml.Marshal(BackupManifest{Release: req.Release, Volume: req.Volume, MountPath: src.path, Created: s.Now().UTC()})
-	if err := tw.WriteHeader(&tar.Header{Name: backupManifest, Mode: 0o600, Size: int64(len(man)), ModTime: s.Now()}); err != nil {
+	man, _ := yaml.Marshal(BackupManifest{Release: req.Release, Volume: req.Volume, MountPath: src.path, Created: s.c.now().UTC()})
+	if err := tw.WriteHeader(&tar.Header{Name: backupManifest, Mode: 0o600, Size: int64(len(man)), ModTime: s.c.now()}); err != nil {
 		return err
 	}
 	if _, err := tw.Write(man); err != nil {
 		return err
 	}
 	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(rt.ExportPath(ctx, src.runtime, src.path, pw)) }()
+	exported := make(chan struct{})
+	go func() { defer close(exported); pw.CloseWithError(rt.ExportPath(ctx, src.runtime, src.path, pw)) }()
+	// The export ends before this returns: closing the reader makes a write it is blocked on fail.
+	defer func() { _ = pr.Close(); <-exported }()
 	if err := retar(tar.NewReader(pr), tw, path.Base(src.path), backupRoot); err != nil {
 		_ = pr.CloseWithError(err)
 		return fmt.Errorf("copy volume %s: %w", req.Volume, err)
@@ -157,9 +157,9 @@ func (s *Volumes) BackupVolume(ctx context.Context, req VolumeBackupRequest, w i
 	return gz.Close()
 }
 
-// RestoreVolume writes the backup read from r into req.Volume.
-func (s *Volumes) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader) (err error) {
-	unlock, err := s.lock(ctx, req.Release, false)
+// Restore writes the backup read from r into req.Volume.
+func (s *Volumes) Restore(ctx context.Context, req VolumeRestoreRequest, r io.Reader) (err error) {
+	unlock, err := s.c.locks.lock(ctx, req.Release)
 	if err != nil {
 		return err
 	}
@@ -196,19 +196,16 @@ func (s *Volumes) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r
 			req.Name, man.Volume, man.Release, req.Volume, req.Release)
 	}
 
-	rel, err := s.Store.GetRelease(ctx, req.Release)
+	rel, err := s.c.store.GetRelease(ctx, req.Release)
 	if err != nil {
 		return err
 	}
-	op, err := s.begin(ctx, req.Release, "volume-restore", rel.CurrentRevision, false, release.Options{})
+	op, err := s.c.begin(ctx, req.Release, "volume-restore", rel.CurrentRevision, false, release.Options{})
 	if err != nil {
 		return err
 	}
-	defer func() { s.finish(ctx, op, err) }()
-	rt, err := s.Runtime(ctx)
-	if err != nil {
-		return err
-	}
+	defer func() { s.c.finish(ctx, op, err) }()
+	rt := s.c.rt
 	resume, err := pause(ctx, rt, ms)
 	defer func() { err = errors.Join(err, resume()) }()
 	if err != nil {
@@ -216,7 +213,11 @@ func (s *Volumes) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r
 	}
 	target := ms[dst]
 	pr, pw := io.Pipe()
+	converted := make(chan struct{})
+	// The conversion ends before this returns, even if the import stopped reading early.
+	defer func() { _ = pr.Close(); <-converted }()
 	go func() {
+		defer close(converted)
 		tw := tar.NewWriter(pw)
 		err := retar(tr, tw, backupRoot, path.Base(target.path))
 		if err == nil {

@@ -67,8 +67,30 @@ func (t Target) upstream(service string, port int) (int, bool) {
 	return t.Ports[i].Upstream, true
 }
 
+// Gateway is the host gateway as karga-server runs it: a container on rt, configured through the
+// host's proxies, with its files under home.
+type Gateway struct {
+	rt   Runtime
+	host *proxyops.Host
+	home string
+}
+
+// New returns the host gateway on rt; home is $KARGA_HOME.
+func New(rt Runtime, host *proxyops.Host, home string) *Gateway {
+	return &Gateway{rt: rt, host: host, home: home}
+}
+
+// Runtime is what the host gateway needs of a container runtime.
+type Runtime interface {
+	proxyops.Remover
+	EnsureImage(ctx context.Context, ref, policy string) error
+	CreateWorkload(ctx context.Context, req ports.WorkloadRequest) error
+	StartWorkload(ctx context.Context, name string) error
+	ListLabeled(ctx context.Context, key string) ([]ports.Object, error)
+}
+
 // findTargets lists every release proxy that publishes upstream ports, with its release's routes.
-func findTargets(ctx context.Context, rt ports.Runtime, home string) ([]Target, error) {
+func findTargets(ctx context.Context, rt Runtime, home string) ([]Target, error) {
 	objs, err := rt.ListLabeled(ctx, LabelPorts)
 	if err != nil {
 		return nil, err
@@ -76,7 +98,7 @@ func findTargets(ctx context.Context, rt ports.Runtime, home string) ([]Target, 
 	var out []Target
 	for _, o := range objs {
 		rel := o.Labels[ports.LabelRelease]
-		routes, err := ReadExpose(home, rel)
+		routes, err := readExpose(home, rel)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +110,8 @@ func findTargets(ctx context.Context, rt ports.Runtime, home string) ([]Target, 
 
 // Sync rewrites the gateway from the settings and every release's proxy, and creates or removes
 // the gateway container as needed. It returns the targets it routes to.
-func Sync(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home string) ([]Target, error) {
+func (g *Gateway) Sync(ctx context.Context) ([]Target, error) {
+	rt, h, home := g.rt, g.host, g.home
 	unlock, err := Lock(home)
 	if err != nil {
 		return nil, err
@@ -99,28 +122,24 @@ func Sync(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home string) 
 
 // Expose records what release rel exposes and syncs the gateway, checking again under the gateway
 // lock that no other release took the same listeners, hosts or paths since the pre-flight.
-func Expose(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home, rel string, rs []resource.Resource, routes []Route) ([]Target, error) {
+func (g *Gateway) Expose(ctx context.Context, rel string, rs []resource.Resource, routes []Route) ([]Target, error) {
+	rt, h, home := g.rt, g.host, g.home
 	unlock, err := Lock(home)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	var errs []error
-	for _, err := range Check(ctx, rt, h, home, rel, rs) {
-		if !IsWarning(err) {
-			errs = append(errs, err)
-		}
+	// Preflight reported the warnings; this check runs again under the lock only for the errors.
+	if _, err := g.Check(ctx, rel, rs); err != nil {
+		return nil, err
 	}
-	if len(errs) > 0 {
-		return nil, errors.Join(errs...)
-	}
-	if err := WriteExpose(home, rel, routes); err != nil {
+	if err := writeExpose(home, rel, routes); err != nil {
 		return nil, err
 	}
 	return syncLocked(ctx, rt, h, home)
 }
 
-func syncLocked(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home string) ([]Target, error) {
+func syncLocked(ctx context.Context, rt Runtime, h *proxyops.Host, home string) ([]Target, error) {
 	c := h.Proxies.Container()
 	targets, err := findTargets(ctx, rt, home)
 	if err != nil {
@@ -177,7 +196,8 @@ func syncLocked(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home st
 }
 
 // Wait waits until the gateway routes to every exposed port of release rel.
-func Wait(ctx context.Context, h *proxyops.Host, home, rel string, targets []Target) error {
+func (g *Gateway) Wait(ctx context.Context, rel string, targets []Target) error {
+	h, home := g.host, g.home
 	want := Want(targets, func(t Target) bool { return t.Release == rel && len(t.Routes) > 0 })
 	if len(want) == 0 {
 		return nil
@@ -206,7 +226,8 @@ type State struct {
 }
 
 // Health reads the gateway container and Envoy's admin API.
-func Health(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home string) (State, error) {
+func (g *Gateway) Health(ctx context.Context) (State, error) {
+	rt, h, home := g.rt, g.host, g.home
 	settings, err := ReadSettings(home)
 	if err != nil {
 		return State{}, err
@@ -242,7 +263,8 @@ type Exposed struct {
 }
 
 // Routes lists what the gateway serves, as computed from the release proxies.
-func Routes(ctx context.Context, rt ports.Runtime, home string) ([]Exposed, error) {
+func (g *Gateway) Routes(ctx context.Context) ([]Exposed, error) {
+	rt, home := g.rt, g.home
 	settings, err := ReadSettings(home)
 	if err != nil {
 		return nil, err
@@ -277,7 +299,8 @@ func Routes(ctx context.Context, rt ports.Runtime, home string) ([]Exposed, erro
 }
 
 // Users returns, per listener, the release/service names that expose something on it.
-func Users(ctx context.Context, rt ports.Runtime, home string) (map[string][]string, error) {
+func (g *Gateway) Users(ctx context.Context) (map[string][]string, error) {
+	rt, home := g.rt, g.home
 	targets, err := findTargets(ctx, rt, home)
 	if err != nil {
 		return nil, err
