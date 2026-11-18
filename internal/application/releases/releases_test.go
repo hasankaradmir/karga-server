@@ -521,6 +521,10 @@ func TestFailedInstallLeavesNothing(t *testing.T) {
 	if _, err := e.svc.c.store.GetRelease(context.Background(), "cache"); !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("failed install left a release: %v", err)
 	}
+	// Its Config and Secret files were written before the image pull failed; they go too.
+	if _, err := os.Stat(filepath.Join(e.svc.c.home, "releases", "cache")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed install left its files: %v", err)
+	}
 	delete(e.rt.Fail, "EnsureImage:redis:7.4")
 	if res := must[*Result](t)(e.install("image.tag=7.4")); res.Revision != 1 {
 		t.Fatalf("reinstall: %+v", res)

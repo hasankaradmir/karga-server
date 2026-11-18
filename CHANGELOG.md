@@ -32,6 +32,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- A secret quoted in an error message (a failed connection with its password, say) reached the
+  client and the operations in the state as it was; the redactor masks those too now. A first
+  install that failed left its Config and Secret files on disk; they are removed with it.
 - The gateway's and the proxies' files (settings, routes, certificates, Envoy's configuration) were
   replaced without being synced, through a fixed temporary name: a power loss could leave Envoy an
   empty file. Every file karga-server writes now goes through one helper that syncs the file and its
@@ -75,6 +78,9 @@ First release.
   `KARGA_CLI_REF` (master without it).
 
 ### Fixed
+- A secret quoted in an error message (a failed connection with its password, say) reached the
+  client and the operations in the state as it was; the redactor masks those too now. A first
+  install that failed left its Config and Secret files on disk; they are removed with it.
 - karga-server answered no request until it had resumed every operation it left running, each up to
   its timeout, and a resume that met Docker not up yet failed and left its release interrupted for
   good. It now serves at once: commands on a release being resumed wait for it, and a resume waits

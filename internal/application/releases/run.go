@@ -194,7 +194,8 @@ func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 
 // replan repairs leftovers of an interrupted replace and, if anything changed, plans again.
 // discard removes a release that never had a deployed revision and owns nothing in the runtime (an
-// install that failed before creating anything), so it does not linger as a failed release.
+// install that failed before creating anything), with its files, so it does not linger as a failed
+// release nor leave its secrets on disk.
 func (s *core) discard(ctx context.Context, name string) bool {
 	applied, err := s.store.ListResources(ctx, name)
 	if err != nil || len(applied) > 0 {
@@ -203,6 +204,10 @@ func (s *core) discard(ctx context.Context, name string) bool {
 	if err := s.store.DeleteRelease(ctx, name); err != nil {
 		s.log.Warn("remove failed release", "release", name, "error", err)
 		return false
+	}
+	// The revision's Config and Secret files were written before it failed.
+	if err := os.RemoveAll(filepath.Dir(deployment.RevisionDir(s.home, name, 1))); err != nil {
+		s.log.Warn("remove failed release's files", "release", name, "error", err)
 	}
 	return true
 }

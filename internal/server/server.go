@@ -99,8 +99,9 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 		return nil, err
 	}
 	var redact func(string)
+	var mask func(string) string
 	if cfg.Redactor != nil {
-		redact = cfg.Redactor.Add
+		redact, mask = cfg.Redactor.Add, cfg.Redactor.Redact
 	}
 	// The composition root: Envoy runs the proxies, the host's network runs probes and port tests.
 	host := &proxyops.Host{Proxies: envoy.Proxies{}, Net: hostnet.Net{}}
@@ -111,7 +112,7 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 		notify = nil
 	}
 	svc, err := releases.New(releases.Deps{Store: store, Runtime: rt,
-		Host: host, Home: cfg.Home, Redact: redact, Log: cfg.Log, AllowedCaps: cfg.AllowedCaps, Notify: notify})
+		Host: host, Home: cfg.Home, Redact: redact, Mask: mask, Log: cfg.Log, AllowedCaps: cfg.AllowedCaps, Notify: notify})
 	if err != nil {
 		_ = store.Close()
 		unlock()
@@ -167,9 +168,17 @@ func (s *Server) Listen() (net.Listener, error) {
 	return l, nil
 }
 
+// mask masks the secret values the service registered (none without a Redactor).
+func (s *Server) mask(v string) string {
+	if s.cfg.Redactor == nil {
+		return v
+	}
+	return s.cfg.Redactor.Redact(v)
+}
+
 // Serve answers on l until ctx is done, then waits for running operations (at most grace).
 func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration) error {
-	hs := &http.Server{Handler: api.NewServer(NewBackend(s.svc), version.Current().Version, api.Options{TempDir: filepath.Join(s.cfg.Home, "tmp"), Classify: classify}), ReadHeaderTimeout: 10 * time.Second,
+	hs := &http.Server{Handler: api.NewServer(NewBackend(s.svc), version.Current().Version, api.Options{TempDir: filepath.Join(s.cfg.Home, "tmp"), Classify: classify, Redact: s.mask}), ReadHeaderTimeout: 10 * time.Second,
 		// Operations record the user of the client process.
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context { return releases.WithActor(ctx, peerUser(c)) }}
 	// Secret values are masked in the log from the start, not only once a release is applied again.
