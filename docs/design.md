@@ -223,10 +223,10 @@ Services is refused.
   still resolves the container name, `<release>-<workload>`). One proxy has one address, so a port number belongs to one Service of the release. The
   exposed Service ports are published on loopback upstream ports chosen by karga and recorded in a
   container label (`io.karga.gateway`); adding one recreates the proxy. What the release exposes
-  (listener, host, path, certificate directory) is written to `$KARGA_HOME/proxies/<release>/expose.json`,
+  (listener, host, path, certificate directory) is written to `$KARGA_HOME/proxies/<release>/expose.yaml`,
   so changing a host or path needs no recreate.
 - **Gateway** (`karga-gateway`, one per host, host network) is configured by the host's
-  administrator in `$KARGA_HOME/gateway.json`: the addresses it listens on (default `127.0.0.1`) and
+  administrator in `$KARGA_HOME/gateway.yaml`: the addresses it listens on (default `127.0.0.1`) and
   its listeners (name, port, protocol `tcp`, `http` or `https`). Packages only name listeners. The
   configuration is rebuilt under `$KARGA_HOME/gateway.lock` from the settings, the proxies' labels and
   the releases' expose files: one Envoy listener per used listener and address; HTTP listeners with
@@ -234,6 +234,9 @@ Services is refused.
   redirect to HTTPS on the port-80 http listener; clusters to the proxies' upstreams. Pre-flight
   (`gateway.Check`) refuses exposures on unknown listeners or listeners of another protocol, tcp
   listeners, hosts and paths or certificates another release holds, and listeners a host process holds.
+  HTTP routes have no overall deadline (uploads, server-sent events and long polls run until done)
+  and pass WebSocket upgrades through; a stream idle for 5 minutes is closed. Only connect
+  failures are retried.
 
 A replace switches only the release proxy: the gateway forwards to the proxy, which stays. A workload
 no Service targets receives no traffic and is replaced without a switch. Configuration is built from

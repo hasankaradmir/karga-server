@@ -116,6 +116,9 @@ func Listeners(c Config) ([]byte, error) {
 	return resources(items)
 }
 
+// StreamIdleTimeout closes an HTTP stream (a request, a WebSocket) that sends nothing either way.
+const StreamIdleTimeout = 5 * time.Minute
+
 func hcm(name string, router *anypb.Any, hosts []*routev3.VirtualHost, logs []*accesslogv3.AccessLog) *hcmv3.HttpConnectionManager {
 	return &hcmv3.HttpConnectionManager{
 		StatPrefix: name,
@@ -126,6 +129,11 @@ func hcm(name string, router *anypb.Any, hosts []*routev3.VirtualHost, logs []*a
 		// routes in another form than a plain /b would.
 		NormalizePath: wrapperspb.Bool(true),
 		MergeSlashes:  true,
+		// WebSocket (and other HTTP/1.1 upgrades) pass through to the backend.
+		UpgradeConfigs: []*hcmv3.HttpConnectionManager_UpgradeConfig{{UpgradeType: "websocket"}},
+		// Requests may take as long as they need (routes have no timeout); a stream that sends
+		// nothing for this long is closed.
+		StreamIdleTimeout: durationpb.New(StreamIdleTimeout),
 		HttpFilters: []*hcmv3.HttpFilter{{
 			Name: "envoy.filters.http.router", ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: router},
 		}},
@@ -229,6 +237,9 @@ func virtualHosts(routes []HTTPRoute) []*routev3.VirtualHost {
 					ClusterSpecifier: &routev3.RouteAction_Cluster{Cluster: r.Cluster},
 					// Only connect failures are retried: the request has not reached a backend yet.
 					RetryPolicy: &routev3.RetryPolicy{RetryOn: "connect-failure", NumRetries: wrapperspb.UInt32(2)},
+					// No overall deadline (Envoy's default is 15s): uploads, reports, server-sent
+					// events and long polls run until done; StreamIdleTimeout ends idle ones.
+					Timeout: durationpb.New(0),
 				}},
 			})
 		}

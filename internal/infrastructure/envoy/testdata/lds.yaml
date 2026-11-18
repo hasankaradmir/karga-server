@@ -47,7 +47,11 @@ resources:
                           retry_policy:
                             num_retries: 2
                             retry_on: connect-failure
+                          timeout: 0s
               stat_prefix: http_0.0.0.0_443
+              stream_idle_timeout: 300s
+              upgrade_configs:
+                - upgrade_type: websocket
               use_remote_address: true
         transport_socket:
           name: envoy.transport_sockets.tls
@@ -95,6 +99,7 @@ resources:
                           retry_policy:
                             num_retries: 2
                             retry_on: connect-failure
+                          timeout: 0s
                       - match:
                           prefix: /
                         route:
@@ -102,6 +107,7 @@ resources:
                           retry_policy:
                             num_retries: 2
                             retry_on: connect-failure
+                          timeout: 0s
                   - domains:
                       - b.local
                       - b.local:*
@@ -114,6 +120,7 @@ resources:
                           retry_policy:
                             num_retries: 2
                             retry_on: connect-failure
+                          timeout: 0s
                   - domains:
                       - secure.example
                       - secure.example:*
@@ -124,5 +131,8 @@ resources:
                         redirect:
                           https_redirect: true
               stat_prefix: http_0.0.0.0_80
+              stream_idle_timeout: 300s
+              upgrade_configs:
+                - upgrade_type: websocket
               use_remote_address: true
     name: http_0.0.0.0_80

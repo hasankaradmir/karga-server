@@ -3,7 +3,9 @@
 package integration
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -84,5 +86,54 @@ func TestGatewayListenAddresses(t *testing.T) {
 	// A listener in use cannot be removed.
 	if err := s.Gateway.RemoveListener(ctx, l); err == nil {
 		t.Fatal("removed a listener in use")
+	}
+}
+
+// The gateway lets a request take longer than Envoy's default 15 seconds and passes WebSocket
+// upgrades through.
+func TestGatewayLongRequestsAndUpgrades(t *testing.T) {
+	ctx := context.Background()
+	name := releaseName("it-raw")
+	s, _ := service(t, name)
+	l, port := listener(t, gateway.ProtocolHTTP)
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+		Values: releases.Values{Set: []string{"raw=true", "route=raw.local", "routeListener=" + l}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+
+	req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/x/slow", nil)
+	req.Host = "raw.local"
+	start := time.Now()
+	resp, err := (&http.Client{Timeout: time.Minute}).Do(req)
+	if err != nil {
+		t.Fatalf("slow request: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "slow" || time.Since(start) < 20*time.Second {
+		t.Fatalf("slow request: %d %q after %s", resp.StatusCode, body, time.Since(start))
+	}
+
+	c, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+	if _, err := io.WriteString(c, "GET /x/ws HTTP/1.1\r\nHost: raw.local\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"+
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(c)
+	up, err := http.ReadResponse(r, nil)
+	if err != nil || up.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("upgrade: %v %v", up, err)
+	}
+	if _, err := io.WriteString(c, "ping\n"); err != nil {
+		t.Fatal(err)
+	}
+	if line, err := r.ReadString('\n'); err != nil || line != "ping\n" {
+		t.Fatalf("echo after upgrade: %q %v", line, err)
 	}
 }

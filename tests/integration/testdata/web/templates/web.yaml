@@ -21,6 +21,16 @@ metadata:
 spec:
   files:
     index.html: {{ .Values.content | quote }}
+    {{- if .Values.raw }}
+    raw.sh: |
+      #!/bin/sh
+      read -r method path rest
+      while read -r line; do [ "$(printf %s "$line" | tr -d '\r')" = "" ] && break; done
+      case "$path" in
+      /x/slow) sleep 20; printf 'HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nslow' ;;
+      *) printf 'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n'; exec cat ;;
+      esac
+    {{- end }}
 ---
 apiVersion: karga.io/v1alpha1
 kind: Workload
@@ -28,7 +38,7 @@ metadata:
   name: web
 spec:
   image: busybox:1.37
-  command: [sh, -c, "sleep {{ .Values.startDelay }}; {{ if .Values.echo }}nc -ll -p 9000 -e cat & {{ end }}exec httpd -f -p {{ .Values.listenPort }} -h /www"]
+  command: [sh, -c, "sleep {{ .Values.startDelay }}; {{ if .Values.echo }}nc -ll -p 9000 -e cat & {{ end }}{{ if .Values.raw }}nc -ll -p 9001 -e sh /www/raw.sh & {{ end }}exec httpd -f -p {{ .Values.listenPort }} -h /www"]
   networks: [web-net]
   mounts:
     - config: site
@@ -39,6 +49,10 @@ spec:
     {{- if .Values.echo }}
     - name: echo
       containerPort: 9000
+    {{- end }}
+    {{- if .Values.raw }}
+    - name: raw
+      containerPort: 9001
     {{- end }}
   healthCheck:
     type: {{ .Values.health }}
@@ -105,6 +119,10 @@ spec:
     - name: echo
       port: 9000
     {{- end }}
+    {{- if .Values.raw }}
+    - name: raw
+      port: 9001
+    {{- end }}
   {{- if or .Values.listener .Values.route .Values.echoListener }}
   expose:
     {{- if .Values.listener }}
@@ -118,6 +136,12 @@ spec:
       {{- if .Values.tls.cert }}
       tls: {secret: site-tls}
       {{- end }}
+    {{- if .Values.raw }}
+    - port: raw
+      listener: {{ .Values.routeListener }}
+      host: {{ .Values.route }}
+      path: /x/
+    {{- end }}
     {{- end }}
     {{- if .Values.echoListener }}
     - port: echo
