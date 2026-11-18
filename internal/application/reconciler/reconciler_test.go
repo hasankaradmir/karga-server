@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-sdk/packages"
+
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
 
 	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
@@ -28,7 +30,7 @@ func TestEventTriggersRepair(t *testing.T) {
 	rt.EventsC = make(chan ports.RuntimeEvent)
 	svc := releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, home, nil, nil)
 	if _, err := svc.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: releases.CommonOptions{Timeout: time.Second},
-		Name: "cache", Package: "../../../tests/testdata/redis", Values: releases.Values{Set: []string{"service.enabled=false"}}}, nil); err != nil {
+		Name: "cache", Package: "../../../tests/testdata/redis", Values: releases.Values{Sets: packages.Sets([]string{"service.enabled=false"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	loop := New(svc, 0, nil) // events only

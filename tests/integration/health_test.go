@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-sdk/packages"
+
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -24,7 +26,7 @@ func TestKargaHealthChecks(t *testing.T) {
 			s, _ := service(t, name)
 			sets := []string{"health=" + health, "strategy=recreate"}
 			if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-				Values: releases.Values{Set: sets}}, nil); err != nil {
+				Values: releases.Values{Sets: packages.Sets(sets...)}}, nil); err != nil {
 				t.Fatal(err)
 			}
 			rep, err := s.Reads.Status(ctx, name)
@@ -42,7 +44,7 @@ func TestKargaHealthChecks(t *testing.T) {
 			short := opts()
 			short.Timeout = 20 * time.Second
 			_, err = s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: short, Name: name, Package: webPkg,
-				Values: releases.Values{Set: append(sets, "healthy=false")}}, nil)
+				Values: releases.Values{Sets: packages.Sets(append(sets, "healthy=false")...)}}, nil)
 			if err == nil || !strings.Contains(err.Error(), "GET /missing") {
 				t.Fatalf("want the failing http check in the error, got %v", err)
 			}
@@ -59,7 +61,7 @@ func TestHealthCheckByContainerAddress(t *testing.T) {
 	name := releaseName("it-hc-ip")
 	s, _ := service(t, name)
 	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: releases.Values{Set: []string{"health=http"}}}, nil); err != nil {
+		Values: releases.Values{Sets: packages.Sets([]string{"health=http"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := s.Reads.Status(ctx, name)
@@ -85,7 +87,7 @@ func TestReplaceWithHTTPHealth(t *testing.T) {
 	common := opts()
 	common.Timeout = 30 * time.Second
 	sets := func(extra ...string) releases.Values {
-		return releases.Values{Set: append([]string{startDelay, "health=http", "listener=" + l}, extra...)}
+		return releases.Values{Sets: packages.Sets(append([]string{startDelay, "health=http", "listener=" + l}, extra...)...)}
 	}
 	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil); err != nil {
 		t.Fatal(err)

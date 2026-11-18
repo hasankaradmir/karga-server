@@ -47,9 +47,9 @@ func TestWriteOnlyUnderMapsAndListsNotStored(t *testing.T) {
 	install := func(reuse bool, sets ...string) error {
 		var err error
 		if reuse {
-			_, err = e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "w", Package: dir, ReuseValues: true, Values: Values{Set: sets}}, nil)
+			_, err = e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "w", Package: dir, ReuseValues: true, Values: Values{Sets: packages.Sets(sets...)}}, nil)
 		} else {
-			_, err = e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "w", Package: dir, Values: Values{Set: sets}}, nil)
+			_, err = e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "w", Package: dir, Values: Values{Sets: packages.Sets(sets...)}}, nil)
 		}
 		return err
 	}

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-sdk/packages"
+
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
@@ -25,7 +27,7 @@ func TestRedisReleaseLifecycle(t *testing.T) {
 	name := releaseName("it-rel")
 	s, rt := service(t, name)
 	values := func(tag string) releases.Values {
-		return releases.Values{Set: []string{"image.tag=" + tag}}
+		return releases.Values{Sets: packages.Sets([]string{"image.tag=" + tag}...)}
 	}
 
 	// Install an older Redis, then upgrade forward (downgrading would hit RDB format changes).
@@ -93,7 +95,7 @@ func TestFailedUpgradeKeepsHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: pkgPath,
-		Values: releases.Values{Set: []string{"healthy=false"}}}, nil)
+		Values: releases.Values{Sets: packages.Sets([]string{"healthy=false"}...)}}, nil)
 	if err == nil {
 		t.Fatal("unhealthy upgrade should fail")
 	}
@@ -133,7 +135,7 @@ func TestEnvironmentFromSecret(t *testing.T) {
 	}
 	first := "first-" + name
 	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: releases.Values{Set: []string{"envSecret=" + first, "strategy=recreate"}}}, nil); err != nil {
+		Values: releases.Values{Sets: packages.Sets([]string{"envSecret=" + first, "strategy=recreate"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := printenv(); got != first {
@@ -148,7 +150,7 @@ func TestEnvironmentFromSecret(t *testing.T) {
 	})
 	second := "second-" + name
 	if _, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: releases.Values{Set: []string{"envSecret=" + second, "strategy=recreate"}}}, nil); err != nil {
+		Values: releases.Values{Sets: packages.Sets([]string{"envSecret=" + second, "strategy=recreate"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := printenv(); got != second {

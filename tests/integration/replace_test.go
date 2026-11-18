@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-sdk/packages"
+
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
@@ -29,11 +31,11 @@ func TestReplaceWithoutDowntime(t *testing.T) {
 	common.Timeout = 30 * time.Second
 	upgrade := func(sets ...string) (*releases.Result, error) {
 		return s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg,
-			Values: releases.Values{Set: append([]string{startDelay}, sets...)}}, nil)
+			Values: releases.Values{Sets: packages.Sets(append([]string{startDelay}, sets...)...)}}, nil)
 	}
 
 	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg,
-		Values: releases.Values{Set: []string{startDelay}}}, nil); err != nil {
+		Values: releases.Values{Sets: packages.Sets([]string{startDelay}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	pinger := startNetPinger(t, rt, name, "http://web:8080/")
@@ -92,13 +94,13 @@ func TestRecreateHasDowntime(t *testing.T) {
 	common := opts()
 	common.Timeout = 30 * time.Second
 	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg,
-		Values: releases.Values{Set: []string{startDelay, "strategy=recreate"}}}, nil); err != nil {
+		Values: releases.Values{Sets: packages.Sets([]string{startDelay, "strategy=recreate"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	pinger := startNetPinger(t, rt, name, "http://web:8080/")
 	time.Sleep(time.Second)
 	if _, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg,
-		Values: releases.Values{Set: []string{startDelay, "strategy=recreate", "content=v2"}}}, nil); err != nil {
+		Values: releases.Values{Sets: packages.Sets([]string{startDelay, "strategy=recreate", "content=v2"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)

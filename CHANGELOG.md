@@ -10,6 +10,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   request is checked before it reaches the service: a release name must be a DNS label that does
   not start with `karga`, for every operation (a name like `../x` could reach a path outside the
   state before). Errors of logs, volume backups and exec keep their kind.
+- `--set` and `--set-string` apply in the order they were given, and `--set a[1]=x` edits the
+  default list instead of replacing it with `[null, x]` (ADR-0018).
 - Plans warn about every variable a workload takes from a Secret (`environmentFrom`): anyone who
   can inspect the container sees its value. Packages may use only `bridge` networks and `local`
   volumes (karga-sdk); other drivers could reach the host's network past the gateway.

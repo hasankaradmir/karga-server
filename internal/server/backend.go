@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/api"
+	"github.com/hasankaradmir/karga-sdk/packages"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
@@ -26,7 +27,11 @@ func common(o api.CommonOptions) releases.CommonOptions {
 }
 
 func values(v api.ValuesInput) releases.Values {
-	return releases.Values{Files: v.Files, Set: v.Set, SetString: v.SetString, Strict: v.Strict}
+	out := releases.Values{Files: v.Files, Strict: v.Strict}
+	for _, s := range v.Sets {
+		out.Sets = append(out.Sets, packages.Set{Expr: s.Expr, String: s.String})
+	}
+	return out
 }
 
 func events(progress func(api.Event)) func(deployment.Event) {

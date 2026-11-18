@@ -49,7 +49,7 @@ func (s *Core) render(ctx context.Context, name, path string, opts packages.Opti
 
 // valuesOptions are the render options for the values a client sent.
 func valuesOptions(v Values) packages.Options {
-	return packages.Options{ValueData: v.Files, Sets: v.Set, SetStrings: v.SetString, Strict: v.Strict}
+	return packages.Options{Values: packages.ValueSources{Data: v.Files, Sets: v.Sets}, Strict: v.Strict}
 }
 
 // Install installs a package. Installing again with the same package and values is a no-op.
@@ -127,7 +127,7 @@ func (s *Lifecycle) Upgrade(ctx context.Context, req UpgradeRequest, progress fu
 		// writeOnly values were never stored: they must be given again.
 		hidden := redactedPaths(cur.Values)
 		if len(hidden) > 0 {
-			given, err := packages.Overrides(opts)
+			given, err := packages.Overrides(opts.Values, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -137,7 +137,7 @@ func (s *Lifecycle) Upgrade(ctx context.Context, req UpgradeRequest, progress fu
 				}
 			}
 		}
-		opts.BaseOverrides = dropValues(cur.Values, hidden)
+		opts.Values.Base = dropValues(cur.Values, hidden)
 	}
 	in, err := s.render(ctx, req.Name, req.Package, opts)
 	if err != nil {

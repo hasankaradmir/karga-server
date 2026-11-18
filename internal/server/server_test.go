@@ -49,7 +49,11 @@ func start(t *testing.T, home string) *api.Client {
 }
 
 func withValues(sets ...string) api.ValuesInput {
-	return api.ValuesInput{Set: append([]string{"service.enabled=false"}, sets...)}
+	in := api.ValuesInput{Sets: []api.Set{{Expr: "service.enabled=false"}}}
+	for _, s := range sets {
+		in.Sets = append(in.Sets, api.Set{Expr: s})
+	}
+	return in
 }
 
 // The API reaches the release service through the composition root, and the service's errors
