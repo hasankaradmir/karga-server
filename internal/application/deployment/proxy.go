@@ -101,7 +101,7 @@ func (s services) target(svc string, p resource.ServicePort) (int, bool) {
 	if w == nil {
 		return 0, false
 	}
-	wp, ok := w.PortNamed(p.TargetPort)
+	wp, ok := w.TargetPort(p.TargetPort)
 	return wp.ContainerPort, ok
 }
 
