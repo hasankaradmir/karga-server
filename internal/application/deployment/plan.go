@@ -9,18 +9,49 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
-
-	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )
 
-// Change is what a plan does to one resource: the wire part the CLI sees, and what the executor
-// needs to apply it.
+// Summary is what a plan does to one resource, as shown to the user.
+type Summary struct {
+	Kind   string
+	Name   string
+	Action string
+	Fields []FieldChange
+	// Strategy is how a workload update is applied (recreate or replace); StrategyReason says why
+	// a requested replace fell back to recreate.
+	Strategy       string
+	StrategyReason string
+	// Notice says what deleting a volume does to its data ("" for other changes).
+	Notice string
+}
+
+// Label returns the strategy shown next to a change, e.g. "replace" or "recreate: mounts volume x read-write".
+func (c Summary) Label() string {
+	if c.StrategyReason != "" {
+		return c.Strategy + ": " + c.StrategyReason
+	}
+	return c.Strategy
+}
+
+// FieldChange is one changed field, as JSON values. Secret values show only that they changed.
+type FieldChange struct {
+	Path, Old, New string
+}
+
+// ResourceDiff is how one resource differs between two revisions.
+type ResourceDiff struct {
+	Kind, Name string
+	Action     string // create, update or delete (from the first to the second)
+	Fields     []FieldChange
+}
+
+// Change is what a plan does to one resource: its summary, and what the executor needs to apply it.
 type Change struct {
-	api.Change
+	Summary
 	// Resource is the desired resource (nil for delete).
 	Resource *resource.Resource `json:"-"`
 	// Spec and Digest describe the desired state to record once applied.
@@ -36,33 +67,34 @@ type Change struct {
 
 // Plan is the ordered set of changes from the applied state to a manifest.
 type Plan struct {
-	Changes []Change `json:"changes"`
+	Changes []Change
 }
 
-// Wire is the plan as the CLI sees it.
-func (p Plan) Wire() api.Plan {
-	out := api.Plan{Changes: make([]api.Change, len(p.Changes))}
+// Summaries are the plan's changes as shown to the user.
+func (p Plan) Summaries() []Summary {
+	out := make([]Summary, len(p.Changes))
 	for i, c := range p.Changes {
-		out.Changes[i] = c.Change
+		out[i] = c.Summary
 	}
 	return out
 }
 
 // HasChanges reports whether applying the plan would touch the runtime.
-func (p Plan) HasChanges() bool { return p.Wire().HasChanges() }
-
-// Wire names the CLI sees.
-type (
-	FieldChange  = api.FieldChange
-	ResourceDiff = api.ResourceDiff
-)
+func (p Plan) HasChanges() bool {
+	for _, c := range p.Changes {
+		if c.Action != ActionUnchanged {
+			return true
+		}
+	}
+	return false
+}
 
 // Actions in a plan.
 const (
-	ActionCreate    = api.ActionCreate
-	ActionUpdate    = api.ActionUpdate
-	ActionDelete    = api.ActionDelete
-	ActionUnchanged = api.ActionUnchanged
+	ActionCreate    = "create"
+	ActionUpdate    = "update"
+	ActionDelete    = "delete"
+	ActionUnchanged = "unchanged"
 )
 
 // Digest is "hmac-sha256:<hex>" of data under the digest key, or "sha256:<hex>" without one (tests;
@@ -201,7 +233,7 @@ func (e *Env) Diff(releaseName string, desired []resource.Resource, applied []re
 		r := r
 		k := keyOf(r)
 		want := specs[k]
-		c := Change{Change: api.Change{Kind: k.Kind, Name: k.Name}, Resource: &r, Spec: want.Spec, Digest: want.Digest, RuntimeName: proxyops.RuntimeName(releaseName, k.Name)}
+		c := Change{Summary: Summary{Kind: k.Kind, Name: k.Name}, Resource: &r, Spec: want.Spec, Digest: want.Digest, RuntimeName: proxyops.RuntimeName(releaseName, k.Name)}
 		if k.Kind == resource.KindService {
 			c.RuntimeName = ProxyName(releaseName) // a Service has no container; the release proxy serves it
 		}
@@ -252,7 +284,7 @@ func (e *Env) Diff(releaseName string, desired []resource.Resource, applied []re
 	})
 	for _, a := range removed {
 		a := a
-		c := Change{Change: api.Change{Kind: a.Kind, Name: a.Name, Action: ActionDelete}, Applied: &a, RuntimeName: a.RuntimeName}
+		c := Change{Summary: Summary{Kind: a.Kind, Name: a.Name, Action: ActionDelete}, Applied: &a, RuntimeName: a.RuntimeName}
 		c.Notice = c.note()
 		plan.Changes = append(plan.Changes, c)
 	}

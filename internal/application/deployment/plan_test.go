@@ -105,12 +105,12 @@ func TestSecretsRedactedInPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	js, err := json.Marshal(plan.Wire())
+	js, err := json.Marshal(plan.Summaries())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out := string(js); strings.Contains(out, "pass\"") || strings.Contains(out, "sha256") ||
-		!strings.Contains(out, `{"path":"spec.values.password","new":"(changed)"}`) {
+		!strings.Contains(out, `{"Path":"spec.values.password","Old":"","New":"(changed)"}`) {
 		t.Fatalf("plan: %s", out)
 	}
 }
@@ -124,7 +124,7 @@ func TestPlanFieldChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got []string
-	for _, c := range plan.Wire().Changes {
+	for _, c := range plan.Summaries() {
 		for _, f := range c.Fields {
 			got = append(got, c.Kind+" "+c.Name+" "+f.Path+": "+f.Old+" -> "+f.New)
 		}

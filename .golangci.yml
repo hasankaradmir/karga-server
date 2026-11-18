@@ -31,8 +31,16 @@ linters:
               desc: the application uses ports, not infrastructure
             - pkg: github.com/moby
               desc: the application uses ports.Runtime, not Docker
-            - pkg: modernc.org/sqlite
-              desc: the application uses ports.StateStore, not SQLite
+        # The wire (karga-sdk/api) is internal/server's business: the application, the ports and the
+        # domain have their own types, and internal/server/backend.go maps them.
+        wire:
+          files:
+            - "**/internal/application/**"
+            - "**/internal/ports/**"
+            - "**/internal/domain/**"
+          deny:
+            - pkg: github.com/hasankaradmir/karga-sdk/api
+              desc: only internal/server knows the API
 
 formatters:
   enable:

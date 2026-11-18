@@ -7,10 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/api"
-
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
-
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -28,7 +25,7 @@ func TestReconcileRepairs(t *testing.T) {
 	must[*Result](t)(e.install())
 	reconcile := func() *ReconcileResult {
 		t.Helper()
-		return must[*ReconcileResult](t)(e.svc.Reconcile(ctx, "cache", true))
+		return must[*ReconcileResult](t)(e.svc.Repair(ctx, "cache", true))
 	}
 	if res := reconcile(); len(res.Actions) != 0 || res.Skipped != "" {
 		t.Fatalf("nothing to do: %+v", res)
@@ -84,7 +81,7 @@ func TestReconcileRepairs(t *testing.T) {
 	}
 
 	// Every repair is an event.
-	ops := must[[]api.Operation](t)(e.svc.Events(ctx, "cache", 0, 10))
+	ops := must[[]release.Operation](t)(e.svc.Events(ctx, "cache", 0, 10))
 	if len(ops) < 4 || ops[0].Type != ReconcileOperation {
 		t.Fatalf("events: %+v", ops)
 	}
@@ -104,7 +101,7 @@ func TestReconcileLeavesAlone(t *testing.T) {
 	if err := e.svc.Pause(ctx, "cache", true); err != nil {
 		t.Fatal(err)
 	}
-	if res := must[*ReconcileResult](t)(e.svc.Reconcile(ctx, "cache", false)); res.Skipped != "paused" || e.rt.Workloads["cache-redis"].State == ports.StateRunning {
+	if res := must[*ReconcileResult](t)(e.svc.Repair(ctx, "cache", false)); res.Skipped != "paused" || e.rt.Workloads["cache-redis"].State == ports.StateRunning {
 		t.Fatalf("paused: %+v", res)
 	}
 	if err := e.svc.Pause(ctx, "cache", false); err != nil {
@@ -117,7 +114,7 @@ func TestReconcileLeavesAlone(t *testing.T) {
 		t.Fatal("expected failed upgrade")
 	}
 	e.rt.Health = ""
-	if res := must[*ReconcileResult](t)(e.svc.Reconcile(ctx, "cache", false)); !strings.Contains(res.Skipped, "failed") {
+	if res := must[*ReconcileResult](t)(e.svc.Repair(ctx, "cache", false)); !strings.Contains(res.Skipped, "failed") {
 		t.Fatalf("failed release: %+v", res)
 	}
 }
@@ -133,24 +130,24 @@ func TestReconcileBacksOffAndGivesUp(t *testing.T) {
 	}
 	e.rt.Fail["StartWorkload:cache-redis"] = errors.New("boom")
 	for i := range 5 {
-		res := must[*ReconcileResult](t)(e.svc.Reconcile(ctx, "cache", false))
+		res := must[*ReconcileResult](t)(e.svc.Repair(ctx, "cache", false))
 		if actionsOf(res) != "start:Workload/redis:failed" {
 			t.Fatalf("attempt %d: %s", i, actionsOf(res))
 		}
 		// Too early for the next attempt: backoff.
-		if res := must[*ReconcileResult](t)(e.svc.Reconcile(ctx, "cache", false)); len(res.Actions) != 0 {
+		if res := must[*ReconcileResult](t)(e.svc.Repair(ctx, "cache", false)); len(res.Actions) != 0 {
 			t.Fatalf("attempt %d retried without backoff", i)
 		}
 		now = now.Add(2 * time.Minute) // past the backoff (10s doubling), within the 10-minute window
 	}
 	now = now.Add(-time.Minute) // 5 failures in the last 9 minutes
-	res := must[*ReconcileResult](t)(e.svc.Reconcile(ctx, "cache", false))
+	res := must[*ReconcileResult](t)(e.svc.Repair(ctx, "cache", false))
 	if len(res.Actions) != 0 || !strings.Contains(res.GaveUp["Workload/redis"], "boom") {
 		t.Fatalf("after 5 failures: %+v", res)
 	}
 	// karga reconcile forgets the failures.
 	delete(e.rt.Fail, "StartWorkload:cache-redis")
-	if res := must[*ReconcileResult](t)(e.svc.Reconcile(ctx, "cache", true)); actionsOf(res) != "start:Workload/redis:done" || res.GaveUp != nil {
+	if res := must[*ReconcileResult](t)(e.svc.Repair(ctx, "cache", true)); actionsOf(res) != "start:Workload/redis:done" || res.GaveUp != nil {
 		t.Fatalf("forced: %+v", res)
 	}
 }
@@ -169,7 +166,7 @@ func TestNextRepair(t *testing.T) {
 	e.rt.Fail = map[string]error{"StartWorkload:cache-redis": errors.New("busy")}
 	now := time.Now()
 	e.svc.Now = func() time.Time { return now }
-	must[*ReconcileResult](t)(e.svc.Reconcile(ctx, "cache", false))
+	must[*ReconcileResult](t)(e.svc.Repair(ctx, "cache", false))
 	if at := e.svc.NextRepair("cache"); !at.Equal(now.Add(repairFirstDelay)) {
 		t.Fatalf("next repair at %v, want %v", at, now.Add(repairFirstDelay))
 	}
@@ -178,7 +175,7 @@ func TestNextRepair(t *testing.T) {
 	}
 	e.rt.Fail = nil
 	now = now.Add(repairFirstDelay)
-	must[*ReconcileResult](t)(e.svc.Reconcile(ctx, "cache", false))
+	must[*ReconcileResult](t)(e.svc.Repair(ctx, "cache", false))
 	if at := e.svc.NextRepair("cache"); !at.IsZero() {
 		t.Fatalf("a successful repair waits for nothing: %v", at)
 	}

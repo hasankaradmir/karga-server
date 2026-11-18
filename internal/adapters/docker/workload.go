@@ -23,7 +23,7 @@ import (
 )
 
 // EnsureImage implements ports.Runtime.
-// shortcut: pulls are anonymous; private registries need credentials from docker config (planned with M4 registry auth).
+// shortcut: pulls are anonymous; private registries need credentials from the docker config.
 func (r *Runtime) EnsureImage(ctx context.Context, ref, policy string) error {
 	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
@@ -89,7 +89,7 @@ func (r *Runtime) CreateWorkload(ctx context.Context, req ports.WorkloadRequest)
 		Sysctls:       req.Sysctls,
 		CapAdd:        req.CapAdd,
 		CapDrop:       req.CapDrop,
-		// Explicit even though these are Docker defaults (tech design §17.5).
+		// Explicit even though these are Docker defaults.
 		Privileged: false,
 	}
 	if hc := req.HealthCheck; hc != nil {

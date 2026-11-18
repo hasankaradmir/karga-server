@@ -51,13 +51,13 @@ type Config struct {
 // DefaultReconcileInterval is how often every release is looked at besides runtime events.
 const DefaultReconcileInterval = 30 * time.Second
 
-var _ api.Backend = (*releases.Service)(nil)
-
 // classify gives karga-server's errors their kind for the client; anything else is internal.
 func classify(err error) error {
 	switch {
 	case errors.Is(err, ports.ErrNotFound):
 		return api.ErrNotFound
+	case errors.Is(err, ports.ErrInvalid):
+		return api.ErrInvalid
 	case errors.Is(err, releases.ErrLocked), errors.Is(err, releases.ErrInterrupted), errors.Is(err, releases.ErrExists),
 		errors.Is(err, ports.ErrPortInUse), errors.Is(err, ports.ErrConflict):
 		return api.ErrConflict
@@ -159,7 +159,7 @@ func (s *Server) Listen() (net.Listener, error) {
 
 // Serve answers on l until ctx is done, then waits for running operations (at most grace).
 func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration) error {
-	hs := &http.Server{Handler: api.NewServer(s.Service, version.Current().Version, api.Options{TempDir: filepath.Join(s.cfg.Home, "tmp"), Classify: classify}), ReadHeaderTimeout: 10 * time.Second,
+	hs := &http.Server{Handler: api.NewServer(Backend{S: s.Service}, version.Current().Version, api.Options{TempDir: filepath.Join(s.cfg.Home, "tmp"), Classify: classify}), ReadHeaderTimeout: 10 * time.Second,
 		// Operations record the user of the client process.
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context { return releases.WithActor(ctx, peerUser(c)) }}
 	// Operations a stopped karga-server left running are finished before requests are served, so a

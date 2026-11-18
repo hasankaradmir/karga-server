@@ -31,10 +31,11 @@ runtime; it serves the release operations on a local unix socket (`/run/karga/ka
 JSON, no remote API). The **karga** CLI is its client: it packs packages and values files and sends
 them, and streams progress, logs, `exec` (an upgraded connection carrying frames) and backups. Only
 `create`, `lint`, `template` and `show` work without the server. The API is karga-sdk's `api`: a
-`Backend` interface that `*releases.Service` implements on the server and `api.Client` in the CLI,
-the HTTP handler and the client. Every request carries the API major version (`Karga-Api`); the
-server refuses another one, so the CLI and the server may be of different releases while it is the
-same. The server reads each client's user from the socket (`SO_PEERCRED`) and records it on the
+`Backend` interface that `internal/server`'s `Backend` implements on the server (mapping it to the
+release service) and `api.Client` in the CLI, the HTTP handler and the client. Every request carries
+the API version `Major.Minor` (`Karga-Api`); the server refuses another major, and a field or
+endpoint it does not know, so the CLI and the server may be of different releases while the major
+is the same (ADR-0014). The server reads each client's user from the socket (`SO_PEERCRED`) and records it on the
 operations it starts.
 
 **Operations and restarts.** Operations do not depend on the client's connection: a client that goes
@@ -65,7 +66,8 @@ reconciler`, the loop; `releases.Service.Reconcile`, the repairs) brings the run
 
 ```
 cmd/karga-server                entry point
-internal/server                 karga-server: state, runtime, socket, peer credentials
+internal/server                 karga-server: state, runtime, socket, peer credentials; backend.go maps
+                                the API (karga-sdk/api) to the release service and back
 internal/application/releases   release lifecycle: install, upgrade, rollback, uninstall, resume, reads
 internal/application/deployment plan (diff, strategies), execute, release proxy, probes (deployment.Env)
 internal/application/gateway    the host gateway: settings, exposures, its Envoy
@@ -76,8 +78,8 @@ internal/infrastructure/{envoy,hostnet,logging,config}
 
 karga-sdk: api (the wire contract: types, error kinds, version, Backend, client, HTTP handler),
 packages (the package engine and metadata), resource (the resource kinds); values, templates and
-archives are internal to it. The server keeps its own state model (internal/domain/release) and
-maps it to the api views.
+archives are internal to it. The server keeps its own state model (internal/domain/release) and its
+own request and result types; only internal/server knows the API and maps between them.
 ```
 
 The SDK depends on nothing of the CLI or the server, and the server on nothing of the CLI,

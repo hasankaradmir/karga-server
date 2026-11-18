@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/api"
-
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 )
 
@@ -22,7 +20,7 @@ func TestDependsOnWaitsForTheService(t *testing.T) {
 	name := releaseName("it-dep")
 	s, _ := service(t, name)
 	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: api.ValuesInput{Set: []string{"second=true", "apiDependsOn=true", "startDelay=3", "strategy=recreate"}}}, nil); err != nil {
+		Values: releases.Values{Set: []string{"second=true", "apiDependsOn=true", "startDelay=3", "strategy=recreate"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	created := func(c string) time.Time {

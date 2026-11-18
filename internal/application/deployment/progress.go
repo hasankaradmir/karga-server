@@ -3,25 +3,28 @@ package deployment
 import (
 	"context"
 	"fmt"
-
-	"github.com/hasankaradmir/karga-sdk/api"
 )
 
 // Event reports what Execute is doing, for a live progress display.
-type Event = api.Event
+type Event struct {
+	Kind, Name string
+	// Phase is one of the Phase constants.
+	Phase  string
+	Detail string
+}
 
 // Progress phases.
 const (
-	PhasePull   = api.PhasePull
-	PhaseCreate = api.PhaseCreate
-	PhaseStart  = api.PhaseStart
-	PhaseWait   = api.PhaseWait
-	PhaseSwitch = api.PhaseSwitch
-	PhaseDrain  = api.PhaseDrain
-	PhaseStop   = api.PhaseStop
-	PhaseRemove = api.PhaseRemove
-	PhaseDone   = api.PhaseDone
-	PhaseFailed = api.PhaseFailed
+	PhasePull   = "pull"
+	PhaseCreate = "create"
+	PhaseStart  = "start"
+	PhaseWait   = "wait"
+	PhaseSwitch = "switch"
+	PhaseDrain  = "drain"
+	PhaseStop   = "stop"
+	PhaseRemove = "remove"
+	PhaseDone   = "done"
+	PhaseFailed = "failed"
 )
 
 type progressKey struct{}

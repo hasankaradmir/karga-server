@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/api"
-
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
@@ -28,14 +26,14 @@ func TestReplaceWithoutDowntime(t *testing.T) {
 	name := releaseName("it-web")
 	s, rt := service(t, name)
 	common := opts()
-	common.Timeout = api.Duration(30 * time.Second)
+	common.Timeout = 30 * time.Second
 	upgrade := func(sets ...string) (*releases.Result, error) {
 		return s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg,
-			Values: api.ValuesInput{Set: append([]string{startDelay}, sets...)}}, nil)
+			Values: releases.Values{Set: append([]string{startDelay}, sets...)}}, nil)
 	}
 
 	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg,
-		Values: api.ValuesInput{Set: []string{startDelay}}}, nil); err != nil {
+		Values: releases.Values{Set: []string{startDelay}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	pinger := startNetPinger(t, rt, name, "http://web:8080/")
@@ -45,7 +43,7 @@ func TestReplaceWithoutDowntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range res.Plan.Changes {
+	for _, c := range res.Plan {
 		if c.Kind == "Workload" && c.Strategy != "replace" {
 			t.Fatalf("expected replace, got %+v", c)
 		}
@@ -75,11 +73,11 @@ func TestReplaceWithoutDowntime(t *testing.T) {
 		t.Fatalf("canonical container: %+v", st)
 	}
 	r := currentRelease(t, s, name)
-	if r.Status != string(release.StatusDeployed) || r.CurrentRevision != 2 {
+	if r.Status != release.StatusDeployed || r.CurrentRevision != 2 {
 		t.Fatalf("release after failed replace: %+v", r)
 	}
 	hist, err := s.History(ctx, name)
-	if err != nil || len(hist) != 3 || hist[2].Status != string(release.RevisionFailed) {
+	if err != nil || len(hist) != 3 || hist[2].Status != release.RevisionFailed {
 		t.Fatalf("history: %+v %v", hist, err)
 	}
 }
@@ -92,15 +90,15 @@ func TestRecreateHasDowntime(t *testing.T) {
 	name := releaseName("it-web-rc")
 	s, rt := service(t, name)
 	common := opts()
-	common.Timeout = api.Duration(30 * time.Second)
+	common.Timeout = 30 * time.Second
 	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg,
-		Values: api.ValuesInput{Set: []string{startDelay, "strategy=recreate"}}}, nil); err != nil {
+		Values: releases.Values{Set: []string{startDelay, "strategy=recreate"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	pinger := startNetPinger(t, rt, name, "http://web:8080/")
 	time.Sleep(time.Second)
 	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg,
-		Values: api.ValuesInput{Set: []string{startDelay, "strategy=recreate", "content=v2"}}}, nil); err != nil {
+		Values: releases.Values{Set: []string{startDelay, "strategy=recreate", "content=v2"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)

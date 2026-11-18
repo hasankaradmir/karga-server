@@ -8,31 +8,26 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
-
-	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
-
-	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // List returns every release.
-func (s *Service) List(ctx context.Context) ([]api.Release, error) {
-	rels, err := s.Store.ListReleases(ctx)
-	return wireAll(rels, wireRelease), err
+func (s *Service) List(ctx context.Context) ([]release.Release, error) {
+	return s.Store.ListReleases(ctx)
 }
 
 // History returns a release's revisions, oldest first.
-func (s *Service) History(ctx context.Context, name string) ([]api.Revision, error) {
+func (s *Service) History(ctx context.Context, name string) ([]release.Revision, error) {
 	if _, err := s.Store.GetRelease(ctx, name); err != nil {
 		return nil, err
 	}
-	revs, err := s.Store.ListRevisions(ctx, name)
-	return wireAll(revs, wireRevision), err
+	return s.Store.ListRevisions(ctx, name)
 }
 
 // revisionOrCurrent resolves revision 0 to the current revision.
@@ -92,22 +87,13 @@ func (s *Service) GetManifest(ctx context.Context, name string, revision int) ([
 	return rs, nil
 }
 
-// ResourceStatus is shared with the CLI (karga-sdk/api).
-type ResourceStatus = api.ResourceStatus
-
-// StatusReport is shared with the CLI (karga-sdk/api).
-type StatusReport = api.StatusReport
-
-// ReconcileStatus is shared with the CLI (karga-sdk/api).
-type ReconcileStatus = api.ReconcileStatus
-
 // Status reports the release and the live state of each of its resources.
 func (s *Service) Status(ctx context.Context, name string) (*StatusReport, error) {
 	rel, err := s.Store.GetRelease(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	rep := &StatusReport{Release: wireRelease(rel), Resources: []ResourceStatus{}}
+	rep := &StatusReport{Release: rel, Resources: []ResourceStatus{}}
 	if op, err := s.Store.RunningOperation(ctx, name); err == nil {
 		rep.Interrupted = describe(op)
 		if op.Hostname == s.Hostname && processAlive(op.PID) {
@@ -223,17 +209,17 @@ func (s *Service) Gateway(ctx context.Context) ([]gateway.Exposed, error) {
 }
 
 // GatewaySettings returns the host's gateway settings and, per listener, the services using it.
-func (s *Service) GatewaySettings(ctx context.Context) (api.Settings, map[string][]string, error) {
+func (s *Service) GatewaySettings(ctx context.Context) (gateway.Settings, map[string][]string, error) {
 	settings, err := gateway.ReadSettings(s.Home)
 	if err != nil {
-		return api.Settings{}, nil, err
+		return settings, nil, err
 	}
 	rt, err := s.Runtime(ctx)
 	if err != nil {
-		return wireSettings(settings), nil, err
+		return settings, nil, err
 	}
 	users, err := gateway.Users(ctx, rt, s.Home)
-	return wireSettings(settings), users, err
+	return settings, users, err
 }
 
 // GatewayHealth reports the gateway container and whether its Envoy is ready.
@@ -262,9 +248,9 @@ func (s *Service) SetGatewayListen(ctx context.Context, addrs []string) error {
 }
 
 // AddGatewayListener defines a listener services can expose ports on.
-func (s *Service) AddGatewayListener(ctx context.Context, l api.Listener) error {
+func (s *Service) AddGatewayListener(ctx context.Context, l gateway.Listener) error {
 	return s.updateGateway(ctx, func(g *gateway.Settings, _ map[string][]string) error {
-		g.Listeners = append(g.Listeners, gateway.Listener{Name: l.Name, Port: l.Port, Protocol: l.Protocol})
+		g.Listeners = append(g.Listeners, l)
 		return nil
 	})
 }
@@ -353,9 +339,6 @@ func (s *Service) Exec(ctx context.Context, rel, workload string, opts ports.Exe
 	return -1, fmt.Errorf("release %s has no workload %q (workloads: %s)", rel, workload, strings.Join(names, ", "))
 }
 
-// RevisionDiff is shared with the CLI (karga-sdk/api).
-type RevisionDiff = api.RevisionDiff
-
 // Diff compares revision from with revision to of a release (to 0: the current one).
 func (s *Service) Diff(ctx context.Context, name string, from, to int) (*RevisionDiff, error) {
 	a, err := s.Store.GetRevision(ctx, name, from)
@@ -382,7 +365,6 @@ func (s *Service) Diff(ctx context.Context, name string, from, to int) (*Revisio
 }
 
 // Resources lists what is applied for a release (for completion and tools; no runtime is read).
-func (s *Service) Resources(ctx context.Context, name string) ([]api.AppliedResource, error) {
-	rs, err := s.Store.ListResources(ctx, name)
-	return wireAll(rs, wireApplied), err
+func (s *Service) Resources(ctx context.Context, name string) ([]release.AppliedResource, error) {
+	return s.Store.ListResources(ctx, name)
 }

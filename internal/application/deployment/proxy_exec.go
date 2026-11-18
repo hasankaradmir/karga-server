@@ -11,11 +11,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
-
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 

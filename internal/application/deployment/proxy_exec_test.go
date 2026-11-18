@@ -10,14 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
-
 	"github.com/hasankaradmir/karga-sdk/resource"
-
-	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -266,7 +264,7 @@ func TestReconcileKeepsWhatTheProxyRoutesTo(t *testing.T) {
 	if err := envoy.Write(ProxyDir(home, "web"), "web", 0o600, cfg); err != nil {
 		t.Fatal(err)
 	}
-	repaired, err := testEnv.Reconcile(ctx, rt, home, "web", applied)
+	repaired, err := testEnv.RepairReplace(ctx, rt, home, "web", applied)
 	if err != nil {
 		t.Fatal(err)
 	}

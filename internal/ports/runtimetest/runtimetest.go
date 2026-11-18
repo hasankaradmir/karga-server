@@ -1,4 +1,4 @@
-// Package runtimetest is the contract every ports.Runtime implementation must pass (tech design §19.2).
+// Package runtimetest is the contract every ports.Runtime implementation must pass.
 package runtimetest
 
 import (

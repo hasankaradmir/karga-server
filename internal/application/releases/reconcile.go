@@ -11,14 +11,11 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/packages"
-
-	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
-
-	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -37,9 +34,6 @@ import (
 
 // ReconcileOperation is the operation type of reconciliation.
 const ReconcileOperation = "reconcile"
-
-// ReconcileResult is shared with the CLI (karga-sdk/api).
-type ReconcileResult = api.ReconcileResult
 
 // Repair backoff.
 const (
@@ -176,9 +170,9 @@ type planned struct {
 	failed *release.AppliedResource
 }
 
-// Reconcile brings release name's runtime back to its current revision. force forgets earlier
+// Repair brings release name's runtime back to its current revision. force forgets earlier
 // failures first (karga reconcile).
-func (s *Service) Reconcile(ctx context.Context, name string, force bool) (*ReconcileResult, error) {
+func (s *Service) Repair(ctx context.Context, name string, force bool) (*ReconcileResult, error) {
 	// What is observed below is acted on: nothing else may change the release meanwhile. A busy
 	// release is skipped; the command working on it leaves it as it should be.
 	unlock, err := s.lock(ctx, name, true)
@@ -311,7 +305,7 @@ func (s *Service) Reconcile(ctx context.Context, name string, force bool) (*Reco
 			st.Status, st.Error = deployment.StepFailed, err.Error()
 			errs = append(errs, fmt.Errorf("%s %s: %s: %w", p.kind, p.name, p.action, err))
 		}
-		res.Actions = append(res.Actions, wireStep(st))
+		res.Actions = append(res.Actions, st)
 		op.Steps = append(op.Steps, st)
 		s.repairs.done(p.key, s.Now(), err)
 		if err == nil && p.failed != nil {
@@ -333,7 +327,7 @@ func (s *Service) Reconcile(ctx context.Context, name string, force bool) (*Reco
 			step(p, err)
 		case "create":
 			steps, err := s.recreate(ctx, rt, &op, rel, present)
-			res.Actions = append(res.Actions, wireSteps(steps)...)
+			res.Actions = append(res.Actions, steps...)
 			if err != nil {
 				errs = append(errs, err)
 			}
@@ -375,11 +369,11 @@ func (s *Service) recreate(ctx context.Context, rt ports.Runtime, op *release.Op
 	}
 	in := deployInput{Name: rel.Name, Type: ReconcileOperation, Revision: rel.CurrentRevision, Resources: rs,
 		Package: pkgOf(rev), Existing: &rel}
-	in.Timeout = api.Duration(deployment.DefaultTimeout)
+	in.Timeout = deployment.DefaultTimeout
 	start := len(op.Steps)
 	err = s.Deploy.Execute(ctx, rt, deployment.ExecRequest{
 		Home: s.Home, Release: rel.Name, Revision: rel.CurrentRevision, Supported: rev.RuntimeSupported,
-		Resources: rs, Plan: plan, Redact: s.Redact, Timeout: time.Duration(in.Timeout), AllowedCaps: s.AllowedCaps,
+		Resources: rs, Plan: plan, Redact: s.Redact, Timeout: in.Timeout, AllowedCaps: s.AllowedCaps,
 		OnStep: func(c deployment.Change, st release.Step) error { return s.record(ctx, op, in, c, st) },
 	})
 	return slices.Clone(op.Steps[start:]), err
@@ -424,7 +418,6 @@ func (s *Service) Pause(ctx context.Context, name string, paused bool) error {
 }
 
 // Events lists the operations of a release (all for ""), newest first.
-func (s *Service) Events(ctx context.Context, name string, afterID int64, limit int) ([]api.Operation, error) {
-	ops, err := s.Store.ListOperations(ctx, name, afterID, limit)
-	return wireAll(ops, wireOperation), err
+func (s *Service) Events(ctx context.Context, name string, afterID int64, limit int) ([]release.Operation, error) {
+	return s.Store.ListOperations(ctx, name, afterID, limit)
 }

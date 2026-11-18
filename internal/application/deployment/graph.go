@@ -42,7 +42,7 @@ func dependencies(r resource.Resource) []Key {
 	return deps
 }
 
-// Order returns rs in creation order (dependencies first, tech design §7). Delete uses the reverse.
+// Order returns rs in creation order (dependencies first). Delete uses the reverse.
 func Order(rs []resource.Resource) ([]resource.Resource, error) {
 	return order(rs, dependencies)
 }

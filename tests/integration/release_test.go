@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/api"
-
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
@@ -23,8 +21,8 @@ func TestRedisReleaseLifecycle(t *testing.T) {
 	ctx := context.Background()
 	name := releaseName("it-rel")
 	s, rt := service(t, name)
-	values := func(tag string) api.ValuesInput {
-		return api.ValuesInput{Set: []string{"image.tag=" + tag}}
+	values := func(tag string) releases.Values {
+		return releases.Values{Set: []string{"image.tag=" + tag}}
 	}
 
 	// Install an older Redis, then upgrade forward (downgrading would hit RDB format changes).
@@ -54,7 +52,7 @@ func TestRedisReleaseLifecycle(t *testing.T) {
 		t.Fatalf("running workload was touched by a failed pull: %+v", st)
 	}
 	// Nothing that runs was changed, so the release stays deployed at revision 2 (D18).
-	if r := currentRelease(t, s, name); r.Status != string(release.StatusDeployed) || r.CurrentRevision != 2 {
+	if r := currentRelease(t, s, name); r.Status != release.StatusDeployed || r.CurrentRevision != 2 {
 		t.Fatalf("release after failed upgrade: %+v", r)
 	}
 
@@ -65,7 +63,7 @@ func TestRedisReleaseLifecycle(t *testing.T) {
 		t.Fatalf("rollback: %+v %v", res, err)
 	}
 	rep, err := s.Status(ctx, name)
-	if err != nil || rep.Release.Status != string(release.StatusDeployed) {
+	if err != nil || rep.Release.Status != release.StatusDeployed {
 		t.Fatalf("status: %+v %v", rep, err)
 	}
 
@@ -86,18 +84,18 @@ func TestFailedUpgradeKeepsHistory(t *testing.T) {
 	s, rt := service(t, name)
 	pkgPath := "testdata/probe"
 	common := opts()
-	common.Timeout = api.Duration(30 * time.Second)
+	common.Timeout = 30 * time.Second
 
 	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: pkgPath}, nil); err != nil {
 		t.Fatal(err)
 	}
 	_, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: pkgPath,
-		Values: api.ValuesInput{Set: []string{"healthy=false"}}}, nil)
+		Values: releases.Values{Set: []string{"healthy=false"}}}, nil)
 	if err == nil {
 		t.Fatal("unhealthy upgrade should fail")
 	}
 	hist, err := s.History(ctx, name)
-	if err != nil || len(hist) != 2 || hist[0].Status != string(release.RevisionDeployed) || hist[1].Status != string(release.RevisionFailed) {
+	if err != nil || len(hist) != 2 || hist[0].Status != release.RevisionDeployed || hist[1].Status != release.RevisionFailed {
 		t.Fatalf("history: %+v %v", hist, err)
 	}
 	if r := currentRelease(t, s, name); r.CurrentRevision != 1 {

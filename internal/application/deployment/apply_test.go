@@ -10,9 +10,8 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
-	"github.com/hasankaradmir/karga-server/internal/domain/release"
-
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -426,7 +425,7 @@ func TestReconcile(t *testing.T) {
 	// Both present: the unfinished new container is removed.
 	create("web-app")
 	create("web-app-next")
-	repaired, err := testEnv.Reconcile(ctx, rt, t.TempDir(), "web", applied)
+	repaired, err := testEnv.RepairReplace(ctx, rt, t.TempDir(), "web", applied)
 	if err != nil || len(repaired) != 0 || rt.Workloads["web-app-next"] != nil || rt.Workloads["web-app"] == nil {
 		t.Fatalf("both present: %v %v %v", repaired, err, rt.Workloads)
 	}
@@ -436,7 +435,7 @@ func TestReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	create("web-app-next")
-	repaired, err = testEnv.Reconcile(ctx, rt, t.TempDir(), "web", applied)
+	repaired, err = testEnv.RepairReplace(ctx, rt, t.TempDir(), "web", applied)
 	if err != nil || len(repaired) != 1 || repaired[0].Digest != "" || rt.Workloads["web-app"] == nil {
 		t.Fatalf("only -next: %v %v %v", repaired, err, rt.Workloads)
 	}

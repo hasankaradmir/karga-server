@@ -23,12 +23,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
 
 	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
-
-	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/docker"
 	"github.com/hasankaradmir/karga-server/internal/adapters/filestore"
@@ -200,7 +199,7 @@ func listener(t *testing.T, protocol string) (string, int) {
 }
 
 func opts() releases.CommonOptions {
-	return releases.CommonOptions{Timeout: api.Duration(2 * time.Minute)}
+	return releases.CommonOptions{Timeout: 2 * time.Minute}
 }
 
 func workload(t *testing.T, rt ports.Runtime, name string) ports.WorkloadStatus {
@@ -212,7 +211,7 @@ func workload(t *testing.T, rt ports.Runtime, name string) ports.WorkloadStatus 
 	return st
 }
 
-func currentRelease(t *testing.T, s *releases.Service, name string) api.Release {
+func currentRelease(t *testing.T, s *releases.Service, name string) release.Release {
 	t.Helper()
 	rels, err := s.List(context.Background())
 	if err != nil {
@@ -224,7 +223,7 @@ func currentRelease(t *testing.T, s *releases.Service, name string) api.Release 
 		}
 	}
 	t.Fatalf("release %s not listed", name)
-	return api.Release{}
+	return release.Release{}
 }
 
 // readFile returns a values file's content, as the CLI sends it.

@@ -12,19 +12,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
-
-	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
-
-	"github.com/hasankaradmir/karga-sdk/api"
-
 	"github.com/hasankaradmir/karga-sdk/resource"
-
-	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
 	"github.com/hasankaradmir/karga-server/internal/adapters/filestore"
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 	"github.com/hasankaradmir/karga-server/internal/ports/runtimetest"
 )
@@ -53,12 +48,12 @@ func newEnv(t *testing.T) *env {
 	return &env{t: t, svc: svc, rt: rt, port: strconv.Itoa(runtimetest.FreePort(t))}
 }
 
-func (e *env) opts(sets ...string) api.ValuesInput {
-	return api.ValuesInput{Set: append([]string{"service.enabled=false"}, sets...)}
+func (e *env) opts(sets ...string) Values {
+	return Values{Set: append([]string{"service.enabled=false"}, sets...)}
 }
 
 func common() CommonOptions {
-	return CommonOptions{Timeout: api.Duration(time.Second)}
+	return CommonOptions{Timeout: time.Second}
 }
 
 func (e *env) install(sets ...string) (*Result, error) {
@@ -110,7 +105,7 @@ func TestInstallIdempotentAndConflicts(t *testing.T) {
 func TestDryRunTouchesNothing(t *testing.T) {
 	e := newEnv(t)
 	res, err := e.svc.Install(context.Background(), InstallRequest{CommonOptions: CommonOptions{DryRun: true}, Name: "cache", Package: redisPkg, Values: e.opts()}, nil)
-	if err != nil || !res.DryRun || !res.Plan.HasChanges() {
+	if err != nil || !res.DryRun || !changed(res.Plan) {
 		t.Fatalf("dry run: %+v %v", res, err)
 	}
 	if _, err := e.svc.Store.GetRelease(context.Background(), "cache"); !errors.Is(err, ports.ErrNotFound) {
@@ -152,12 +147,12 @@ func TestUpgradeFailRollback(t *testing.T) {
 	if res.Revision != 4 || e.image() != "redis:7.2" || e.rt.Workloads["cache-redis"].State != ports.StateRunning {
 		t.Fatalf("rollback: %+v image %s", res, e.image())
 	}
-	hist := must[[]api.Revision](t)(e.svc.History(context.Background(), "cache"))
+	hist := must[[]release.Revision](t)(e.svc.History(context.Background(), "cache"))
 	var got []string
 	for _, r := range hist {
 		got = append(got, string(r.Status)+":"+r.PackageVersion+":"+r.Description)
 	}
-	if len(hist) != 4 || hist[3].Description != "Rollback to 2" || hist[2].Status != string(release.RevisionFailed) {
+	if len(hist) != 4 || hist[3].Description != "Rollback to 2" || hist[2].Status != release.RevisionFailed {
 		t.Fatalf("history: %v", got)
 	}
 
@@ -175,7 +170,7 @@ func TestUpgradeReuseValues(t *testing.T) {
 	e := newEnv(t)
 	must[*Result](t)(e.install("config.maxmemory=64mb"))
 	must[*Result](t)(e.svc.Upgrade(context.Background(), UpgradeRequest{CommonOptions: common(), Name: "cache", Package: redisPkg,
-		Values: api.ValuesInput{Set: []string{"image.tag=7.2"}}, ReuseValues: true}, nil))
+		Values: Values{Set: []string{"image.tag=7.2"}}, ReuseValues: true}, nil))
 	vals := must[map[string]any](t)(e.svc.GetValues(context.Background(), "cache", 0, false))
 	if vals["config"].(map[string]any)["maxmemory"] != "64mb" || vals["image"].(map[string]any)["tag"] != "7.2" {
 		t.Fatalf("reused values: %#v", vals)
@@ -252,9 +247,9 @@ func TestPrune(t *testing.T) {
 	must[*Result](t)(e.install())
 	for _, tag := range []string{"7.0", "7.1", "7.2", "7.3"} {
 		must[*Result](t)(e.svc.Upgrade(context.Background(), UpgradeRequest{
-			CommonOptions: CommonOptions{Timeout: api.Duration(time.Second), HistoryMax: new(2)}, Name: "cache", Package: redisPkg, Values: e.opts("image.tag=" + tag)}, nil))
+			CommonOptions: CommonOptions{Timeout: time.Second, HistoryMax: new(2)}, Name: "cache", Package: redisPkg, Values: e.opts("image.tag=" + tag)}, nil))
 	}
-	hist := must[[]api.Revision](t)(e.svc.History(context.Background(), "cache"))
+	hist := must[[]release.Revision](t)(e.svc.History(context.Background(), "cache"))
 	var nums []int
 	for _, r := range hist {
 		nums = append(nums, r.Number)
@@ -298,7 +293,7 @@ func TestManifestAndStatus(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	_, err := e.svc.Install(ctx, InstallRequest{CommonOptions: common(), Name: "db", Package: "../../../tests/testdata/postgres",
-		Values: api.ValuesInput{Set: []string{"service.enabled=false", "database.password=hunter2"}}}, nil)
+		Values: Values{Set: []string{"service.enabled=false", "database.password=hunter2"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,14 +333,14 @@ func TestReplaceUpgradeAndNonDisruptiveFailure(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	up := func(sets ...string) (*Result, error) {
-		return e.svc.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "site", Package: webPkg, Values: api.ValuesInput{Set: sets}}, nil)
+		return e.svc.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "site", Package: webPkg, Values: Values{Set: sets}}, nil)
 	}
 	if _, err := e.svc.Install(ctx, InstallRequest{CommonOptions: common(), Name: "site", Package: webPkg}, nil); err != nil {
 		t.Fatal(err)
 	}
 	res := must[*Result](t)(up("content=v2"))
 	var w deploymentChange
-	for _, c := range res.Plan.Changes {
+	for _, c := range res.Plan {
 		if c.Kind == resource.KindWorkload {
 			w = deploymentChange{c.Action, c.Strategy}
 		}
@@ -374,8 +369,8 @@ func TestReplaceUpgradeAndNonDisruptiveFailure(t *testing.T) {
 	// --strategy recreate overrides the spec.
 	e.rt.Health = ""
 	res = must[*Result](t)(e.svc.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "site", Package: webPkg,
-		Values: api.ValuesInput{Set: []string{"content=v4"}}, Strategy: "recreate"}, nil))
-	for _, c := range res.Plan.Changes {
+		Values: Values{Set: []string{"content=v4"}}, Strategy: "recreate"}, nil))
+	for _, c := range res.Plan {
 		if c.Kind == resource.KindWorkload && c.Strategy != "recreate" {
 			t.Fatalf("override ignored: %+v", c)
 		}
@@ -401,7 +396,7 @@ func TestReconcileBeforePlan(t *testing.T) {
 	if _, ok := e.rt.Workloads["site-web"]; !ok || e.rt.Workloads["site-web-next"] != nil {
 		t.Fatalf("not repaired: %v", e.rt.Workloads)
 	}
-	if !res.Plan.HasChanges() {
+	if !changed(res.Plan) {
 		t.Fatal("repaired workload should be applied again")
 	}
 }
@@ -411,8 +406,8 @@ const pgPkg = "../../../tests/testdata/postgres"
 func TestWriteOnlyValuesNotStored(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	pg := func(sets ...string) api.ValuesInput {
-		return api.ValuesInput{Set: append([]string{"service.enabled=false"}, sets...)}
+	pg := func(sets ...string) Values {
+		return Values{Set: append([]string{"service.enabled=false"}, sets...)}
 	}
 	if _, err := e.svc.Install(ctx, InstallRequest{CommonOptions: common(), Name: "db", Package: pgPkg, Values: pg("database.password=hunter2")}, nil); err != nil {
 		t.Fatal(err)
@@ -442,7 +437,7 @@ func TestWriteOnlyValuesNotStored(t *testing.T) {
 		t.Fatalf("reuse without password: %v", err)
 	}
 	if _, err := e.svc.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "db", Package: pgPkg, ReuseValues: true,
-		Values: api.ValuesInput{Set: []string{"database.password=hunter3"}}}, nil); err != nil {
+		Values: Values{Set: []string{"database.password=hunter3"}}}, nil); err != nil {
 		t.Fatalf("reuse with password: %v", err)
 	}
 	vals := must[map[string]any](t)(e.svc.GetValues(ctx, "db", 0, false))
@@ -524,7 +519,7 @@ func TestUpgradeRecreatesWhatWasRemoved(t *testing.T) {
 	}
 	res := must[*Result](t)(e.upgrade())
 	var created []string
-	for _, c := range res.Plan.Changes {
+	for _, c := range res.Plan {
 		if c.Action == deployment.ActionCreate {
 			created = append(created, c.Kind+"/"+c.Name)
 		}
@@ -612,7 +607,7 @@ func TestUpgradeDeletingVolumeNeedsFlag(t *testing.T) {
 	ctx := context.Background()
 	pkgDir := scratchPkg(t)
 	must[*Result](t)(e.svc.Install(ctx, InstallRequest{CommonOptions: common(), Name: "s", Package: pkgDir}, nil))
-	without := UpgradeRequest{CommonOptions: common(), Name: "s", Package: pkgDir, Values: api.ValuesInput{Set: []string{"scratch=false"}}}
+	without := UpgradeRequest{CommonOptions: common(), Name: "s", Package: pkgDir, Values: Values{Set: []string{"scratch=false"}}}
 
 	dry := without
 	dry.DryRun = true
@@ -657,12 +652,12 @@ func TestConcurrentUpgradesSerialize(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	hist := must[[]api.Revision](t)(e.svc.History(context.Background(), "cache"))
+	hist := must[[]release.Revision](t)(e.svc.History(context.Background(), "cache"))
 	if len(hist) != 1+len(tags) {
 		t.Fatalf("revisions: %+v", hist)
 	}
 	for i, r := range hist {
-		if r.Number != i+1 || r.Status != api.RevisionDeployed {
+		if r.Number != i+1 || r.Status != release.RevisionDeployed {
 			t.Fatalf("revision %d: %+v", i+1, r)
 		}
 	}
@@ -692,4 +687,17 @@ func TestLockHonoursContext(t *testing.T) {
 		t.Fatalf("after unlock: %v", err)
 	}
 	again()
+	if n := len(e.svc.busy); n != 0 {
+		t.Fatalf("%d lock entries left for releases nobody holds", n)
+	}
+}
+
+// changed reports whether a plan touches the runtime.
+func changed(plan []deployment.Summary) bool {
+	for _, c := range plan {
+		if c.Action != deployment.ActionUnchanged {
+			return true
+		}
+	}
+	return false
 }

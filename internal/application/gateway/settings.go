@@ -6,8 +6,9 @@ import (
 	"net"
 	"slices"
 
-	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // listenerOf returns the listener of s called name.
@@ -47,7 +48,7 @@ func validateSettings(s Settings) error {
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("%w: %w", api.ErrInvalid, errors.Join(errs...))
+		return fmt.Errorf("%w: %w", ports.ErrInvalid, errors.Join(errs...))
 	}
 	return nil
 }
@@ -56,3 +57,24 @@ func validateSettings(s Settings) error {
 func DefaultListeners() []Listener {
 	return []Listener{{Name: "web", Port: 80, Protocol: ProtocolHTTP}, {Name: "websecure", Port: 443, Protocol: ProtocolHTTPS}}
 }
+
+// Listener is a port the gateway serves on every listen address. A tcp listener belongs to one
+// service; http and https listeners are shared by host and path.
+type Listener struct {
+	Name     string `yaml:"name"`
+	Port     int    `yaml:"port"`
+	Protocol string `yaml:"protocol"`
+}
+
+// Settings are the host administrator's gateway, stored in $KARGA_HOME/gateway.yaml: where it
+// listens, on which listeners, and whether it logs access. Packages cannot change them.
+type Settings struct {
+	// Listen are the host addresses every listener binds (default 127.0.0.1).
+	Listen    []string   `yaml:"listen,omitempty"`
+	Listeners []Listener `yaml:"listeners"`
+	AccessLog bool       `yaml:"accessLog"`
+}
+
+// DefaultListen is where the gateway listens until the administrator sets addresses: nothing is
+// reachable from other machines until the administrator says so.
+const DefaultListen = "127.0.0.1"

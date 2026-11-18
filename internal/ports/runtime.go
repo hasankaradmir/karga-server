@@ -7,8 +7,6 @@ import (
 	"io"
 	"slices"
 	"time"
-
-	"github.com/hasankaradmir/karga-sdk/api"
 )
 
 // Errors every Runtime implementation wraps (with %w) so callers can react to them.
@@ -19,6 +17,9 @@ var (
 	ErrImageNotFound = errors.New("image not found")
 	ErrUnavailable   = errors.New("runtime unavailable")
 	ErrPermission    = errors.New("permission denied")
+	// ErrInvalid marks a request that cannot be done as asked (a package that does not render,
+	// settings that do not validate): the caller must change it.
+	ErrInvalid = errors.New("invalid")
 )
 
 // Capability strings reported in RuntimeInfo.
@@ -241,7 +242,14 @@ type WorkloadStatus struct {
 }
 
 // ExecOptions is shared with the CLI (karga-sdk/api).
-type ExecOptions = api.ExecOptions
+type ExecOptions struct {
+	Cmd            []string
+	TTY            bool
+	Stdin          io.Reader // nil: no input
+	Stdout, Stderr io.Writer
+	Width, Height  uint
+	Resize         <-chan [2]uint // width, height
+}
 
 // Limits are the enforced resource and logging limits of a workload.
 type Limits struct {

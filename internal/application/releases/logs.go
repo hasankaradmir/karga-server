@@ -10,15 +10,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 )
-
-// LogsRequest is shared with the CLI (karga-sdk/api).
-type LogsRequest = api.LogsRequest
 
 // Logs writes container logs to w. Several containers are prefixed "name | " per line; without
 // Follow they are shown one after the other, with Follow side by side until ctx is done.

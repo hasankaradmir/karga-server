@@ -13,7 +13,6 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
@@ -33,12 +32,6 @@ type BackupManifest struct {
 	MountPath string    `yaml:"mountPath"`
 	Created   time.Time `yaml:"created"`
 }
-
-// VolumeBackupRequest is shared with the CLI (karga-sdk/api).
-type VolumeBackupRequest = api.VolumeBackupRequest
-
-// VolumeRestoreRequest is shared with the CLI (karga-sdk/api).
-type VolumeRestoreRequest = api.VolumeRestoreRequest
 
 type mounter struct {
 	name, runtime, path string

@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/packages"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
-
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -55,7 +53,7 @@ func (s *Service) resumeRelease(ctx context.Context, name string) error {
 		return err
 	}
 	if op.Hostname == s.Hostname && op.PID != s.PID && processAlive(op.PID) {
-		return nil // another karga still works on it
+		return nil // a live process still works on it
 	}
 	return s.resume(ctx, rel, op)
 }
@@ -109,7 +107,7 @@ func (s *Service) redeploy(ctx context.Context, rel release.Release, op release.
 	p := packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
 	_, err = s.deploy(ctx, deployInput{
 		// The request's own choices: a volume it was not allowed to delete is not deleted now either.
-		CommonOptions: CommonOptions{DeleteVolumes: op.Options.DeleteVolumes, Timeout: api.Duration(op.Options.Timeout), Force: true},
+		CommonOptions: CommonOptions{DeleteVolumes: op.Options.DeleteVolumes, Timeout: op.Options.Timeout, Force: true},
 		Strategy:      op.Options.Strategy,
 		Name:          rel.Name, Type: op.Type, Description: rev.Description, resumed: true,
 		Package: p, PackageDigest: rev.PackageDigest, Overrides: rev.Values, Values: rev.ValuesAll,

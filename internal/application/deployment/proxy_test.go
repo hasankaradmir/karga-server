@@ -5,15 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
-	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
-	"github.com/hasankaradmir/karga-server/internal/ports"
-
-	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
-
 	"github.com/hasankaradmir/karga-sdk/resource"
 
+	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // testEnv is where the tests deploy: fake proxies, the host's network, a short poll interval.

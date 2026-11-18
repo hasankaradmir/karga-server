@@ -17,8 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/api"
-
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
@@ -36,9 +34,9 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 	s, rt := service(t, name)
 	l, port := listener(t, gateway.ProtocolTCP)
 	common := opts()
-	common.Timeout = api.Duration(30 * time.Second)
-	sets := func(extra ...string) api.ValuesInput {
-		return api.ValuesInput{Set: append([]string{startDelay, "listener=" + l, "second=true"}, extra...)}
+	common.Timeout = 30 * time.Second
+	sets := func(extra ...string) releases.Values {
+		return releases.Values{Set: append([]string{startDelay, "listener=" + l, "second=true"}, extra...)}
 	}
 
 	res, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil)
@@ -46,11 +44,11 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	var proxyCreated bool
-	for _, c := range res.Plan.Changes {
+	for _, c := range res.Plan {
 		proxyCreated = proxyCreated || (c.Kind == deployment.KindProxy && c.Action == "create")
 	}
 	if !proxyCreated {
-		t.Fatalf("no release proxy in the plan: %+v", res.Plan.Changes)
+		t.Fatalf("no release proxy in the plan: %+v", res.Plan)
 	}
 	pub, err := rt.PublishedPorts(ctx)
 	if err != nil {
@@ -96,7 +94,7 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 	if bodies["v2"] == 0 || len(bodies) != 2 || api.Bodies["v2"] == 0 {
 		t.Fatalf("unexpected content: %v", bodies)
 	}
-	if r := currentRelease(t, s, name); r.Status != string(release.StatusDeployed) || r.CurrentRevision != 2 {
+	if r := currentRelease(t, s, name); r.Status != release.StatusDeployed || r.CurrentRevision != 2 {
 		t.Fatalf("release after failed replace: %+v", r)
 	}
 
@@ -143,7 +141,7 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 	l, port := listener(t, gateway.ProtocolHTTP)
 	install := func(rel, host, content string) error {
 		_, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: rel, Package: webPkg,
-			Values: api.ValuesInput{Set: []string{"route=" + host, "routeListener=" + l, "content=" + content}}}, nil)
+			Values: releases.Values{Set: []string{"route=" + host, "routeListener=" + l, "content=" + content}}}, nil)
 		return err
 	}
 	if err := install(a, "a.local", "from-a"); err != nil {
@@ -215,7 +213,7 @@ func TestGatewayRecreateWorkload(t *testing.T) {
 	s, rt := service(t, name)
 	l, port := listener(t, gateway.ProtocolTCP)
 	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: api.ValuesInput{Set: []string{"strategy=recreate", "listener=" + l, "listenPort=80"}}}, nil); err != nil {
+		Values: releases.Values{Set: []string{"strategy=recreate", "listener=" + l, "listenPort=80"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if code, body := hostGet(t, port, "x"); code != http.StatusOK || body != "v1" {
@@ -243,7 +241,7 @@ func TestProxyLowPort(t *testing.T) {
 	name := releaseName("it-proxy-80")
 	s, rt := service(t, name)
 	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: api.ValuesInput{Set: []string{"listenPort=80"}}}, nil); err != nil {
+		Values: releases.Values{Set: []string{"listenPort=80"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	p := startNetPinger(t, rt, name, "http://web:80/")
@@ -263,9 +261,9 @@ func TestGatewayKeepsLongConnections(t *testing.T) {
 	s, _ := service(t, name)
 	l, echo := listener(t, gateway.ProtocolTCP)
 	common := opts()
-	common.Timeout = api.Duration(30 * time.Second)
-	sets := func(extra ...string) api.ValuesInput {
-		return api.ValuesInput{Set: append([]string{"echo=true", "echoListener=" + l, "drain=60s"}, extra...)}
+	common.Timeout = 30 * time.Second
+	sets := func(extra ...string) releases.Values {
+		return releases.Values{Set: append([]string{"echo=true", "echoListener=" + l, "drain=60s"}, extra...)}
 	}
 	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil); err != nil {
 		t.Fatal(err)
@@ -357,7 +355,7 @@ func TestGatewayConcurrentInstalls(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, errs[i] = x.s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: x.name, Package: webPkg,
-				Values: api.ValuesInput{Set: []string{"route=" + x.name + ".local", "routeListener=" + l, "content=" + x.name}}}, nil)
+				Values: releases.Values{Set: []string{"route=" + x.name + ".local", "routeListener=" + l, "content=" + x.name}}}, nil)
 		}()
 	}
 	wg.Wait()
@@ -383,7 +381,7 @@ func TestGatewaySurvivesDockerRestart(t *testing.T) {
 	s, _ := service(t, name)
 	l, port := listener(t, gateway.ProtocolHTTP)
 	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: api.ValuesInput{Set: []string{"second=true", "route=boot.local", "routeListener=" + l}}}, nil); err != nil {
+		Values: releases.Values{Set: []string{"second=true", "route=boot.local", "routeListener=" + l}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := exec.Command("sudo", "-n", "systemctl", "restart", "docker").CombinedOutput(); err != nil {
