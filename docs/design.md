@@ -278,7 +278,9 @@ count.
 
 ## 11. Testing
 
-- Unit tests with the fake runtime (`make test`, with `-race`).
+- Unit tests with the fake runtime (`make test`, with `-race`). A golden file
+  (`internal/application/releases/testdata/lifecycle.golden.yaml`) pins what each lifecycle step
+  does to the state and the runtime; `internal/server` tests the API through the composition root.
 - The runtime contract suite against Docker, including what Docker actually enforces (limits,
   logging, security options).
 - Integration tests against Docker on Linux (`make test-integration`, or `make test-linux` in a VM),
@@ -286,5 +288,7 @@ count.
   Zero-loss claims are measured with clients on the host and on the release network.
 - End-to-end tests drive the built binaries, karga-server and the karga CLI built from its
   repository (`make test-e2e`), including a server killed mid-upgrade that resumes it.
-- The CLI's own tests run against a fake `Backend` behind the SDK's HTTP handler; the SDK's tests
-  cover the package engine, plans and the API's version check and detached operations.
+- The CLI's own tests run against a fake `Backend` behind the SDK's HTTP handler (`apitest.Serve`),
+  with golden files for the text output; the SDK's tests cover the package engine, plans and the
+  API's version check and detached operations, and fuzz archive unpacking, resource decoding and
+  secret paths.

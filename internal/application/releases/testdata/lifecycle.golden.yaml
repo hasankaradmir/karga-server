@@ -1,0 +1,242 @@
+- step: install
+  result:
+    from: 0
+    plan:
+        - create Volume/redis-data
+        - create Config/redis-config
+        - create Workload/redis
+    revision: 1
+    status: deployed
+  release: deployed, revision 1
+  revisions:
+    - 1 deployed
+  operations:
+    - install 1 succeeded
+  runtimeCalls:
+    - 'Info:'
+    - 'Info:'
+    - EnsureImage:redis:7.4
+    - Pull:redis:7.4
+    - CreateVolume:cache-redis-data
+    - CreateWorkload:cache-redis
+    - StartWorkload:cache-redis
+    - StopWorkload:karga-gateway
+- step: install again (same package and values)
+  result:
+    from: 1
+    noOp: true
+    revision: 1
+    status: deployed
+  release: deployed, revision 1
+  revisions:
+    - 1 deployed
+  operations:
+    - install 1 succeeded
+- step: upgrade image
+  result:
+    from: 1
+    plan:
+        - unchanged Volume/redis-data
+        - unchanged Config/redis-config
+        - update Workload/redis (recreate) spec.image
+    revision: 2
+    status: deployed
+  release: deployed, revision 2
+  revisions:
+    - 1 deployed
+    - 2 deployed
+  operations:
+    - install 1 succeeded
+    - upgrade 2 succeeded
+  runtimeCalls:
+    - 'Info:'
+    - 'Info:'
+    - EnsureImage:redis:7.4.1
+    - Pull:redis:7.4.1
+    - StopWorkload:cache-redis
+    - DeleteWorkload:cache-redis
+    - CreateWorkload:cache-redis
+    - StartWorkload:cache-redis
+    - StopWorkload:karga-gateway
+- step: upgrade config
+  result:
+    from: 2
+    plan:
+        - unchanged Volume/redis-data
+        - update Config/redis-config spec.files.redis.conf
+        - update Workload/redis (recreate) (mounted Config/Secret content or previous failure)
+    revision: 3
+    status: deployed
+  release: deployed, revision 3
+  revisions:
+    - 1 deployed
+    - 2 deployed
+    - 3 deployed
+  operations:
+    - install 1 succeeded
+    - upgrade 2 succeeded
+    - upgrade 3 succeeded
+  runtimeCalls:
+    - 'Info:'
+    - 'Info:'
+    - EnsureImage:redis:7.4.1
+    - StopWorkload:cache-redis
+    - DeleteWorkload:cache-redis
+    - CreateWorkload:cache-redis
+    - StartWorkload:cache-redis
+    - StopWorkload:karga-gateway
+- step: upgrade that fails to start
+  error: 'Workload "redis": boom'
+  result:
+    from: 3
+    plan:
+        - unchanged Volume/redis-data
+        - unchanged Config/redis-config
+        - update Workload/redis (recreate) spec.image
+    revision: 4
+    status: failed
+  release: failed, revision 3
+  revisions:
+    - 1 deployed
+    - 2 deployed
+    - 3 deployed
+    - 4 failed
+  operations:
+    - install 1 succeeded
+    - upgrade 2 succeeded
+    - upgrade 3 succeeded
+    - upgrade 4 failed
+  runtimeCalls:
+    - 'Info:'
+    - 'Info:'
+    - EnsureImage:redis:7.4.2
+    - Pull:redis:7.4.2
+    - StopWorkload:cache-redis
+    - DeleteWorkload:cache-redis
+    - CreateWorkload:cache-redis
+    - StartWorkload:cache-redis
+    - StopWorkload:karga-gateway
+- step: rollback to 2
+  result:
+    from: 3
+    plan:
+        - unchanged Volume/redis-data
+        - update Config/redis-config spec.files.redis.conf
+        - update Workload/redis (recreate) spec.image
+    revision: 5
+    status: deployed
+  release: deployed, revision 5
+  revisions:
+    - 1 deployed
+    - 2 deployed
+    - 3 deployed
+    - 4 failed
+    - 5 deployed
+  operations:
+    - install 1 succeeded
+    - upgrade 2 succeeded
+    - upgrade 3 succeeded
+    - upgrade 4 failed
+    - rollback 5 succeeded
+  runtimeCalls:
+    - 'Info:'
+    - 'Info:'
+    - EnsureImage:redis:7.4.1
+    - StopWorkload:cache-redis
+    - DeleteWorkload:cache-redis
+    - CreateWorkload:cache-redis
+    - StartWorkload:cache-redis
+    - StopWorkload:karga-gateway
+- step: repair a removed container
+  result:
+    actions:
+        - create Workload/redis done
+  release: deployed, revision 5
+  revisions:
+    - 1 deployed
+    - 2 deployed
+    - 3 deployed
+    - 4 failed
+    - 5 deployed
+  operations:
+    - install 1 succeeded
+    - upgrade 2 succeeded
+    - upgrade 3 succeeded
+    - upgrade 4 failed
+    - rollback 5 succeeded
+    - reconcile 5 succeeded
+  runtimeCalls:
+    - 'Info:'
+    - 'Info:'
+    - EnsureImage:redis:7.4.1
+    - CreateWorkload:cache-redis
+    - StartWorkload:cache-redis
+    - StopWorkload:karga-gateway
+- step: dry-run upgrade
+  result:
+    dryRun: true
+    from: 5
+    plan:
+        - unchanged Volume/redis-data
+        - unchanged Config/redis-config
+        - update Workload/redis (recreate) spec.image
+    revision: 6
+    status: ""
+  release: deployed, revision 5
+  revisions:
+    - 1 deployed
+    - 2 deployed
+    - 3 deployed
+    - 4 failed
+    - 5 deployed
+  operations:
+    - install 1 succeeded
+    - upgrade 2 succeeded
+    - upgrade 3 succeeded
+    - upgrade 4 failed
+    - rollback 5 succeeded
+    - reconcile 5 succeeded
+  runtimeCalls:
+    - 'Info:'
+- step: resume an interrupted upgrade
+  release: deployed, revision 5
+  revisions:
+    - 1 deployed
+    - 2 deployed
+    - 3 deployed
+    - 4 failed
+    - 5 deployed
+  operations:
+    - install 1 succeeded
+    - upgrade 2 succeeded
+    - upgrade 3 succeeded
+    - upgrade 4 failed
+    - rollback 5 succeeded
+    - reconcile 5 succeeded
+    - upgrade 5 aborted
+    - resume 5 succeeded
+  runtimeCalls:
+    - 'Info:'
+    - 'Info:'
+    - StopWorkload:karga-gateway
+- step: uninstall
+  result:
+    from: 5
+    revision: 5
+    status: uninstalled
+  release: absent
+  operations:
+    - install 1 succeeded
+    - upgrade 2 succeeded
+    - upgrade 3 succeeded
+    - upgrade 4 failed
+    - rollback 5 succeeded
+    - reconcile 5 succeeded
+    - upgrade 5 aborted
+    - resume 5 succeeded
+    - uninstall 5 succeeded
+  runtimeCalls:
+    - 'Info:'
+    - StopWorkload:cache-redis
+    - DeleteWorkload:cache-redis
+    - StopWorkload:karga-gateway
