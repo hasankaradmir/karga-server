@@ -26,7 +26,7 @@ func IsWarning(err error) bool {
 // Check refuses exposures of release rel that the gateway cannot serve: an unknown listener, a
 // listener of another protocol, or a tcp listener, host and path or certificate another release
 // already holds. It binds a listener nobody uses yet once, to see that no other process holds it.
-func Check(ctx context.Context, rt ports.Runtime, h *proxyops.Host, home, rel string, rs []resource.Resource) []error {
+func Check(ctx context.Context, rt Runtime, h *proxyops.Host, home, rel string, rs []resource.Resource) []error {
 	settings, err := ReadSettings(home)
 	if err != nil {
 		return []error{err}

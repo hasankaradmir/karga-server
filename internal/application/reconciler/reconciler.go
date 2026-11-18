@@ -25,6 +25,11 @@ type Repairer interface {
 	NextRepair(name string) time.Time
 }
 
+// EventSource streams what happens to karga's containers (a ports.Runtime).
+type EventSource interface {
+	Events(ctx context.Context) (<-chan ports.RuntimeEvent, error)
+}
+
 // Queue collects the releases to reconcile, after a debounce: a recreate fires several events.
 // It is made before the release service, whose Deps.Notify is Queue.Notify, and the loop.
 type Queue struct {
@@ -75,7 +80,7 @@ type Loop struct {
 	q        *Queue
 	list     Lister
 	repair   Repairer
-	rt       ports.Runtime
+	events   EventSource
 	interval time.Duration
 	log      *slog.Logger
 	only     func(string) bool
@@ -85,12 +90,12 @@ type Loop struct {
 }
 
 // New returns a loop that takes releases from q, lists them with list and repairs them with
-// repair, watching rt's container events.
-func New(q *Queue, list Lister, repair Repairer, rt ports.Runtime, o Options) *Loop {
+// repair, watching the runtime's container events.
+func New(q *Queue, list Lister, repair Repairer, events EventSource, o Options) *Loop {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	return &Loop{q: q, list: list, repair: repair, rt: rt, interval: o.Interval, log: o.Log, only: o.Only, retries: map[string]*time.Timer{}}
+	return &Loop{q: q, list: list, repair: repair, events: events, interval: o.Interval, log: o.Log, only: o.Only, retries: map[string]*time.Timer{}}
 }
 
 // Run reconciles until ctx is done: every release at start (after a reboot, say), after events
@@ -173,7 +178,7 @@ func (l *Loop) one(ctx context.Context, name string) {
 // breaks (Docker restarted).
 func (l *Loop) watch(ctx context.Context) {
 	for ctx.Err() == nil {
-		events, err := l.rt.Events(ctx)
+		events, err := l.events.Events(ctx)
 		if err != nil {
 			l.log.Warn("reconcile: runtime events", "error", err)
 		} else {
