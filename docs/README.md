@@ -1,7 +1,7 @@
 # karga documentation
 
-Using karga is covered by the CLI's [README](https://github.com/hasankaradmir/karga#readme) and
-[USAGE.md](https://github.com/hasankaradmir/karga/blob/master/USAGE.md), running the server by this
+Using karga is covered by the CLI's [README](https://github.com/hasankaradmir/karga-cli#readme) and
+[USAGE.md](https://github.com/hasankaradmir/karga-cli/blob/master/USAGE.md), running the server by this
 repository's [README](../README.md). The documents here are for working on karga itself (the
 server, the CLI and karga-sdk).
 

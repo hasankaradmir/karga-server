@@ -8,9 +8,8 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/packages"
-	"github.com/hasankaradmir/karga-sdk/pkg"
-	"github.com/hasankaradmir/karga-sdk/release"
-	"github.com/hasankaradmir/karga-sdk/values"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -47,7 +46,7 @@ func (s *Service) render(ctx context.Context, name, path string, opts packages.O
 	}
 	p, err := packages.Load(path)
 	if err != nil {
-		return deployInput{}, err
+		return deployInput{}, invalid{err}
 	}
 	digest, err := packages.Digest(path)
 	if err != nil {
@@ -56,19 +55,33 @@ func (s *Service) render(ctx context.Context, name, path string, opts packages.O
 	opts.ReleaseName, opts.Revision = name, revision
 	m, err := packages.Render(p, opts)
 	if err != nil {
-		return deployInput{}, err
+		return deployInput{}, invalid{err}
 	}
 	return deployInput{Name: name, Package: p.Metadata, PackageDigest: digest, Overrides: m.Overrides,
 		Values: m.Values, Resources: m.Resources(), Revision: revision, SecretPaths: m.SecretPaths, Notes: m.Notes}, nil
 }
 
-// Install installs a package. Installing again with the same package and values is a no-op (A8).
-func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, error) {
+// valuesOptions are the render options for the values a client sent.
+func valuesOptions(v api.ValuesInput) packages.Options {
+	return packages.Options{ValueData: v.Files, Sets: v.Set, SetStrings: v.SetString, Strict: v.Strict}
+}
+
+// Install installs a package. Installing again with the same package and values is a no-op.
+func (s *Service) Install(ctx context.Context, req InstallRequest, progress func(api.Event)) (*Result, error) {
+	unlock, err := s.lock(ctx, req.Name, false)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return s.install(ctx, req, progress)
+}
+
+func (s *Service) install(ctx context.Context, req InstallRequest, progress func(api.Event)) (*Result, error) {
 	existing, err := s.getRelease(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
-	in, err := s.render(ctx, req.Name, req.Package, req.Values)
+	in, err := s.render(ctx, req.Name, req.Package, valuesOptions(req.Values))
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +100,7 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 				return nil, err
 			}
 			if cur.PackageDigest == in.PackageDigest && cur.ValuesDigest == valuesDigest {
-				return &Result{Release: req.Name, Revision: cur.Number, From: cur.Number, Status: existing.Status, NoOp: true}, nil
+				return &Result{Release: req.Name, Revision: cur.Number, From: cur.Number, Status: string(existing.Status), NoOp: true}, nil
 			}
 			return nil, fmt.Errorf("%w: %s is deployed with a different package or values; use 'karga upgrade'", ErrExists, req.Name)
 		case existing.Status == release.StatusFailed && existing.CurrentRevision > 0:
@@ -95,57 +108,67 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 		}
 		// A never-deployed failed release, an uninstalled one or an interrupted one is retried.
 	}
-	in.CommonOptions, in.Type, in.Description, in.Existing = req.CommonOptions, "install", "Install complete", existing
+	in.CommonOptions, in.Type, in.Description, in.Existing, in.Progress = req.CommonOptions, "install", "Install complete", existing, progress
 	return s.deploy(ctx, in)
 }
 
 // Upgrade renders the package with new values and applies the difference.
-func (s *Service) Upgrade(ctx context.Context, req UpgradeRequest) (*Result, error) {
+func (s *Service) Upgrade(ctx context.Context, req UpgradeRequest, progress func(api.Event)) (*Result, error) {
+	unlock, err := s.lock(ctx, req.Name, false)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	existing, err := s.getRelease(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
 	if existing == nil {
 		if req.Install {
-			return s.Install(ctx, InstallRequest{CommonOptions: req.CommonOptions, Name: req.Name, Package: req.Package, Values: req.Values})
+			return s.install(ctx, InstallRequest{CommonOptions: req.CommonOptions, Name: req.Name, Package: req.Package, Values: req.Values}, progress)
 		}
 		return nil, fmt.Errorf("release %s: %w (use --install to create it)", req.Name, ports.ErrNotFound)
 	}
 	if existing.Status == release.StatusUninstalled {
 		return nil, fmt.Errorf("release %s is uninstalled; use 'karga install'", req.Name)
 	}
-	opts := req.Values
+	opts := valuesOptions(req.Values)
 	if req.ReuseValues && existing.CurrentRevision > 0 {
 		cur, err := s.Store.GetRevision(ctx, req.Name, existing.CurrentRevision)
 		if err != nil {
 			return nil, err
 		}
 		// writeOnly values were never stored: they must be given again.
-		hidden := values.RedactedPaths(cur.Values)
+		hidden := redactedPaths(cur.Values)
 		if len(hidden) > 0 {
 			given, err := packages.Overrides(opts)
 			if err != nil {
 				return nil, err
 			}
 			for _, p := range hidden {
-				if !values.Has(given, p) {
+				if !hasValue(given, p) {
 					return nil, fmt.Errorf("%s is writeOnly and was not stored; pass it again with --set %s=<value>", strings.Join(p, "."), strings.Join(p, "."))
 				}
 			}
 		}
-		opts.BaseOverrides = values.Drop(cur.Values, hidden)
+		opts.BaseOverrides = dropValues(cur.Values, hidden)
 	}
 	in, err := s.render(ctx, req.Name, req.Package, opts)
 	if err != nil {
 		return nil, err
 	}
 	in.CommonOptions, in.Type, in.Description, in.Existing = req.CommonOptions, "upgrade", "Upgrade complete", existing
-	in.Strategy = req.Strategy
+	in.Strategy, in.Progress = req.Strategy, progress
 	return s.deploy(ctx, in)
 }
 
-// Rollback re-applies the desired state of an earlier revision as a new revision (tech design §9.3).
-func (s *Service) Rollback(ctx context.Context, req RollbackRequest) (*Result, error) {
+// Rollback re-applies the desired state of an earlier revision as a new revision.
+func (s *Service) Rollback(ctx context.Context, req RollbackRequest, progress func(api.Event)) (*Result, error) {
+	unlock, err := s.lock(ctx, req.Name, false)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	existing, err := s.getRelease(ctx, req.Name)
 	if err != nil {
 		return nil, err
@@ -177,9 +200,9 @@ func (s *Service) Rollback(ctx context.Context, req RollbackRequest) (*Result, e
 	if err != nil {
 		return nil, err
 	}
-	p := pkg.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: pkg.Runtime{Supported: rev.RuntimeSupported}}
+	p := packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
 	return s.deploy(ctx, deployInput{
-		CommonOptions: req.CommonOptions, Name: req.Name, Type: "rollback", Description: fmt.Sprintf("Rollback to %d", target),
+		CommonOptions: req.CommonOptions, Progress: progress, Name: req.Name, Type: "rollback", Description: fmt.Sprintf("Rollback to %d", target),
 		Package: p, PackageDigest: rev.PackageDigest, Overrides: rev.Values, Values: rev.ValuesAll,
 		Resources: rs, Revision: number, Existing: existing, Strategy: req.Strategy, Notes: rev.Notes,
 	})
@@ -205,28 +228,47 @@ func (s *Service) rollbackTarget(ctx context.Context, rel *release.Release) (int
 
 // Uninstall removes the release's workloads and networks; volumes are kept unless DeleteVolumes or
 // retention: delete. With KeepHistory the revisions stay and the release is marked uninstalled.
-func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) error {
+func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result, error) {
+	unlock, err := s.lock(ctx, req.Name, false)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return s.uninstallRelease(ctx, req)
+}
+
+func (s *Service) uninstallRelease(ctx context.Context, req UninstallRequest) (*Result, error) {
 	existing, err := s.getRelease(ctx, req.Name)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if existing == nil {
-		return fmt.Errorf("release %s: %w", req.Name, ports.ErrNotFound)
+		return nil, fmt.Errorf("release %s: %w", req.Name, ports.ErrNotFound)
 	}
 	if existing.Status == release.StatusUninstalled {
-		return fmt.Errorf("release %s is already uninstalled", req.Name)
+		return nil, fmt.Errorf("%w: release %s is already uninstalled", api.ErrConflict, req.Name)
 	}
 	rt, err := s.runtime(ctx)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	res := &Result{Release: req.Name, Revision: existing.CurrentRevision, From: existing.CurrentRevision, DryRun: req.DryRun}
+	if req.DryRun {
+		res.Status = string(existing.Status)
+		res.Plan, err = deployment.DeletePlan(ctx, rt, req.Name, req.DeleteVolumes)
+		return res, err
 	}
 	op, err := s.begin(ctx, req.Name, "uninstall", existing.CurrentRevision, req.Force)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	err = s.uninstall(ctx, rt, *existing, req)
 	s.finish(ctx, op, err)
-	return err
+	if err != nil {
+		return nil, err
+	}
+	res.Status = string(release.StatusUninstalled)
+	return res, nil
 }
 
 func (s *Service) uninstall(ctx context.Context, rt ports.Runtime, rel release.Release, req UninstallRequest) error {

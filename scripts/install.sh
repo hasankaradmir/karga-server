@@ -7,7 +7,7 @@
 #   KARGA_DOWNLOAD_URL  download from here instead of GitHub (a mirror, or file:// for a local build)
 #   KARGA_SYSTEMD=0     install the binary only, without the service
 #
-# The karga CLI is installed separately: https://github.com/hasankaradmir/karga
+# The karga CLI is installed separately: https://github.com/hasankaradmir/karga-cli
 set -eu
 
 repo=hasankaradmir/karga-server
@@ -41,18 +41,32 @@ got=$(sha256sum "$tmp/$archive" | cut -d' ' -f1)
 as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi; }
 
 tar -xzf "$tmp/$archive" -C "$tmp"
+changed=1
+if [ -f "$bin_dir/karga-server" ] && [ "$(sha256sum "$bin_dir/karga-server" | cut -d' ' -f1)" = "$(sha256sum "$tmp/karga-server" | cut -d' ' -f1)" ]; then
+  changed=0
+fi
 if [ -w "$bin_dir" ]; then mv "$tmp/karga-server" "$bin_dir/"; else as_root mv "$tmp/karga-server" "$bin_dir/"; fi
 echo "karga-server $version installed to $bin_dir/karga-server"
 
 # The service: a karga system user in the docker group owns /var/lib/karga; members of the karga
 # group may use the CLI.
 if [ "${KARGA_SYSTEMD:-1}" = 1 ]; then
+  getent group docker >/dev/null || { echo "no docker group: install Docker first" >&2; exit 1; }
   getent group karga >/dev/null || as_root groupadd --system karga
-  id karga >/dev/null 2>&1 || as_root useradd --system --gid karga --groups docker --home-dir /var/lib/karga --shell /usr/sbin/nologin karga
+  if id karga >/dev/null 2>&1; then
+    as_root usermod -aG docker karga
+  else
+    as_root useradd --system --gid karga --groups docker --home-dir /var/lib/karga --shell /usr/sbin/nologin karga
+  fi
   sed "s#/usr/local/bin/karga-server#$bin_dir/karga-server#" "$tmp/deploy/systemd/karga-server.service" > "$tmp/karga-server.service"
   as_root install -m 0644 "$tmp/karga-server.service" /etc/systemd/system/karga-server.service
   as_root systemctl daemon-reload
-  as_root systemctl enable --now karga-server
-  as_root systemctl restart karga-server # a new binary when it was running already
+  if systemctl is-active --quiet karga-server; then
+    # Restarting waits for running operations (up to 5 minutes); only do it for a new binary.
+    [ "$changed" = 0 ] || as_root systemctl restart karga-server
+    as_root systemctl enable karga-server
+  else
+    as_root systemctl enable --now karga-server
+  fi
   echo "karga-server is running; add users to the karga group to use karga: sudo usermod -aG karga \$USER"
 fi

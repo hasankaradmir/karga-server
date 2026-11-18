@@ -101,8 +101,13 @@ func pause(ctx context.Context, rt ports.Runtime, ms []mounter) (func() error, e
 	return resume, nil
 }
 
-// BackupVolume writes req.Volume to req.W.
-func (s *Service) BackupVolume(ctx context.Context, req VolumeBackupRequest) (err error) {
+// BackupVolume writes req.Volume to w.
+func (s *Service) BackupVolume(ctx context.Context, req VolumeBackupRequest, w io.Writer) (err error) {
+	unlock, err := s.lock(ctx, req.Release, false)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	ms, err := s.mounters(ctx, req.Release, req.Volume)
 	if err != nil {
 		return err
@@ -128,7 +133,7 @@ func (s *Service) BackupVolume(ctx context.Context, req VolumeBackupRequest) (er
 		}
 	}
 	src := ms[0]
-	gz := gzip.NewWriter(req.W)
+	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
 	man, _ := json.Marshal(BackupManifest{Release: req.Release, Volume: req.Volume, MountPath: src.path, Created: s.Now().UTC()})
 	if err := tw.WriteHeader(&tar.Header{Name: backupManifest, Mode: 0o600, Size: int64(len(man)), ModTime: s.Now()}); err != nil {
@@ -149,8 +154,13 @@ func (s *Service) BackupVolume(ctx context.Context, req VolumeBackupRequest) (er
 	return gz.Close()
 }
 
-// RestoreVolume writes the backup read from req.R into req.Volume.
-func (s *Service) RestoreVolume(ctx context.Context, req VolumeRestoreRequest) (err error) {
+// RestoreVolume writes the backup read from r into req.Volume.
+func (s *Service) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r io.Reader) (err error) {
+	unlock, err := s.lock(ctx, req.Release, false)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	ms, err := s.mounters(ctx, req.Release, req.Volume)
 	if err != nil {
 		return err
@@ -165,7 +175,7 @@ func (s *Service) RestoreVolume(ctx context.Context, req VolumeRestoreRequest) (
 	if dst < 0 {
 		return fmt.Errorf("every workload mounts volume %q read-only; nothing can write to it", req.Volume)
 	}
-	gz, err := gzip.NewReader(req.R)
+	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return fmt.Errorf("%s is not a karga volume backup: %w", req.Name, err)
 	}

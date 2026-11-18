@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/packages"
+	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
@@ -29,7 +29,7 @@ func TestServicesAreIsolatedPerRelease(t *testing.T) {
 		name string
 	}{{sa, a}, {sb, b}} {
 		if _, err := x.s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: x.name, Package: webPkg,
-			Values: packages.Options{Sets: []string{"servicePort=80", "content=" + x.name}}}); err != nil {
+			Values: api.ValuesInput{Set: []string{"servicePort=80", "content=" + x.name}}}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -50,7 +50,7 @@ func TestGatewayListenAddresses(t *testing.T) {
 	s, _ := service(t, name)
 	l, port := listener(t, gateway.ProtocolHTTP)
 	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: packages.Options{Sets: []string{"route=listen.local", "routeListener=" + l}}}); err != nil {
+		Values: api.ValuesInput{Set: []string{"route=listen.local", "routeListener=" + l}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	get := func(ip string) (int, error) {

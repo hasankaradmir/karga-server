@@ -5,24 +5,24 @@ import (
 	"fmt"
 	"time"
 
-	sdkplan "github.com/hasankaradmir/karga-sdk/plan"
+	"github.com/hasankaradmir/karga-sdk/api"
 )
 
 // Event reports what Execute is doing, for a live progress display.
-type Event = sdkplan.Event
+type Event = api.Event
 
 // Progress phases.
 const (
-	PhasePull   = sdkplan.PhasePull
-	PhaseCreate = sdkplan.PhaseCreate
-	PhaseStart  = sdkplan.PhaseStart
-	PhaseWait   = sdkplan.PhaseWait
-	PhaseSwitch = sdkplan.PhaseSwitch
-	PhaseDrain  = sdkplan.PhaseDrain
-	PhaseStop   = sdkplan.PhaseStop
-	PhaseRemove = sdkplan.PhaseRemove
-	PhaseDone   = sdkplan.PhaseDone
-	PhaseFailed = sdkplan.PhaseFailed
+	PhasePull   = api.PhasePull
+	PhaseCreate = api.PhaseCreate
+	PhaseStart  = api.PhaseStart
+	PhaseWait   = api.PhaseWait
+	PhaseSwitch = api.PhaseSwitch
+	PhaseDrain  = api.PhaseDrain
+	PhaseStop   = api.PhaseStop
+	PhaseRemove = api.PhaseRemove
+	PhaseDone   = api.PhaseDone
+	PhaseFailed = api.PhaseFailed
 )
 
 type progressKey struct{}

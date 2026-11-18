@@ -6,8 +6,9 @@
 #   KARGA_VM=name   machine name (default karga-linux)
 #
 # The machine is created and provisioned on first use. The working tree (without .git, bin and
-# docs) is copied to ~/src/karga-server in the machine before every run, with the karga (CLI, for
-# the e2e tests) and karga-sdk checkouts next to it when they exist.
+# docs) is copied to ~/src/karga-server in the machine before every run, with the karga-cli (for the
+# e2e tests) and karga-sdk checkouts next to it when they exist, and a go.work next to them (to test
+# unreleased changes of the three together).
 set -euo pipefail
 
 vm=${KARGA_VM:-karga-linux}
@@ -49,6 +50,6 @@ fi"
 name=$(basename "$root")
 cd "$(dirname "$root")"
 dirs=("$name")
-for d in karga karga-sdk; do [ -d "$d" ] && dirs+=("$d"); done
+for d in karga-cli karga-sdk go.work go.work.sum; do [ -e "$d" ] && dirs+=("$d"); done
 COPYFILE_DISABLE=1 tar --no-xattrs --exclude=.git --exclude=bin --exclude=docs --exclude=graphify-out -cf - "${dirs[@]}" | copy_in
 run "cd ~/src/$name && export PATH=\$PATH:/usr/local/go/bin && make ${targets[*]}"

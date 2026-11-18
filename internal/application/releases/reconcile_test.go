@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/release"
+	"github.com/hasankaradmir/karga-sdk/api"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
@@ -82,7 +84,7 @@ func TestReconcileRepairs(t *testing.T) {
 	}
 
 	// Every repair is an event.
-	ops := must[[]release.Operation](t)(e.svc.Events(ctx, "cache", 0, 10))
+	ops := must[[]api.Operation](t)(e.svc.Events(ctx, "cache", 0, 10))
 	if len(ops) < 4 || ops[0].Type != ReconcileOperation {
 		t.Fatalf("events: %+v", ops)
 	}

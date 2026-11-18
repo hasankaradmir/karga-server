@@ -14,7 +14,7 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/release"
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )

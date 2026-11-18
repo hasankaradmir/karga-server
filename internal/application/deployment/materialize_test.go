@@ -66,14 +66,37 @@ func TestMaterialize(t *testing.T) {
 	}
 }
 
-func TestMaterializeRecreates(t *testing.T) {
+func TestMaterializeUpdatesInPlace(t *testing.T) {
 	home := t.TempDir()
 	noop := func(string) {}
-	if _, err := Materialize(home, "web", 1, []resource.Resource{cfgRes("c", map[string]string{"old": "x"})}, noop); err != nil {
+	if _, err := Materialize(home, "web", 1, []resource.Resource{cfgRes("c", map[string]string{"old": "x", "same": "s"}), cfgRes("gone", map[string]string{"a": "b"})}, noop); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Materialize(home, "web", 1, []resource.Resource{cfgRes("c", map[string]string{"new": "y"})}, noop); err != nil {
+	dir := filepath.Join(home, "releases", "web", "1", "configs", "c")
+	before, err := os.Stat(dir)
+	if err != nil {
 		t.Fatal(err)
+	}
+	same, err := os.Stat(filepath.Join(dir, "same"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Materialize(home, "web", 1, []resource.Resource{cfgRes("c", map[string]string{"new": "y", "same": "s"})}, noop); err != nil {
+		t.Fatal(err)
+	}
+	// Running containers bind mount the directory: it must be the same one, not a new one.
+	after, err := os.Stat(dir)
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("the mounted directory was replaced: %v", err)
+	}
+	if again, err := os.Stat(filepath.Join(dir, "same")); err != nil || !os.SameFile(same, again) {
+		t.Fatalf("an unchanged file was rewritten: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "new")); err != nil || string(b) != "y" || mode(t, filepath.Join(dir, "new")) != 0o644 {
+		t.Fatalf("new file: %q %v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "releases", "web", "1", "configs", "gone")); !os.IsNotExist(err) {
+		t.Fatalf("removed Config kept: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, "releases", "web", "1", "configs", "c", "old")); !os.IsNotExist(err) {
 		t.Fatalf("stale file kept: %v", err)

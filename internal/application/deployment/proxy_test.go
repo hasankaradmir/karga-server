@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )
 
 // withProxySupport pretends to run on Linux (or not) for the duration of a test.
@@ -55,7 +56,7 @@ func changeOf(t *testing.T, p Plan, kind, name string) Change {
 // appliedWithProxy is the applied state after installing rs, proxy rows included.
 func appliedWithProxy(t *testing.T, rs []resource.Resource) []release.AppliedResource {
 	t.Helper()
-	p, err := Diff("cache", rs, nil, "")
+	p, err := Diff("cache", rs, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,7 @@ func TestProxyPlan(t *testing.T) {
 	withProxySupport(t, true)
 
 	// Fresh install: one release proxy answering for the service.
-	p, err := Diff("cache", replaceManifest(6379), nil, "")
+	p, err := Diff("cache", replaceManifest(6379), nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +83,7 @@ func TestProxyPlan(t *testing.T) {
 
 	// A workload no service targeted gets its backend alias with a recreate.
 	plain := appliedFrom(t, replaceManifest(6379)[:5])
-	p, err = Diff("cache", replaceManifest(6379), plain, "")
+	p, err = Diff("cache", replaceManifest(6379), plain, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestProxyPlan(t *testing.T) {
 	v2 := replaceManifest(6379)
 	v2[0].Spec.(*resource.WorkloadSpec).Image = "redis:7.2"
 	for override, want := range map[string]string{"": "replace", "recreate": "recreate"} {
-		p, err = Diff("cache", v2, applied, override)
+		p, err = Diff("cache", v2, applied, override, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -108,7 +109,7 @@ func TestProxyPlan(t *testing.T) {
 	}
 
 	// A second service on the network reconnects the proxy with its alias.
-	p, err = Diff("cache", withWorkload(replaceManifest(6379), "web", 8080), applied, "")
+	p, err = Diff("cache", withWorkload(replaceManifest(6379), "web", 8080), applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +120,7 @@ func TestProxyPlan(t *testing.T) {
 	// Exposing a port publishes it on the proxy container: a recreate.
 	exposed := replaceManifest(6379)
 	exposed[len(exposed)-1].Spec.(*resource.ServiceSpec).Expose = []resource.Exposure{{Port: "p", Listener: "pg"}}
-	p, err = Diff("cache", exposed, applied, "")
+	p, err = Diff("cache", exposed, applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestProxyPlan(t *testing.T) {
 	}
 
 	// Without services the proxy goes and the workload loses its alias.
-	p, err = Diff("cache", replaceManifest(6379)[:5], applied, "")
+	p, err = Diff("cache", replaceManifest(6379)[:5], applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -188,7 +188,7 @@ func buildConfig(settings Settings, targets []Target) envoy.Config {
 				HealthPath: healthPath(t.Routes, p)})
 		}
 		for _, r := range t.Routes {
-			l, ok := settings.Listener(r.Listener)
+			l, ok := listenerOf(settings, r.Listener)
 			if _, published := t.upstream(r.Service, r.Port); !ok || !published {
 				continue
 			}
@@ -475,11 +475,9 @@ type Listener = api.Listener
 // Settings is shared with the CLI (karga-sdk/api).
 type Settings = api.Settings
 
-// DefaultListen is where the gateway listens until the administrator sets addresses.
-const DefaultListen = api.DefaultListen
-
-// DefaultListeners are the listeners a new host starts with.
-var DefaultListeners = api.DefaultListeners
+// DefaultListen is where the gateway listens until the administrator sets addresses: nothing is
+// reachable from other machines until the administrator says so.
+const DefaultListen = "127.0.0.1"
 
 func settingsPath(home string) string { return filepath.Join(home, "gateway.json") }
 
@@ -507,7 +505,7 @@ func ReadSettings(home string) (Settings, error) {
 
 // WriteSettings validates and stores settings; the next Sync applies them.
 func WriteSettings(home string, s Settings) error {
-	if err := s.Validate(); err != nil {
+	if err := validateSettings(s); err != nil {
 		return err
 	}
 	if s.Listeners == nil {
@@ -571,7 +569,7 @@ func Routes(ctx context.Context, rt ports.Runtime, home string) ([]Exposed, erro
 	for _, t := range targets {
 		for _, r := range t.Routes {
 			up, ok := t.upstream(r.Service, r.Port)
-			l, defined := settings.Listener(r.Listener)
+			l, defined := listenerOf(settings, r.Listener)
 			if !ok || !defined {
 				continue
 			}
@@ -652,7 +650,7 @@ func Check(ctx context.Context, rt ports.Runtime, home, rel string, rs []resourc
 		}
 		for _, e := range s.Expose {
 			where := fmt.Sprintf("%s %q: expose %s on listener %s", resource.KindService, r.Metadata.Name, e.Port, e.Listener)
-			l, ok := settings.Listener(e.Listener)
+			l, ok := listenerOf(settings, e.Listener)
 			if !ok {
 				errs = append(errs, fmt.Errorf("%s: no such gateway listener; the host's administrator adds it with 'karga gateway listener add %s --port <port> --protocol tcp|http|https'", where, e.Listener))
 				continue

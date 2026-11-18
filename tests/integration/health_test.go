@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/packages"
+	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
@@ -26,7 +26,7 @@ func TestKargaHealthChecks(t *testing.T) {
 			s, _ := service(t, name)
 			sets := []string{"health=" + health, "strategy=recreate"}
 			if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-				Values: packages.Options{Sets: sets}}); err != nil {
+				Values: api.ValuesInput{Set: sets}}, nil); err != nil {
 				t.Fatal(err)
 			}
 			rep, err := s.Status(ctx, name)
@@ -42,9 +42,9 @@ func TestKargaHealthChecks(t *testing.T) {
 				return
 			}
 			short := opts()
-			short.Timeout = 20 * time.Second
+			short.Timeout = api.Duration(20 * time.Second)
 			_, err = s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: short, Name: name, Package: webPkg,
-				Values: packages.Options{Sets: append(sets, "healthy=false")}})
+				Values: api.ValuesInput{Set: append(sets, "healthy=false")}}, nil)
 			if err == nil || !strings.Contains(err.Error(), "GET /missing") {
 				t.Fatalf("want the failing http check in the error, got %v", err)
 			}
@@ -61,7 +61,7 @@ func TestHealthCheckByContainerAddress(t *testing.T) {
 	name := releaseName("it-hc-ip")
 	s, _ := service(t, name)
 	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: packages.Options{Sets: []string{"health=http"}}}); err != nil {
+		Values: api.ValuesInput{Set: []string{"health=http"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	rep, err := s.Status(ctx, name)
@@ -85,18 +85,18 @@ func TestReplaceWithHTTPHealth(t *testing.T) {
 	s, rt := service(t, name)
 	l, port := listener(t, gateway.ProtocolTCP)
 	common := opts()
-	common.Timeout = 30 * time.Second
-	sets := func(extra ...string) packages.Options {
-		return packages.Options{Sets: append([]string{startDelay, "health=http", "listener=" + l}, extra...)}
+	common.Timeout = api.Duration(30 * time.Second)
+	sets := func(extra ...string) api.ValuesInput {
+		return api.ValuesInput{Set: append([]string{startDelay, "health=http", "listener=" + l}, extra...)}
 	}
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}); err != nil {
+	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets()}, nil); err != nil {
 		t.Fatal(err)
 	}
 	host := startHostPinger(port)
 	defer host.halt()
 	net := startNetPinger(t, rt, name, "http://web:8080/")
 	time.Sleep(time.Second)
-	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets("content=v2")}); err != nil {
+	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg, Values: sets("content=v2")}, nil); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Second)

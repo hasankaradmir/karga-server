@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hasankaradmir/karga-sdk/release"
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )
 
 // crash leaves cache as a karga-server that stopped while running op of revision would: the release
@@ -105,7 +105,7 @@ func TestResumeAbortsOtherOperationsAndUninstallsAgain(t *testing.T) {
 func TestOperationsRecordTheirUser(t *testing.T) {
 	e := newEnv(t)
 	ctx := WithActor(context.Background(), "alice")
-	must[*Result](t)(e.svc.Install(ctx, InstallRequest{CommonOptions: common(), Name: "cache", Package: redisPkg, Values: e.opts()}))
+	must[*Result](t)(e.svc.Install(ctx, InstallRequest{CommonOptions: common(), Name: "cache", Package: redisPkg, Values: e.opts()}, nil))
 	if op := e.lastOps(1)[0]; op.Actor != "alice" {
 		t.Fatalf("actor: %+v", op)
 	}

@@ -16,8 +16,9 @@ import (
 
 	"encoding/json"
 
-	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
@@ -25,7 +26,7 @@ import (
 )
 
 // DefaultTimeout bounds how long Execute waits for workloads to become ready.
-const DefaultTimeout = api.DefaultTimeout
+const DefaultTimeout = 5 * time.Minute
 
 // Step statuses reported to ExecRequest.OnStep. StepKept means the change failed before anything
 // running was touched: the previous state is still applied (a replace whose new container failed).
@@ -68,6 +69,8 @@ type ExecRequest struct {
 	// the release proxy runs as (default: the karga process user, so it can use its 0700 directory).
 	Proxies   ProxyControl
 	ProxyUser string
+	// AllowedCaps are the capabilities beyond resource.DefaultCaps workloads may add.
+	AllowedCaps []string
 }
 
 func labels(release string, revision int, kind, name string) map[string]string {
@@ -391,7 +394,7 @@ func preflightLocked(ctx context.Context, rt ports.Runtime, info ports.RuntimeIn
 		}
 		defer unlock()
 	}
-	return Preflight(ctx, rt, info, req.Home, req.Release, req.Supported, req.Resources)
+	return Preflight(ctx, rt, info, req.Home, req.Release, req.Supported, req.Resources, req.AllowedCaps)
 }
 
 func workloadOf(c Change) (*resource.WorkloadSpec, bool) {
@@ -718,7 +721,7 @@ func Delete(ctx context.Context, rt ports.Runtime, home, release string, deleteV
 			case ports.ObjectNetwork:
 				errs = append(errs, rt.DeleteNetwork(ctx, o.Name))
 			case ports.ObjectVolume:
-				if deleteVolumes || o.Labels[ports.LabelRetention] == "delete" {
+				if deletesVolume(o, deleteVolumes) {
 					errs = append(errs, rt.DeleteVolume(ctx, o.Name))
 				}
 			}
@@ -732,4 +735,36 @@ func Delete(ctx context.Context, rt ports.Runtime, home, release string, deleteV
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// deletesVolume reports whether an uninstall removes volume o.
+func deletesVolume(o ports.Object, deleteVolumes bool) bool {
+	return deleteVolumes || o.Labels[ports.LabelRetention] == "delete"
+}
+
+// DeletePlan is what Delete would do to the runtime objects of release.
+func DeletePlan(ctx context.Context, rt ports.Runtime, release string, deleteVolumes bool) (api.Plan, error) {
+	objs, err := rt.ListManaged(ctx, release)
+	if err != nil {
+		return api.Plan{}, err
+	}
+	plan := api.Plan{Changes: []api.Change{}}
+	kinds := map[string]string{ports.ObjectWorkload: resource.KindWorkload, ports.ObjectNetwork: resource.KindNetwork, ports.ObjectVolume: resource.KindVolume}
+	for _, kind := range []string{ports.ObjectWorkload, ports.ObjectNetwork, ports.ObjectVolume} {
+		for _, o := range objs {
+			if o.Kind != kind {
+				continue
+			}
+			c := api.Change{Kind: kinds[kind], Name: o.Name, Action: api.ActionDelete}
+			if kind == ports.ObjectVolume {
+				if deletesVolume(o, deleteVolumes) {
+					c.Notice = "its data is deleted"
+				} else {
+					c.Action, c.Notice = api.ActionUnchanged, "kept with its data (--delete-volumes deletes it)"
+				}
+			}
+			plan.Changes = append(plan.Changes, c)
+		}
+	}
+	return plan, nil
 }

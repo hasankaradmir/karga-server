@@ -13,7 +13,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/hasankaradmir/karga-server/internal/version.Version={{ .Version }}
+      - -s -w -X github.com/hasankaradmir/karga-server/internal/version.Version=v{{ .Version }}
     goos: [linux]
     goarch: [amd64, arm64]
 

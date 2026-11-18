@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -91,7 +92,7 @@ func newRequest(t *testing.T, port int) *request {
 // run plans r.req.Resources against the tracked state and executes it.
 func (r *request) run() error {
 	r.t.Helper()
-	plan, err := Diff("cache", r.req.Resources, r.tr.list(), r.strategy)
+	plan, err := Diff("cache", r.req.Resources, r.tr.list(), r.strategy, nil)
 	if err != nil {
 		return err
 	}

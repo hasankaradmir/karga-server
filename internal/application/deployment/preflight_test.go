@@ -38,7 +38,7 @@ func preflight(t *testing.T, rt *fakeruntime.Runtime, release string, rs ...reso
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Preflight(context.Background(), rt, info, t.TempDir(), release, []string{"docker"}, rs)
+	return Preflight(context.Background(), rt, info, t.TempDir(), release, []string{"docker"}, rs, nil)
 }
 
 func TestPreflightOK(t *testing.T) {
@@ -55,7 +55,7 @@ func TestPreflightRuntimeAndCapabilities(t *testing.T) {
 	info, _ := rt.Info(context.Background())
 	vol := resource.Resource{Kind: resource.KindVolume, Metadata: resource.Metadata{Name: "d"},
 		Spec: &resource.VolumeSpec{Driver: "nfs", MountOptions: []string{"nocopy"}}}
-	err := Preflight(context.Background(), rt, info, t.TempDir(), "web", []string{"podman"}, []resource.Resource{vol, webWithPort(80)})
+	err := Preflight(context.Background(), rt, info, t.TempDir(), "web", []string{"podman"}, []resource.Resource{vol, webWithPort(80)}, nil)
 	for _, want := range []string{`does not support runtime "docker"`, "volume driver nfs", "mountOptions", "memory limit", "cpu limit", "exec healthcheck"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("missing %q in %v", want, err)
@@ -83,7 +83,7 @@ func TestPreflightExposures(t *testing.T) {
 	rt := fakeruntime.New()
 	info, _ := rt.Info(context.Background())
 	svc = serviceRes("web", "web", 80, "http", resource.Exposure{Port: "p", Listener: "busy"})
-	err = Preflight(context.Background(), rt, info, home, "web", []string{"docker"}, []resource.Resource{webWithPort(80), svc})
+	err = Preflight(context.Background(), rt, info, home, "web", []string{"docker"}, []resource.Resource{webWithPort(80), svc}, nil)
 	if !errors.Is(err, ports.ErrPortInUse) || !strings.Contains(err.Error(), "another process on this host") {
 		t.Fatalf("host process: %v", err)
 	}
@@ -100,5 +100,35 @@ func TestIPOverlap(t *testing.T) {
 		if got := ipOverlap(c.a, c.b); got != c.want {
 			t.Errorf("ipOverlap(%q, %q) = %v", c.a, c.b, got)
 		}
+	}
+}
+
+func TestPreflightCapabilities(t *testing.T) {
+	rt := fakeruntime.New()
+	info, err := rt.Info(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := func(add ...string) resource.Resource {
+		r := webWithPort(freePort(t))
+		r.Spec.(*resource.WorkloadSpec).Security = &resource.Security{CapDrop: []string{"ALL"}, CapAdd: add}
+		return r
+	}
+	check := func(r resource.Resource, allowed ...string) error {
+		return Preflight(context.Background(), rt, info, t.TempDir(), "web", []string{"docker"}, []resource.Resource{r}, allowed)
+	}
+	if err := check(web("NET_BIND_SERVICE", "CAP_CHOWN")); err != nil {
+		t.Fatalf("default capabilities must pass: %v", err)
+	}
+	for _, c := range []string{"SYS_ADMIN", "ALL", "cap_sys_ptrace"} {
+		if err := check(web(c)); err == nil || !strings.Contains(err.Error(), "--allow-capabilities") {
+			t.Errorf("%s: want refusal, got %v", c, err)
+		}
+	}
+	if err := check(web("NET_ADMIN"), "CAP_NET_ADMIN"); err != nil {
+		t.Fatalf("an allowed capability must pass: %v", err)
+	}
+	if err := check(web("SYS_ADMIN"), "ALL"); err != nil {
+		t.Fatalf("ALL allows everything: %v", err)
 	}
 }

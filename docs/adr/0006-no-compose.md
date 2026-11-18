@@ -2,7 +2,7 @@
 
 **Status:** accepted
 
-**Decision:** karga defines its own small resource model (Workload, Volume, Network, Config, Secret)
-instead of using Compose files.
+**Decision:** karga defines its own small resource model (Workload, Service, Volume, Network, Config,
+Secret) instead of using Compose files.
 
 **Reason:** Runtime independence and a model karga can diff, plan and roll back precisely.

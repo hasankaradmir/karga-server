@@ -1,12 +1,14 @@
 package deployment
 
 import (
-	"bytes"
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )
 
 func appliedFrom(t *testing.T, rs []resource.Resource) []release.AppliedResource {
@@ -32,7 +34,7 @@ func actions(p Plan) string {
 
 func TestDiffCreateUnchangedUpdateDelete(t *testing.T) {
 	v1 := manifest(6379)
-	plan, err := Diff("cache", v1, nil, "")
+	plan, err := Diff("cache", v1, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +43,7 @@ func TestDiffCreateUnchangedUpdateDelete(t *testing.T) {
 	}
 
 	applied := appliedFrom(t, v1)
-	plan, err = Diff("cache", manifest(6379), applied, "")
+	plan, err = Diff("cache", manifest(6379), applied, "", nil)
 	if err != nil || plan.HasChanges() {
 		t.Fatalf("same manifest: %s %v", actions(plan), err)
 	}
@@ -51,7 +53,7 @@ func TestDiffCreateUnchangedUpdateDelete(t *testing.T) {
 	v2[0].Spec.(*resource.WorkloadSpec).Image = "redis:7.2"
 	v2 = v2[:3] // drop cache volume and network...
 	v2 = append(v2, manifest(6379)[4])
-	plan, err = Diff("cache", v2, applied, "")
+	plan, err = Diff("cache", v2, applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,7 @@ func TestDiffConfigChangeRecreatesWorkload(t *testing.T) {
 	applied := appliedFrom(t, manifest(6379))
 	v2 := manifest(6379)
 	v2[1] = cfgRes("conf", map[string]string{"redis.conf": "changed"})
-	plan, err := Diff("cache", v2, applied, "")
+	plan, err := Diff("cache", v2, applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +89,7 @@ func TestDiffRejectsNetworkAndVolumeChanges(t *testing.T) {
 	v2 := manifest(6379)
 	v2[4].Spec = &resource.NetworkSpec{Driver: "bridge", Internal: true}
 	v2[2].Spec = &resource.VolumeSpec{Driver: "local", Retention: "delete"}
-	_, err := Diff("cache", v2, applied, "")
+	_, err := Diff("cache", v2, applied, "", nil)
 	if err == nil || !strings.Contains(err.Error(), `changing Network "net" is not supported`) || !strings.Contains(err.Error(), `changing Volume "data"`) {
 		t.Fatalf("want rejection, got %v", err)
 	}
@@ -99,64 +101,43 @@ func TestSecretsRedactedInPlan(t *testing.T) {
 	if strings.Contains(string(applied[0].Spec), "old-pass") {
 		t.Fatalf("secret stored in plain text: %s", applied[0].Spec)
 	}
-	plan, err := Diff("db", []resource.Resource{secretRes("db", map[string]string{"password": "new-pass"})}, applied, "")
+	plan, err := Diff("db", []resource.Resource{secretRes("db", map[string]string{"password": "new-pass"})}, applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var buf bytes.Buffer
-	if err := plan.Wire().Print(&buf, "db", 1, 2); err != nil {
+	js, err := json.Marshal(plan.Wire())
+	if err != nil {
 		t.Fatal(err)
 	}
-	out := buf.String()
-	if strings.Contains(out, "pass\"") || strings.Contains(out, "sha256") || !strings.Contains(out, "spec.values.password: (changed)") {
-		t.Fatalf("plan output:\n%s", out)
+	if out := string(js); strings.Contains(out, "pass\"") || strings.Contains(out, "sha256") ||
+		!strings.Contains(out, `{"path":"spec.values.password","new":"(changed)"}`) {
+		t.Fatalf("plan: %s", out)
 	}
 }
 
-func TestPlanPrint(t *testing.T) {
+func TestPlanFieldChanges(t *testing.T) {
 	applied := appliedFrom(t, manifest(6379))
 	v2 := manifest(6379)
 	v2[0].Spec.(*resource.WorkloadSpec).Image = "redis:7.2"
-	plan, err := Diff("cache", v2, applied, "")
+	plan, err := Diff("cache", v2, applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var buf bytes.Buffer
-	if err := plan.Wire().Print(&buf, "cache", 2, 3); err != nil {
-		t.Fatal(err)
+	var got []string
+	for _, c := range plan.Wire().Changes {
+		for _, f := range c.Fields {
+			got = append(got, c.Kind+" "+c.Name+" "+f.Path+": "+f.Old+" -> "+f.New)
+		}
 	}
-	want := `Deployment Plan
-
-Release: cache
-Revision: 2 -> 3
-
-Changes:
-
-  NETWORK net
-    unchanged
-
-  VOLUME cache
-    unchanged
-
-  VOLUME data
-    unchanged
-
-  CONFIG conf
-    unchanged
-
-  WORKLOAD redis (recreate)
-    spec.image: "redis:7.4" -> "redis:7.2"
-`
-	if buf.String() != want {
-		t.Fatalf("got:\n%s\nwant:\n%s", buf.String(), want)
+	if want := []string{`Workload redis spec.image: "redis:7.4" -> "redis:7.2"`}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
-
 func TestStrategyNotInDigest(t *testing.T) {
 	applied := appliedFrom(t, manifest(6379))
 	v2 := manifest(6379)
 	v2[0].Spec.(*resource.WorkloadSpec).UpdateStrategy = &resource.UpdateStrategy{Type: resource.StrategyReplace}
-	plan, err := Diff("cache", v2, applied, "")
+	plan, err := Diff("cache", v2, applied, "", nil)
 	if err != nil || plan.HasChanges() {
 		t.Fatalf("changing only the strategy must not change the workload: %s %v", actions(plan), err)
 	}
@@ -164,13 +145,13 @@ func TestStrategyNotInDigest(t *testing.T) {
 
 func TestStrategyResolution(t *testing.T) {
 	applied := appliedFrom(t, manifest(6379))
-	plan := func(mutate func(*resource.WorkloadSpec), override string) Change {
+	plan := func(mutate func(*resource.WorkloadSpec), override string, anon Anonymous) Change {
 		t.Helper()
 		v2 := manifest(6379)
 		w := v2[0].Spec.(*resource.WorkloadSpec)
 		w.Image = "redis:7.2"
 		mutate(w)
-		p, err := Diff("cache", v2, applied, override)
+		p, err := Diff("cache", v2, applied, override, anon)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -191,21 +172,22 @@ func TestStrategyResolution(t *testing.T) {
 		mutate   func(*resource.WorkloadSpec)
 		override string
 		want     string
+		anon     Anonymous
 	}{
-		{"default recreate", func(*resource.WorkloadSpec) {}, "", "recreate"},
-		{"eligible replace", eligible, "", "replace"},
-		{"override to recreate", eligible, "recreate", "recreate"},
-		{"override to replace", func(w *resource.WorkloadSpec) { eligible(w); w.UpdateStrategy = nil }, "replace", "replace"},
-		{"rw volume", func(w *resource.WorkloadSpec) { eligible(w); w.Mounts[0].ReadOnly = false }, "", "recreate: mounts volume data read-write"},
-		{"no healthcheck", func(w *resource.WorkloadSpec) { eligible(w); w.HealthCheck = nil }, "", "recreate: no healthCheck to verify readiness"},
-		{"anonymous volume", func(w *resource.WorkloadSpec) { eligible(w); w.AnonymousVolumes = []string{"/cache"} }, "replace", "recreate: keeps image VOLUME /cache in an anonymous volume"},
+		{"default recreate", func(*resource.WorkloadSpec) {}, "", "recreate", nil},
+		{"eligible replace", eligible, "", "replace", nil},
+		{"override to recreate", eligible, "recreate", "recreate", nil},
+		{"override to replace", func(w *resource.WorkloadSpec) { eligible(w); w.UpdateStrategy = nil }, "replace", "replace", nil},
+		{"rw volume", func(w *resource.WorkloadSpec) { eligible(w); w.Mounts[0].ReadOnly = false }, "", "recreate: mounts volume data read-write", nil},
+		{"no healthcheck", func(w *resource.WorkloadSpec) { eligible(w); w.HealthCheck = nil }, "", "recreate: no healthCheck to verify readiness", nil},
+		{"anonymous volume", eligible, "replace", "recreate: keeps image VOLUME /cache in an anonymous volume", Anonymous{"redis": {"/cache"}}},
 	}
 	for _, tt := range tests {
-		if got := plan(tt.mutate, tt.override).Label(); got != tt.want {
+		if got := plan(tt.mutate, tt.override, tt.anon).Label(); got != tt.want {
 			t.Errorf("%s: got %q, want %q", tt.name, got, tt.want)
 		}
 	}
-	if _, err := Diff("cache", manifest(6379), applied, "rolling"); err == nil {
+	if _, err := Diff("cache", manifest(6379), applied, "rolling", nil); err == nil {
 		t.Error("unknown strategy: expected error")
 	}
 }
@@ -224,7 +206,7 @@ func TestTLSSecretChangeUpdatesService(t *testing.T) {
 	if n := names(ordered); strings.Index(n, "Secret/cert") > strings.Index(n, "Service/redis") || strings.Index(n, "Workload/redis") > strings.Index(n, "Service/redis") {
 		t.Fatalf("the tls secret and the workload come before the service: %s", n)
 	}
-	p, err := Diff("cache", tlsManifest("c2"), appliedFrom(t, tlsManifest("c1")), "")
+	p, err := Diff("cache", tlsManifest("c2"), appliedFrom(t, tlsManifest("c1")), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +217,7 @@ func TestTLSSecretChangeUpdatesService(t *testing.T) {
 
 func TestServicesNeedTheGateway(t *testing.T) {
 	withProxySupport(t, false)
-	_, err := Diff("cache", append(manifest(6379), serviceRes("redis", "redis", 6379, "redis")), nil, "")
+	_, err := Diff("cache", append(manifest(6379), serviceRes("redis", "redis", 6379, "redis")), nil, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "services redis need karga's gateway") {
 		t.Fatalf("got %v", err)
 	}
@@ -247,7 +229,7 @@ func TestDigestSchemeUpgrade(t *testing.T) {
 	old := appliedFrom(t, rs) // written by a karga without keyed digests
 	SetDigestKey([]byte("0123456789abcdef0123456789abcdef"))
 	t.Cleanup(func() { SetDigestKey(nil) })
-	p, err := Diff("cache", rs, old, "")
+	p, err := Diff("cache", rs, old, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,36 +240,8 @@ func TestDigestSchemeUpgrade(t *testing.T) {
 	if w := changeOf(t, p, resource.KindWorkload, "redis"); w.Action != ActionUpdate {
 		t.Fatalf("the workload mounting it is applied once more: %+v", w)
 	}
-	again, err := Diff("cache", rs, appliedFrom(t, rs), "")
+	again, err := Diff("cache", rs, appliedFrom(t, rs), "", nil)
 	if err != nil || again.HasChanges() {
 		t.Fatalf("second plan must be unchanged: %s %v", actions(again), err)
-	}
-}
-
-func TestPlanSummary(t *testing.T) {
-	applied := appliedFrom(t, manifest(6379))
-	v2 := manifest(6379)
-	v2[0].Spec.(*resource.WorkloadSpec).Image = "redis:7.2"
-	v2 = append(v2[:3], v2[4:]...) // drop the "cache" volume
-	p, err := Diff("cache", v2, applied, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var b strings.Builder
-	if err := p.Wire().Summary(&b, "cache", 1, 2); err != nil {
-		t.Fatal(err)
-	}
-	out := b.String()
-	for _, want := range []string{"~ WORKLOAD redis (recreate)", "- VOLUME cache", "0 to create, 1 to update, 1 to delete, 3 unchanged."} {
-		if !strings.Contains(out, want) {
-			t.Errorf("summary misses %q:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "NETWORK net") || strings.Contains(out, "spec.image") {
-		t.Errorf("summary shows unchanged resources or fields:\n%s", out)
-	}
-	b.Reset()
-	if err := (Plan{}).Wire().Summary(&b, "cache", 2, 3); err != nil || !strings.Contains(b.String(), "No changes.") {
-		t.Fatalf("empty plan: %q %v", b.String(), err)
 	}
 }

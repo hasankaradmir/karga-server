@@ -46,7 +46,7 @@ func deploy(t *testing.T, rt ports.Runtime, example, release string, sets ...str
 		t.Fatal(err)
 	}
 	deployment.UseProxies(info)
-	plan, err := deployment.Diff(release, rs, nil, "")
+	plan, err := deployment.Diff(release, rs, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

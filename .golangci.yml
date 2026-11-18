@@ -16,7 +16,7 @@ linters:
           files:
             - "$all"
           deny:
-            - pkg: github.com/hasankaradmir/karga/
+            - pkg: github.com/hasankaradmir/karga-cli/
               desc: karga-server must not depend on the CLI
 
 formatters:

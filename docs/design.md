@@ -14,7 +14,7 @@ Goals:
 - Packages: versioned, templated, configurable through values validated by a JSON Schema.
 - Releases: every install, upgrade and rollback is an immutable revision with a reviewable plan.
 - Upgrades without downtime where the workload allows it, and a clear plan where it does not.
-- Small footprint: a CLI and ordinary containers; no daemon, no control plane.
+- Small footprint: one small server, a CLI and ordinary containers; no cluster, no control plane.
 - Runtime independence: the package format does not depend on Docker.
 
 - Nothing reachable by accident: packages cannot open ports; the host's administrator decides what is
@@ -38,9 +38,11 @@ same. The server reads each client's user from the socket (`SO_PEERCRED`) and re
 operations it starts.
 
 **Operations and restarts.** Operations do not depend on the client's connection: a client that goes
-away loses only the progress. On SIGTERM the server stops accepting requests and waits up to 5
-minutes for running operations. When it starts, it resumes the operations it left running before
-it serves repairs (section 5).
+away loses only the progress. Each operation holds its release from reading its state to recording
+the outcome, so what it plans cannot go stale; others wait, and a reconciliation skips a busy
+release. On SIGTERM the server stops accepting requests and waits up to 5 minutes for running
+operations. When it starts, it resumes the operations it left running before it answers requests
+or repairs anything (section 5).
 
 **Reconciliation.** Desired state is each release's current revision and its applied resources;
 only install, upgrade and rollback change it. karga-server's reconciler (`internal/application/
@@ -72,13 +74,17 @@ internal/ports                  Runtime and StateStore interfaces; runtime contr
 internal/adapters/{docker,sqlite,fakeruntime}
 internal/infrastructure/{envoy,config}
 
-karga-sdk: resource, pkg, release (the model), packages, values, renderer, archive (the package
-engine), plan (plans and diffs as shown), api (types, Backend, client, HTTP handler), logger
+karga-sdk: api (the wire contract: types, error kinds, version, Backend, client, HTTP handler),
+packages (the package engine and metadata), resource (the resource kinds); values, templates and
+archives are internal to it. The server keeps its own state model (internal/domain/release) and
+maps it to the api views.
 ```
 
 The SDK depends on nothing of the CLI or the server, and the server on nothing of the CLI,
 enforced by `depguard` in each repository's `.golangci.yml`.
-The application layer talks to the container runtime and the state only through `ports`. Every
+The application layer talks to the container runtime and the state through `ports`; it still uses
+`infrastructure/envoy` directly for the Envoy configuration of the release proxy and the gateway
+(not enforced yet). Every
 runtime adapter passes the same contract suite (`internal/ports/runtimetest`); the fake runtime used
 by unit tests passes it too.
 
@@ -244,13 +250,18 @@ count.
 
 - Access to the Docker socket is root-equivalent; karga is meant for the host's administrator.
 - Containers are never privileged and run with `no-new-privileges` by default; the `security` block
-  adds a read-only root filesystem, capability changes and a user. The gateway runs as root with only
-  `NET_BIND_SERVICE` and `DAC_OVERRIDE`.
+  adds a read-only root filesystem, capability changes and a user. A package may add only Docker's
+  default capabilities unless the administrator allows more (`--allow-capabilities`). The gateway
+  runs as root with only `NET_BIND_SERVICE` and `DAC_OVERRIDE`.
 - Packages cannot open ports: workloads publish nothing, release proxies publish only loopback
   upstreams, and the gateway serves only the listeners the administrator defines, on `127.0.0.1`
   unless told otherwise.
 - Secret files are mounted read-only from a 0700 directory; secret values never appear in output,
-  logs or the database (only keyed digests); `writeOnly` values are stored as `<redacted>`.
+  logs or the database (only keyed digests); `writeOnly` values are stored as `<redacted>`, and a
+  package that uses one outside a Secret is refused.
+- Config and Secret directories are updated in place: running containers keep seeing them.
+- A package cannot exhaust the server: rendering is bounded in depth, time and output, and archives
+  in size and number of files.
 - Memory limits also cap swap; every container has a process limit and log rotation.
 - Templates cannot read the host environment or the network.
 

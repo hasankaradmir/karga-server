@@ -9,10 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hasankaradmir/karga-sdk/packages"
+
 	"github.com/hasankaradmir/karga-sdk/api"
-	"github.com/hasankaradmir/karga-sdk/pkg"
-	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
@@ -156,6 +158,16 @@ type planned struct {
 // Reconcile brings release name's runtime back to its current revision. force forgets earlier
 // failures first (karga reconcile).
 func (s *Service) Reconcile(ctx context.Context, name string, force bool) (*ReconcileResult, error) {
+	// What is observed below is acted on: nothing else may change the release meanwhile. A busy
+	// release is skipped; the command working on it leaves it as it should be.
+	unlock, err := s.lock(ctx, name, true)
+	if errors.Is(err, ErrLocked) {
+		return &ReconcileResult{Release: name, Skipped: "an operation is running"}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	rel, err := s.Store.GetRelease(ctx, name)
 	if err != nil {
 		return nil, err
@@ -278,7 +290,7 @@ func (s *Service) Reconcile(ctx context.Context, name string, force bool) (*Reco
 			st.Status, st.Error = deployment.StepFailed, err.Error()
 			errs = append(errs, fmt.Errorf("%s %s: %s: %w", p.kind, p.name, p.action, err))
 		}
-		res.Actions = append(res.Actions, st)
+		res.Actions = append(res.Actions, wireStep(st))
 		op.Steps = append(op.Steps, st)
 		s.repairs.done(p.key, s.Now(), err)
 		if err == nil && p.failed != nil {
@@ -300,7 +312,7 @@ func (s *Service) Reconcile(ctx context.Context, name string, force bool) (*Reco
 			step(p, err)
 		case "create":
 			steps, err := s.recreate(ctx, rt, &op, rel, present)
-			res.Actions = append(res.Actions, steps...)
+			res.Actions = append(res.Actions, wireSteps(steps)...)
 			if err != nil {
 				errs = append(errs, err)
 			}
@@ -327,10 +339,11 @@ func (s *Service) recreate(ctx context.Context, rt ports.Runtime, op *release.Op
 	if err := s.restoreSecrets(rel.Name, rev.Number, rs); err != nil {
 		return nil, err
 	}
-	if err := anonymousVolumes(ctx, rt, rel.Name, rs); err != nil {
+	anon, err := anonymousVolumes(ctx, rt, rel.Name, rs)
+	if err != nil {
 		return nil, err
 	}
-	plan, err := deployment.Diff(rel.Name, rs, present, "")
+	plan, err := deployment.Diff(rel.Name, rs, present, "", anon)
 	if err != nil {
 		return nil, err
 	}
@@ -343,11 +356,11 @@ func (s *Service) recreate(ctx context.Context, rt ports.Runtime, op *release.Op
 	}
 	in := deployInput{Name: rel.Name, Type: ReconcileOperation, Revision: rel.CurrentRevision, Resources: rs,
 		Package: pkgOf(rev), Existing: &rel}
-	in.Timeout = deployment.DefaultTimeout
+	in.Timeout = api.Duration(deployment.DefaultTimeout)
 	start := len(op.Steps)
 	err = deployment.Execute(ctx, rt, deployment.ExecRequest{
 		Home: s.Home, Release: rel.Name, Revision: rel.CurrentRevision, Supported: rev.RuntimeSupported,
-		Resources: rs, Plan: plan, Redact: s.Redact, Timeout: in.Timeout,
+		Resources: rs, Plan: plan, Redact: s.Redact, Timeout: time.Duration(in.Timeout), AllowedCaps: s.AllowedCaps,
 		OnStep: func(c deployment.Change, st release.Step) error { return s.record(ctx, op, in, c, st) },
 	})
 	return slices.Clone(op.Steps[start:]), err
@@ -369,12 +382,17 @@ func (s *Service) healed(ctx context.Context, rt ports.Runtime, rel string, a re
 	}
 }
 
-func pkgOf(rev release.Revision) pkg.Metadata {
-	return pkg.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: pkg.Runtime{Supported: rev.RuntimeSupported}}
+func pkgOf(rev release.Revision) packages.Metadata {
+	return packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
 }
 
 // Pause stops (or with paused false, resumes) reconciliation of a release.
 func (s *Service) Pause(ctx context.Context, name string, paused bool) error {
+	unlock, err := s.lock(ctx, name, false)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	rel, err := s.Store.GetRelease(ctx, name)
 	if err != nil {
 		return err
@@ -387,6 +405,7 @@ func (s *Service) Pause(ctx context.Context, name string, paused bool) error {
 }
 
 // Events lists the operations of a release (all for ""), newest first.
-func (s *Service) Events(ctx context.Context, name string, afterID int64, limit int) ([]release.Operation, error) {
-	return s.Store.ListOperations(ctx, name, afterID, limit)
+func (s *Service) Events(ctx context.Context, name string, afterID int64, limit int) ([]api.Operation, error) {
+	ops, err := s.Store.ListOperations(ctx, name, afterID, limit)
+	return wireAll(ops, wireOperation), err
 }

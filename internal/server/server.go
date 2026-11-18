@@ -14,8 +14,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/logging"
+
 	"github.com/hasankaradmir/karga-sdk/api"
-	"github.com/hasankaradmir/karga-sdk/logger"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/sqlite"
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
@@ -33,6 +34,11 @@ type Config struct {
 	// SocketMode is the socket's permission (default 0660: the server's user and group).
 	SocketMode os.FileMode
 	Log        *slog.Logger
+	// Redactor masks the secrets the service registers in everything Log writes; Log must use it.
+	// Nil: secrets are registered nowhere (tests).
+	Redactor *logging.Redactor
+	// AllowedCaps are the Linux capabilities, besides the default set, packages may add.
+	AllowedCaps []string
 	// ReconcileInterval is the time between full reconciliation passes (0: events only); a
 	// negative value turns reconciliation off (tests).
 	ReconcileInterval time.Duration
@@ -43,19 +49,17 @@ const DefaultReconcileInterval = 30 * time.Second
 
 var _ api.Backend = (*releases.Service)(nil)
 
-// status maps karga-server's errors to HTTP status codes; the CLI shows only their messages.
-func status(err error) int {
+// classify gives karga-server's errors their kind for the client; anything else is internal.
+func classify(err error) error {
 	switch {
 	case errors.Is(err, ports.ErrNotFound):
-		return http.StatusNotFound
+		return api.ErrNotFound
 	case errors.Is(err, releases.ErrLocked), errors.Is(err, releases.ErrInterrupted), errors.Is(err, releases.ErrExists),
 		errors.Is(err, ports.ErrPortInUse), errors.Is(err, ports.ErrConflict):
-		return http.StatusConflict
+		return api.ErrConflict
 	}
-	return http.StatusBadRequest
+	return nil
 }
-
-func init() { api.SetStatus(status) }
 
 // Server is a running karga-server.
 type Server struct {
@@ -77,6 +81,10 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 	if err := config.EnsureHome(config.Config{Home: cfg.Home}); err != nil {
 		return nil, err
 	}
+	// Uploaded packages and volume backups wait here, private to karga-server.
+	if err := os.MkdirAll(filepath.Join(cfg.Home, "tmp"), 0o700); err != nil {
+		return nil, err
+	}
 	unlock, err := lockHome(cfg.Home)
 	if err != nil {
 		return nil, err
@@ -86,8 +94,12 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 		unlock()
 		return nil, err
 	}
-	redactor := logger.NewRedactor()
-	svc := releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, cfg.Home, redactor.Add, cfg.Log)
+	var redact func(string)
+	if cfg.Redactor != nil {
+		redact = cfg.Redactor.Add
+	}
+	svc := releases.New(store, func(context.Context) (ports.Runtime, error) { return rt, nil }, cfg.Home, redact, cfg.Log)
+	svc.AllowedCaps = cfg.AllowedCaps
 	info, err := rt.Info(ctx)
 	if err != nil {
 		_ = store.Close()
@@ -141,16 +153,17 @@ func (s *Server) Listen() (net.Listener, error) {
 
 // Serve answers on l until ctx is done, then waits for running operations (at most grace).
 func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration) error {
-	hs := &http.Server{Handler: api.NewServer(s.Service, version.Current().Version), ReadHeaderTimeout: 10 * time.Second,
+	hs := &http.Server{Handler: api.NewServer(s.Service, version.Current().Version, api.Options{TempDir: filepath.Join(s.cfg.Home, "tmp"), Classify: classify}), ReadHeaderTimeout: 10 * time.Second,
 		// Operations record the user of the client process.
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context { return releases.WithActor(ctx, peerUser(c)) }}
+	// Operations a stopped karga-server left running are finished before requests are served, so a
+	// command never meets one half done; clients wait for it. Then the reconciler starts.
+	s.Service.Resume(context.WithoutCancel(ctx))
 	errc := make(chan error, 1)
 	go func() { errc <- hs.Serve(l) }()
-	// Operations a stopped karga-server left running are finished first; then the reconciler starts.
 	loopDone := make(chan struct{})
 	go func() {
 		defer close(loopDone)
-		s.Service.Resume(context.WithoutCancel(ctx))
 		if s.Loop != nil && ctx.Err() == nil {
 			s.Loop.Run(ctx)
 		}

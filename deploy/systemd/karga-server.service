@@ -2,7 +2,7 @@
 # Members of the karga group may use the CLI. Install with KARGA_SYSTEMD=1 (see install.sh).
 [Unit]
 Description=karga server (releases, desired state and reconciliation)
-Documentation=https://github.com/hasankaradmir/karga
+Documentation=https://github.com/hasankaradmir/karga-server
 After=docker.service
 Requires=docker.service
 
@@ -18,10 +18,30 @@ RuntimeDirectoryMode=0750
 UMask=0007
 Restart=on-failure
 RestartSec=2s
+# karga-server lets running operations finish for up to 5 minutes when it stops.
+TimeoutStopSec=330
+LimitNOFILE=65536
+# It needs no capabilities: Docker does the privileged work through its socket.
+CapabilityBoundingSet=
+AmbientCapabilities=
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

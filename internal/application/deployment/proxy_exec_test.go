@@ -10,8 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"

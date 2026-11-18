@@ -1,14 +1,14 @@
 # karga-server
 
-The server of [karga](https://github.com/hasankaradmir/karga), package management for containers
+The server of [karga](https://github.com/hasankaradmir/karga-cli), package management for containers
 on a **single host** without Kubernetes. karga-server owns the state (SQLite), talks to Docker,
 runs installs, upgrades and rollbacks, and keeps every release running as declared: it repairs
 removed, stopped, unhealthy or hand-changed containers. The **karga** CLI is its client on a local
 unix socket; both use the API of [karga-sdk](https://github.com/hasankaradmir/karga-sdk).
 
 How to use karga (packages, resources, commands): the CLI's
-[README](https://github.com/hasankaradmir/karga#readme) and
-[USAGE.md](https://github.com/hasankaradmir/karga/blob/master/USAGE.md). This repository is about
+[README](https://github.com/hasankaradmir/karga-cli#readme) and
+[USAGE.md](https://github.com/hasankaradmir/karga-cli/blob/master/USAGE.md). This repository is about
 running the server.
 
 ## Requirements
@@ -31,7 +31,7 @@ sudo usermod -aG karga $USER      # then log in again: members of the karga grou
 The script installs `karga-server` as a systemd service: a `karga` system user in the `docker`
 group runs it, its state is `/var/lib/karga`, and it listens on `/run/karga/karga.sock` (mode
 0660, group `karga`). Then install the CLI:
-[karga](https://github.com/hasankaradmir/karga#install).
+[karga](https://github.com/hasankaradmir/karga-cli#install).
 
 From source: `make build` produces `bin/karga-server`; the unit file is
 `deploy/systemd/karga-server.service`.
@@ -47,13 +47,21 @@ $ karga version                          # the CLI's and the server's version an
 - **Flags:** `--home` (or `KARGA_HOME`; default `$XDG_DATA_HOME/karga` or `~/.local/share/karga`,
   `/var/lib/karga` for the service), `--socket` (or `KARGA_SOCKET`; default
   `/run/karga/karga.sock`), `--reconcile-interval` (default 30s; `0` repairs only on container
-  events), `--version`. It logs text to stderr (the journal). One server owns a `KARGA_HOME`.
-- **Compatibility:** the CLI and the server work together when they speak the same API version,
-  whatever their release versions; otherwise every command says which one to upgrade.
-- **Operations** run in the server: a client that goes away (Ctrl-C) does not stop them. On
-  `systemctl stop` the server waits up to 5 minutes for running operations. Killed in the middle
-  of one, it finishes the operation when it starts again (`resume` in `karga events`). Every
-  operation records the user of the CLI that asked for it, as the kernel reports it on the socket.
+  events), `--allow-capabilities` (see below), `--version`. It logs text to stderr (the journal),
+  with every secret value it knows masked. One server owns a `KARGA_HOME`.
+- **Compatibility:** the CLI and the server work together when they speak the same major API
+  version (`2.x`), whatever their release versions; otherwise every command says which one to
+  upgrade.
+- **Operations** run in the server: a client that goes away (Ctrl-C) does not stop them. Operations
+  on one release run one after the other, from planning to the end. On `systemctl stop` the server
+  waits up to 5 minutes for running operations (the unit's `TimeoutStopSec` allows it). Killed in
+  the middle of one, it finishes the operation when it starts again, before it answers requests
+  (`resume` in `karga events`). Every operation records the user of the CLI that asked for it, as
+  the kernel reports it on the socket.
+- **Capabilities:** a package may add only the Linux capabilities Docker gives containers by
+  default (`CHOWN`, `NET_BIND_SERVICE`, `SETUID`, ...; usually after `capDrop: [ALL]`). Others give
+  a container power over the host and are refused unless the administrator allows them:
+  `--allow-capabilities NET_ADMIN,SYS_PTRACE` (`ALL` allows any).
 - **Repairs:** on Docker events and every reconcile interval the server brings each release back to
   its current revision, without a new revision; `karga pause <release>` stops that for maintenance.
 
@@ -156,7 +164,7 @@ make test-linux         # both in a Linux VM (OrbStack or Lima; KARGA_VM names i
 ```
 
 The e2e tests drive the karga CLI: `KARGA_CLI` names a binary, otherwise it is built from
-`KARGA_CLI_SRC` (default: a checkout of [karga](https://github.com/hasankaradmir/karga) next to
+`KARGA_CLI_SRC` (default: a checkout of [karga](https://github.com/hasankaradmir/karga-cli) next to
 this one). Integration and e2e tests run on Linux only (they stop with a message elsewhere).
 `make test-linux` creates and provisions the VM on first use and runs `TARGETS` there (default
 `test-integration test-e2e`), with the karga and karga-sdk checkouts next to this one copied

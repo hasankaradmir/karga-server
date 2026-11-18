@@ -9,10 +9,31 @@ First release.
 
 ### Repositories
 - karga is split into three repositories with their history: karga-server (this one), the karga
-  CLI (`github.com/hasankaradmir/karga`) and karga-sdk, the module both use. Each has its own
+  CLI (`github.com/hasankaradmir/karga-cli`) and karga-sdk, the module both use. Each has its own
   install script; this one installs karga-server as a systemd service, without credentials.
 
+### Fixed
+- Repairing or resuming a release rewrote its Config and Secret directories from scratch: running
+  containers were left with an empty, deleted directory. They are now updated in place.
+- Two commands on one release could plan against the same state and take the same revision; the
+  reconciler could repair from a revision an upgrade had just replaced. An operation now holds its
+  release from reading its state to the end, and waiting for it can be given up.
+- The server logged secret values: the log redactor was never connected. It now masks every
+  secret value the server knows.
+- The server answered requests while it resumed interrupted operations; it now resumes first.
+- Under systemd the server was killed after 90 s instead of letting operations finish for 5
+  minutes (`TimeoutStopSec=330`). The unit drops every capability and adds sandboxing.
+- `install.sh` restarted the server on every run, failed when the docker group was missing and
+  did not add an existing karga user to it.
+- Errors had status 400 whatever they were; they now travel with their kind (not found, conflict,
+  invalid, internal).
+- `karga uninstall --dry-run` shows what would be removed.
+
 ### Breaking (compared with earlier builds)
+- API 2.0 (karga-sdk): a CLI and a server work together when their major API version is the same.
+  The state model (releases, revisions, operations) lives in karga-server and the CLI sees views of
+  it. `--allow-capabilities`: packages may add only Docker's default capabilities unless the
+  administrator allows more. A writeOnly value used outside a Secret is refused.
 - Workloads no longer expose ports: `hostPort`, `hostIP` and `routes` are gone from the Workload
   (a clear error points to Services). Ports are named, and a `kind: Service` gives a workload a name
   inside its release and exposes it on gateway listeners.

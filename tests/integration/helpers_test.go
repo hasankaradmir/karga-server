@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/release"
+	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/docker"
 	"github.com/hasankaradmir/karga-server/internal/adapters/sqlite"
@@ -196,7 +196,7 @@ func listener(t *testing.T, protocol string) (string, int) {
 }
 
 func opts() releases.CommonOptions {
-	return releases.CommonOptions{Timeout: 2 * time.Minute, HistoryMax: releases.DefaultHistoryMax}
+	return releases.CommonOptions{Timeout: api.Duration(2 * time.Minute)}
 }
 
 func workload(t *testing.T, rt ports.Runtime, name string) ports.WorkloadStatus {
@@ -208,7 +208,7 @@ func workload(t *testing.T, rt ports.Runtime, name string) ports.WorkloadStatus 
 	return st
 }
 
-func currentRelease(t *testing.T, s *releases.Service, name string) release.Release {
+func currentRelease(t *testing.T, s *releases.Service, name string) api.Release {
 	t.Helper()
 	rels, err := s.List(context.Background())
 	if err != nil {
@@ -220,7 +220,17 @@ func currentRelease(t *testing.T, s *releases.Service, name string) release.Rele
 		}
 	}
 	t.Fatalf("release %s not listed", name)
-	return release.Release{}
+	return api.Release{}
+}
+
+// readFile returns a values file's content, as the CLI sends it.
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func newRuntime(t *testing.T) *docker.Runtime {

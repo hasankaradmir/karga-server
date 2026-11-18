@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/packages"
-	"github.com/hasankaradmir/karga-sdk/release"
+	"github.com/hasankaradmir/karga-sdk/api"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -22,19 +23,19 @@ func TestRedisReleaseLifecycle(t *testing.T) {
 	ctx := context.Background()
 	name := releaseName("it-rel")
 	s, rt := service(t, name)
-	values := func(tag string) packages.Options {
-		return packages.Options{Sets: []string{"image.tag=" + tag}}
+	values := func(tag string) api.ValuesInput {
+		return api.ValuesInput{Set: []string{"image.tag=" + tag}}
 	}
 
 	// Install an older Redis, then upgrade forward (downgrading would hit RDB format changes).
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: "../testdata/redis", Values: values("7.2")}); err != nil {
+	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: "../testdata/redis", Values: values("7.2")}, nil); err != nil {
 		t.Fatal(err)
 	}
-	res, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: "../testdata/redis", Values: values("7.2")})
+	res, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: "../testdata/redis", Values: values("7.2")}, nil)
 	if err != nil || !res.NoOp {
 		t.Fatalf("second install should be a no-op: %+v %v", res, err)
 	}
-	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: "../testdata/redis", Values: values("7.4")}); err != nil {
+	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: "../testdata/redis", Values: values("7.4")}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if st := workload(t, rt, name+"-redis"); st.Health != ports.HealthHealthy || st.Labels[ports.LabelRevision] != "2" {
@@ -46,29 +47,29 @@ func TestRedisReleaseLifecycle(t *testing.T) {
 	}
 
 	// A missing image fails before the running container is touched.
-	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: "../testdata/redis", Values: values("0.0.0-missing")}); err == nil {
+	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: "../testdata/redis", Values: values("0.0.0-missing")}, nil); err == nil {
 		t.Fatal("upgrade to a missing image should fail")
 	}
 	if st := workload(t, rt, name+"-redis"); st.State != ports.StateRunning || st.Labels[ports.LabelRevision] != "2" {
 		t.Fatalf("running workload was touched by a failed pull: %+v", st)
 	}
 	// Nothing that runs was changed, so the release stays deployed at revision 2 (D18).
-	if r := currentRelease(t, s, name); r.Status != release.StatusDeployed || r.CurrentRevision != 2 {
+	if r := currentRelease(t, s, name); r.Status != string(release.StatusDeployed) || r.CurrentRevision != 2 {
 		t.Fatalf("release after failed upgrade: %+v", r)
 	}
 
 	// Rolling back to the current revision is allowed (and changes nothing). Revision 1 would be a
 	// Redis downgrade, which cannot read the newer data format.
-	res, err = s.Rollback(ctx, releases.RollbackRequest{CommonOptions: opts(), Name: name, Revision: 2})
+	res, err = s.Rollback(ctx, releases.RollbackRequest{CommonOptions: opts(), Name: name, Revision: 2}, nil)
 	if err != nil || res.Revision != 4 {
 		t.Fatalf("rollback: %+v %v", res, err)
 	}
 	rep, err := s.Status(ctx, name)
-	if err != nil || rep.Release.Status != release.StatusDeployed {
+	if err != nil || rep.Release.Status != string(release.StatusDeployed) {
 		t.Fatalf("status: %+v %v", rep, err)
 	}
 
-	if err := s.Uninstall(ctx, releases.UninstallRequest{Name: name}); err != nil {
+	if _, err := s.Uninstall(ctx, releases.UninstallRequest{Name: name}); err != nil {
 		t.Fatal(err)
 	}
 	if objs := managed(t, rt, name); len(objs) != 1 || objs[0].Kind != ports.ObjectVolume {
@@ -85,18 +86,18 @@ func TestFailedUpgradeKeepsHistory(t *testing.T) {
 	s, rt := service(t, name)
 	pkgPath := "testdata/probe"
 	common := opts()
-	common.Timeout = 30 * time.Second
+	common.Timeout = api.Duration(30 * time.Second)
 
-	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: pkgPath}); err != nil {
+	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: pkgPath}, nil); err != nil {
 		t.Fatal(err)
 	}
 	_, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: pkgPath,
-		Values: packages.Options{Sets: []string{"healthy=false"}}})
+		Values: api.ValuesInput{Set: []string{"healthy=false"}}}, nil)
 	if err == nil {
 		t.Fatal("unhealthy upgrade should fail")
 	}
 	hist, err := s.History(ctx, name)
-	if err != nil || len(hist) != 2 || hist[0].Status != release.RevisionDeployed || hist[1].Status != release.RevisionFailed {
+	if err != nil || len(hist) != 2 || hist[0].Status != string(release.RevisionDeployed) || hist[1].Status != string(release.RevisionFailed) {
 		t.Fatalf("history: %+v %v", hist, err)
 	}
 	if r := currentRelease(t, s, name); r.CurrentRevision != 1 {
@@ -106,7 +107,7 @@ func TestFailedUpgradeKeepsHistory(t *testing.T) {
 		t.Fatalf("failed container should be stopped and kept: %+v", st)
 	}
 
-	res, err := s.Rollback(ctx, releases.RollbackRequest{CommonOptions: common, Name: name, Revision: 1})
+	res, err := s.Rollback(ctx, releases.RollbackRequest{CommonOptions: common, Name: name, Revision: 1}, nil)
 	if err != nil || res.Revision != 3 {
 		t.Fatalf("rollback: %+v %v", res, err)
 	}

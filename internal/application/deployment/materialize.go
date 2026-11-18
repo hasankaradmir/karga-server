@@ -33,13 +33,14 @@ func RevisionDir(home, release string, revision int) string {
 }
 
 // Materialize writes Config and Secret resources to host directories and returns the directory per
-// resource for bind mounting. The revision directory is recreated from scratch. Every secret value
-// is passed to redact so it never reaches logs.
+// resource for bind mounting. Every secret value is passed to redact so it never reaches logs.
+//
+// The directories are updated in place, never removed and recreated: running containers bind mount
+// them, and a container keeps the directory it mounted, so a recreated one would leave them with an
+// empty, deleted directory. Changed files are replaced atomically; files and resources the manifest
+// no longer has are removed.
 func Materialize(home, release string, revision int, rs []resource.Resource, redact func(string)) (map[Key]string, error) {
 	base := RevisionDir(home, release, revision)
-	if err := os.RemoveAll(base); err != nil {
-		return nil, err
-	}
 	for _, d := range []string{filepath.Join(home, "releases"), filepath.Dir(base), base} {
 		if err := mkdirMode(d, privateDirMode); err != nil {
 			return nil, err
@@ -47,6 +48,7 @@ func Materialize(home, release string, revision int, rs []resource.Resource, red
 	}
 
 	paths := map[Key]string{}
+	keep := map[string]map[string]bool{"configs": {}, "secrets": {}}
 	for _, r := range rs {
 		var sub string
 		var files map[string]string
@@ -68,19 +70,83 @@ func Materialize(home, release string, revision int, rs []resource.Resource, red
 		if err := mkdirMode(dir, mountDirMode); err != nil {
 			return nil, err
 		}
-		for name, content := range files {
-			p := filepath.Join(dir, name)
-			if err := os.WriteFile(p, []byte(content), mountFileMode); err != nil {
-				return nil, fmt.Errorf("write %s %s: %w", r.Kind, r.Metadata.Name, err)
-			}
-			// WriteFile is subject to umask; set the mode explicitly.
-			if err := os.Chmod(p, mountFileMode); err != nil {
-				return nil, err
-			}
+		if err := syncDir(dir, files); err != nil {
+			return nil, fmt.Errorf("write %s %s: %w", r.Kind, r.Metadata.Name, err)
 		}
+		keep[sub][r.Metadata.Name] = true
 		paths[keyOf(r)] = dir
 	}
+	for sub, names := range keep {
+		if err := removeOthers(filepath.Join(base, sub), names); err != nil {
+			return nil, err
+		}
+	}
 	return paths, nil
+}
+
+// syncDir makes dir hold exactly files: unchanged files are left alone, changed ones are replaced
+// atomically (written next to them, then renamed over them) and others are removed.
+func syncDir(dir string, files map[string]string) error {
+	for name, content := range files {
+		p := filepath.Join(dir, name)
+		if old, err := os.ReadFile(p); err == nil && string(old) == content {
+			if err := os.Chmod(p, mountFileMode); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := writeAtomic(p, []byte(content), mountFileMode); err != nil {
+			return err
+		}
+	}
+	keep := map[string]bool{}
+	for name := range files {
+		keep[name] = true
+	}
+	return removeOthers(dir, keep)
+}
+
+// writeAtomic replaces p with data: readers see the old content or the new one, never a part.
+func writeAtomic(p string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".karga-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }() // gone after the rename; cleans up after a failure
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), mode); err != nil { // CreateTemp makes it 0600
+		return err
+	}
+	return os.Rename(tmp.Name(), p)
+}
+
+// removeOthers removes the entries of dir that keep does not name; a missing dir has none.
+func removeOthers(dir string, keep map[string]bool) error {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !keep[e.Name()] {
+			if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // mkdirMode creates dir if needed and sets its mode regardless of umask.

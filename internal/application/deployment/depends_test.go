@@ -73,7 +73,7 @@ func TestDependsOnValidation(t *testing.T) {
 	applied := appliedWithProxy(t, dependentManifest(6379))
 	v2 := dependentManifest(6379)
 	v2[len(v2)-2].Spec.(*resource.WorkloadSpec).DependsOn = nil
-	p, err := Diff("cache", v2, applied, "")
+	p, err := Diff("cache", v2, applied, "", nil)
 	if err != nil || p.HasChanges() {
 		t.Fatalf("dependsOn only: %s %v", actions(p), errors.Unwrap(err))
 	}

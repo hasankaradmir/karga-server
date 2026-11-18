@@ -19,7 +19,7 @@ import (
 	// Pure-Go SQLite driver, registered as "sqlite".
 	_ "modernc.org/sqlite"
 
-	"github.com/hasankaradmir/karga-sdk/release"
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )

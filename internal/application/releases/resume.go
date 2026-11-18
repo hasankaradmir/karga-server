@@ -5,8 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/hasankaradmir/karga-sdk/pkg"
-	"github.com/hasankaradmir/karga-sdk/release"
+	"github.com/hasankaradmir/karga-sdk/packages"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
@@ -25,20 +26,36 @@ func (s *Service) Resume(ctx context.Context) {
 		return
 	}
 	for _, rel := range rels {
-		op, err := s.Store.RunningOperation(ctx, rel.Name)
-		if errors.Is(err, ports.ErrNotFound) {
-			continue
-		}
-		if err == nil && op.Hostname == s.Hostname && op.PID != s.PID && processAlive(op.PID) {
-			continue // another karga still works on it
-		}
-		if err == nil {
-			err = s.resume(ctx, rel, op)
-		}
-		if err != nil {
+		if err := s.resumeRelease(ctx, rel.Name); err != nil {
 			s.Log.Error("resume interrupted operation", "release", rel.Name, "error", err)
 		}
 	}
+}
+
+// resumeRelease resumes the operation left running on release name, if any. Under the release's lock
+// no operation of this process runs, so one recorded with this process's PID is an earlier
+// process's that had the same PID.
+func (s *Service) resumeRelease(ctx context.Context, name string) error {
+	unlock, err := s.lock(ctx, name, false)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	rel, err := s.Store.GetRelease(ctx, name)
+	if err != nil {
+		return err
+	}
+	op, err := s.Store.RunningOperation(ctx, name)
+	if errors.Is(err, ports.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if op.Hostname == s.Hostname && op.PID != s.PID && processAlive(op.PID) {
+		return nil // another karga still works on it
+	}
+	return s.resume(ctx, rel, op)
 }
 
 func (s *Service) resume(ctx context.Context, rel release.Release, op release.Operation) error {
@@ -49,7 +66,8 @@ func (s *Service) resume(ctx context.Context, rel release.Release, op release.Op
 	case "install", "upgrade", "rollback", ResumeOperation:
 		return s.redeploy(ctx, rel, op)
 	case "uninstall":
-		return s.Uninstall(ctx, UninstallRequest{Name: rel.Name, KeepHistory: true, Force: true})
+		_, err := s.uninstallRelease(ctx, UninstallRequest{Name: rel.Name, KeepHistory: true, Force: true})
+		return err
 	}
 	op.Status, op.Error = release.OperationAborted, "interrupted: karga-server stopped"
 	return s.Store.FinishOperation(ctx, op)
@@ -85,10 +103,10 @@ func (s *Service) redeploy(ctx context.Context, rel release.Release, op release.
 		return errors.Join(err, s.Store.FinishOperation(ctx, op), s.Store.UpdateRevisionStatus(ctx, rel.Name, rev.Number, release.RevisionFailed, "Interrupted: "+err.Error()),
 			s.Store.SaveRelease(ctx, rel))
 	}
-	p := pkg.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: pkg.Runtime{Supported: rev.RuntimeSupported}}
+	p := packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
 	_, err = s.deploy(ctx, deployInput{
 		// The interrupted operation passed the volume check: its plan was allowed to delete volumes.
-		CommonOptions: CommonOptions{DeleteVolumes: true, HistoryMax: DefaultHistoryMax, Force: true},
+		CommonOptions: CommonOptions{DeleteVolumes: true, Force: true},
 		Name:          rel.Name, Type: op.Type, Description: rev.Description, resumed: true,
 		Package: p, PackageDigest: rev.PackageDigest, Overrides: rev.Values, Values: rev.ValuesAll,
 		Resources: rs, Revision: rev.Number, Existing: &rel, Notes: rev.Notes,

@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"go.yaml.in/yaml/v3"
+	"github.com/hasankaradmir/karga-sdk/api"
 
-	"github.com/hasankaradmir/karga-sdk/packages"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
@@ -91,7 +91,7 @@ func TestGatewayTLS(t *testing.T) {
 	cert1, vals1 := selfSigned(t, host, 1)
 	sets := []string{"route=" + host, "routeListener=" + l}
 	if _, err := s.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: packages.Options{ValueFiles: []string{vals1}, Sets: sets}}); err != nil {
+		Values: api.ValuesInput{Files: [][]byte{readFile(t, vals1)}, Set: sets}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if body, got := httpsGet(t, port, host, cert1); body != "v1" || got.SerialNumber.Int64() != 1 {
@@ -114,7 +114,7 @@ func TestGatewayTLS(t *testing.T) {
 	// A new certificate is served after an upgrade.
 	cert2, vals2 := selfSigned(t, host, 2)
 	if _, err := s.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: webPkg,
-		Values: packages.Options{ValueFiles: []string{vals2}, Sets: sets}}); err != nil {
+		Values: api.ValuesInput{Files: [][]byte{readFile(t, vals2)}, Set: sets}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if body, got := httpsGet(t, port, host, cert2); body != "v1" || got.SerialNumber.Int64() != 2 {

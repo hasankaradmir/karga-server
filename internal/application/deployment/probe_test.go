@@ -105,7 +105,7 @@ func TestProbeNeedsLinux(t *testing.T) {
 	withProxySupport(t, false)
 	rs := manifest(6379)
 	rs[0].Spec.(*resource.WorkloadSpec).HealthCheck = &resource.HealthCheck{Type: resource.HealthTCP, Port: 6379}
-	if _, err := Diff("cache", rs, nil, ""); err == nil || !strings.Contains(err.Error(), "needs Linux with a local Docker") {
+	if _, err := Diff("cache", rs, nil, "", nil); err == nil || !strings.Contains(err.Error(), "needs Linux with a local Docker") {
 		t.Fatalf("want unreachable error, got %v", err)
 	}
 	// Behind the proxy Envoy checks the same path.

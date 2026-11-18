@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,11 +17,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hasankaradmir/karga-sdk/packages"
+
 	"github.com/hasankaradmir/karga-sdk/api"
-	"github.com/hasankaradmir/karga-sdk/pkg"
-	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
-	"github.com/hasankaradmir/karga-sdk/values"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -33,14 +35,32 @@ var (
 	ErrExists      = errors.New("release already exists")
 )
 
-// DefaultHistoryMax is how many revisions are kept per release (D13).
-const DefaultHistoryMax = api.DefaultHistoryMax
+// DefaultHistoryMax is how many revisions are kept per release unless a request says otherwise (D13).
+const DefaultHistoryMax = 10
+
+// historyMax is the number of revisions a request keeps (0: all).
+func historyMax(n *int) int {
+	if n == nil {
+		return DefaultHistoryMax
+	}
+	return *n
+}
+
+// invalid marks an error as the caller's (a package that does not render, values that do not
+// validate): the client sees it as api.ErrInvalid. The message is unchanged.
+type invalid struct{ error }
+
+func (e invalid) Unwrap() error      { return e.error }
+func (invalid) Is(target error) bool { return target == api.ErrInvalid }
 
 // Service runs release use cases. Runtime is opened lazily so read-only commands never need Docker.
 type Service struct {
-	Store   ports.StateStore
-	Runtime func(context.Context) (ports.Runtime, error)
-	Home    string
+	// AllowedCaps are the Linux capabilities, besides resource.DefaultCaps, the host administrator
+	// lets packages add (karga-server --allow-capabilities).
+	AllowedCaps []string
+	Store       ports.StateStore
+	Runtime     func(context.Context) (ports.Runtime, error)
+	Home        string
 	// Redact registers secret values with the log redactor.
 	Redact   func(string)
 	Log      *slog.Logger
@@ -57,12 +77,30 @@ type Service struct {
 	repairs repairs
 	// busy serializes the operations of a release inside this process: a user's command waits for
 	// a reconciliation in progress instead of failing; a reconciliation skips a busy release.
-	busy sync.Map // release -> *sync.Mutex
+	busy sync.Map // release -> chan struct{} (capacity 1: held while full)
 }
 
-func (s *Service) mutex(rel string) *sync.Mutex {
-	m, _ := s.busy.LoadOrStore(rel, &sync.Mutex{})
-	return m.(*sync.Mutex)
+// lock takes release rel for one operation, from reading its state to recording the outcome, so
+// what an operation plans cannot go stale before it runs. It waits until rel is free or ctx ends;
+// with try it does not wait. Call the returned function to let go.
+func (s *Service) lock(ctx context.Context, rel string, try bool) (func(), error) {
+	v, _ := s.busy.LoadOrStore(rel, make(chan struct{}, 1))
+	ch := v.(chan struct{})
+	unlock := func() { <-ch }
+	select {
+	case ch <- struct{}{}:
+		return unlock, nil
+	default:
+	}
+	if try {
+		return nil, fmt.Errorf("%w: a command is working on %s", ErrLocked, rel)
+	}
+	select {
+	case ch <- struct{}{}:
+		return unlock, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("waiting for the operation running on %s: %w", rel, ctx.Err())
+	}
 }
 
 // New returns a Service with process defaults filled in.
@@ -101,25 +139,9 @@ func describe(op release.Operation) string {
 	return b.String()
 }
 
-// begin records a running operation. A live process holding the release always wins; a dead one is
-// only overridden with force (D15).
+// begin records a running operation; the caller holds the release's lock. A live process holding the
+// release always wins; a dead one is only overridden with force (D15).
 func (s *Service) begin(ctx context.Context, rel, typ string, revision int, force bool) (release.Operation, error) {
-	mu := s.mutex(rel)
-	if typ == ReconcileOperation {
-		if !mu.TryLock() {
-			return release.Operation{}, fmt.Errorf("%w: a command is working on %s", ErrLocked, rel)
-		}
-	} else {
-		mu.Lock()
-	}
-	op, err := s.beginLocked(ctx, rel, typ, revision, force)
-	if err != nil {
-		mu.Unlock()
-	}
-	return op, err
-}
-
-func (s *Service) beginLocked(ctx context.Context, rel, typ string, revision int, force bool) (release.Operation, error) {
 	op := release.Operation{Release: rel, Type: typ, Revision: revision, Status: release.OperationRunning,
 		PID: s.PID, Hostname: s.Hostname, Actor: actorOf(ctx), StartedAt: s.Now()}
 	id, err := s.Store.BeginOperation(ctx, op, func(running release.Operation) error {
@@ -161,7 +183,6 @@ func actorOf(ctx context.Context) string {
 // finish records the end of an operation. It uses a context that survives cancellation (Ctrl-C) so
 // the operation is not left running.
 func (s *Service) finish(ctx context.Context, op release.Operation, err error) {
-	defer s.mutex(op.Release).Unlock()
 	ctx = context.WithoutCancel(ctx)
 	op.Status = release.OperationSucceeded
 	if err != nil {
@@ -294,7 +315,7 @@ type deployInput struct {
 	Name          string
 	Type          string // install, upgrade, rollback
 	Description   string
-	Package       pkg.Metadata
+	Package       packages.Metadata
 	PackageDigest string
 	Overrides     map[string]any
 	Values        map[string]any
@@ -308,6 +329,8 @@ type deployInput struct {
 	Existing *release.Release
 	// Notes is the rendered NOTES.txt (writeOnly values redacted).
 	Notes string
+	// Progress, if set, receives what the deployment is doing as it happens.
+	Progress func(api.Event)
 	// resumed deploys a revision that is already recorded, for an operation a stopped karga-server left.
 	resumed bool
 }
@@ -355,15 +378,16 @@ func (s *Service) deploy(ctx context.Context, in deployInput) (*Result, error) {
 		return nil, rtErr
 	}
 	recorded := applied
+	var anon deployment.Anonymous
 	if rtErr == nil {
 		if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
 			return nil, err
 		}
-		if err := anonymousVolumes(ctx, rt, in.Name, in.Resources); err != nil {
+		if anon, err = anonymousVolumes(ctx, rt, in.Name, in.Resources); err != nil {
 			return nil, err
 		}
 	}
-	plan, err := deployment.Diff(in.Name, in.Resources, applied, in.Strategy)
+	plan, err := deployment.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +396,7 @@ func (s *Service) deploy(ctx context.Context, in deployInput) (*Result, error) {
 		res.From = in.Existing.CurrentRevision
 	}
 	if in.DryRun {
-		res.Warnings = anonymousWarnings(in.Resources)
+		res.Warnings = anonymousWarnings(anon)
 		if gone := plan.DeletedVolumes(); len(gone) > 0 && !in.DeleteVolumes {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("this %s deletes volume %s and its data; it needs --delete-volumes", in.Type, strings.Join(gone, ", ")))
 		}
@@ -397,12 +421,12 @@ func (s *Service) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	}
 	s.finish(ctx, op, err)
 	if err != nil {
-		res.Status = release.StatusFailed
+		res.Status = string(release.StatusFailed)
 		hint := fmt.Sprintf("revision %d failed", in.Revision)
 		var execErr *deployment.ExecError
 		switch {
 		case errors.As(err, &execErr) && !execErr.Disrupted && res.From > 0:
-			res.Status = in.Existing.Status
+			res.Status = string(in.Existing.Status)
 			hint += fmt.Sprintf("; nothing that was running changed and revision %d is still serving", res.From)
 		case res.From > 0:
 			hint += fmt.Sprintf("; revision %d stays current. Inspect with 'karga status %s' (and 'docker logs'), then fix and upgrade or run 'karga rollback %s'", res.From, in.Name, in.Name)
@@ -413,15 +437,15 @@ func (s *Service) deploy(ctx context.Context, in deployInput) (*Result, error) {
 		}
 		return res, fmt.Errorf("%w\n%s", err, hint)
 	}
-	res.Status = release.StatusDeployed
+	res.Status = string(release.StatusDeployed)
 	s.repairs.reset(in.Name)
 	if s.AfterChange != nil {
 		s.AfterChange(in.Name)
 	}
-	if err := anonymousVolumes(ctx, rt, in.Name, in.Resources); err == nil {
-		res.Warnings = anonymousWarnings(in.Resources)
+	if anon, err := anonymousVolumes(ctx, rt, in.Name, in.Resources); err == nil {
+		res.Warnings = anonymousWarnings(anon)
 	}
-	if perr := s.prune(context.WithoutCancel(ctx), in.Name, in.HistoryMax); perr != nil {
+	if perr := s.prune(context.WithoutCancel(ctx), in.Name, historyMax(in.HistoryMax)); perr != nil {
 		s.Log.Warn("prune history", "release", in.Name, "error", perr)
 	}
 	return res, nil
@@ -445,10 +469,12 @@ func (s *Service) discard(ctx context.Context, name string) bool {
 // anonymousVolumes records on each workload the image VOLUME paths its container keeps in anonymous
 // volumes. Such data moves to the new container on a recreate but cannot be shared by two, so these
 // workloads are never replaced.
-func anonymousVolumes(ctx context.Context, rt ports.Runtime, name string, rs []resource.Resource) error {
+// anonymousVolumes finds the image VOLUME paths the release's current workload containers keep in
+// anonymous volumes.
+func anonymousVolumes(ctx context.Context, rt ports.Runtime, name string, rs []resource.Resource) (deployment.Anonymous, error) {
+	anon := deployment.Anonymous{}
 	for _, r := range rs {
-		w, ok := r.Spec.(*resource.WorkloadSpec)
-		if !ok {
+		if r.Kind != resource.KindWorkload {
 			continue
 		}
 		st, err := rt.GetWorkload(ctx, deployment.RuntimeName(name, r.Metadata.Name))
@@ -456,23 +482,20 @@ func anonymousVolumes(ctx context.Context, rt ports.Runtime, name string, rs []r
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
-		w.AnonymousVolumes = nil
 		for _, m := range st.AnonymousVolumes {
-			w.AnonymousVolumes = append(w.AnonymousVolumes, m.Target)
+			anon[r.Metadata.Name] = append(anon[r.Metadata.Name], m.Target)
 		}
 	}
-	return nil
+	return anon, nil
 }
 
-func anonymousWarnings(rs []resource.Resource) []string {
+func anonymousWarnings(anon deployment.Anonymous) []string {
 	var out []string
-	for _, r := range rs {
-		if w, ok := r.Spec.(*resource.WorkloadSpec); ok && len(w.AnonymousVolumes) > 0 {
-			out = append(out, fmt.Sprintf("workload %s keeps image VOLUME %s in an anonymous volume: upgrades keep it, but uninstall deletes it and it is not in volume backups. Mount a Volume there.",
-				r.Metadata.Name, strings.Join(w.AnonymousVolumes, ", ")))
-		}
+	for _, name := range slices.Sorted(maps.Keys(anon)) {
+		out = append(out, fmt.Sprintf("workload %s keeps image VOLUME %s in an anonymous volume: upgrades keep it, but uninstall deletes it and it is not in volume backups. Mount a Volume there.",
+			name, strings.Join(anon[name], ", ")))
 	}
 	return out
 }
@@ -524,7 +547,11 @@ func (s *Service) reconcile(ctx context.Context, rt ports.Runtime, in deployInpu
 	if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
 		return plan, err
 	}
-	return deployment.Diff(in.Name, in.Resources, applied, in.Strategy)
+	anon, err := anonymousVolumes(ctx, rt, in.Name, in.Resources)
+	if err != nil {
+		return plan, err
+	}
+	return deployment.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
 }
 
 func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operation, in deployInput, plan deployment.Plan) error {
@@ -563,7 +590,7 @@ func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operati
 	if err := s.createRevision(ctx, in, release.Revision{
 		Release: in.Name, Number: in.Revision, PackageName: in.Package.Name, PackageVersion: in.Package.Version,
 		RuntimeSupported: in.Package.Runtime.Supported, PackageDigest: in.PackageDigest, ValuesDigest: valuesDigest, ManifestDigest: manifestDigest,
-		Values: values.Mask(in.Overrides, in.SecretPaths), ValuesAll: values.Mask(in.Values, in.SecretPaths), Manifest: manifest,
+		Values: maskValues(in.Overrides, in.SecretPaths), ValuesAll: maskValues(in.Values, in.SecretPaths), Manifest: manifest,
 		Status: release.RevisionPending, Description: in.Description, CreatedAt: now, Notes: in.Notes,
 	}); err != nil {
 		return err
@@ -571,7 +598,7 @@ func (s *Service) run(ctx context.Context, rt ports.Runtime, op *release.Operati
 
 	execErr := deployment.Execute(ctx, rt, deployment.ExecRequest{
 		Home: s.Home, Release: in.Name, Revision: in.Revision, Supported: in.Package.Runtime.Supported,
-		Resources: in.Resources, Plan: plan, Redact: s.Redact, Timeout: in.Timeout,
+		Resources: in.Resources, Plan: plan, Redact: s.Redact, Timeout: time.Duration(in.Timeout), AllowedCaps: s.AllowedCaps,
 		OnStep:     func(c deployment.Change, st release.Step) error { return s.record(ctx, op, in, c, st) },
 		OnProgress: in.Progress,
 	})

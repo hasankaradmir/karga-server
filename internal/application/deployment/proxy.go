@@ -14,8 +14,9 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/api"
 
-	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 )

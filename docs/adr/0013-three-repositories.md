@@ -7,7 +7,7 @@
 - **karga-server** (`github.com/hasankaradmir/karga-server`): the server, its adapters (Docker,
   SQLite, Envoy), the systemd unit and install script, the integration and e2e tests, and the
   design documents (`docs/`).
-- **karga** (`github.com/hasankaradmir/karga`): the CLI, its install script, the user
+- **karga** (`github.com/hasankaradmir/karga-cli`): the CLI, its install script, the user
   documentation (README, USAGE).
 - **karga-sdk** (`github.com/hasankaradmir/karga-sdk`): what both use: the resource model, the
   package engine (load, lint, render, create), plans and diffs as the CLI shows them, and the API
@@ -29,5 +29,5 @@ it import server internals; the split makes the boundary the API.
 
 **Constraints:** A change to the API is made in karga-sdk first, then required by the server and
 the CLI (Go pseudo-versions until karga-sdk is tagged). The server's e2e tests build the CLI from a
-checkout of its repository (`KARGA_CLI_SRC`, default `../karga`) or take a binary (`KARGA_CLI`).
+checkout of its repository (`KARGA_CLI_SRC`, default `../karga-cli`) or take a binary (`KARGA_CLI`).
 The history of each repository is the history of the original one for its files.

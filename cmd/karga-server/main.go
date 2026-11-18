@@ -9,8 +9,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/logging"
 
 	"github.com/hasankaradmir/karga-sdk/api"
 
@@ -31,6 +34,7 @@ func run() error {
 	home := flag.String("home", "", "state directory (default $KARGA_HOME, $XDG_DATA_HOME/karga or ~/.local/share/karga)")
 	socket := flag.String("socket", envOr("KARGA_SOCKET", api.DefaultSocket), "unix socket the CLI connects to")
 	interval := flag.Duration("reconcile-interval", server.DefaultReconcileInterval, "time between reconciliations of every release (0: only on container events)")
+	allowCaps := flag.String("allow-capabilities", "", "comma-separated Linux capabilities packages may add beyond Docker's default set, e.g. NET_ADMIN (ALL: any; each one gives containers power over the host)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -42,7 +46,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	redactor := logging.NewRedactor()
+	log, err := logging.New(os.Stderr, "text", slog.LevelInfo, redactor)
+	if err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -51,7 +59,7 @@ func run() error {
 		return err
 	}
 	defer func() { _ = rt.Close() }()
-	srv, err := server.New(ctx, server.Config{Home: cfg.Home, Socket: *socket, Log: log, ReconcileInterval: *interval}, rt)
+	srv, err := server.New(ctx, server.Config{Home: cfg.Home, Socket: *socket, Log: log, Redactor: redactor, AllowedCaps: splitList(*allowCaps), ReconcileInterval: *interval}, rt)
 	if err != nil {
 		return err
 	}
@@ -68,4 +76,15 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// splitList splits a comma-separated flag value, dropping empty items.
+func splitList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }

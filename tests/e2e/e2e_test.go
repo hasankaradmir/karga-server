@@ -37,13 +37,13 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	// The CLI comes from KARGA_CLI (a binary) or is built from its repository, KARGA_CLI_SRC
-	// (default: a karga checkout next to this repository).
+	// (default: a karga-cli checkout next to this repository).
 	karga, kargaServer = os.Getenv("KARGA_CLI"), filepath.Join(dir, "karga-server")
 	builds := [][2]string{{kargaServer, "../../cmd/karga-server"}}
 	if karga == "" {
 		src := os.Getenv("KARGA_CLI_SRC")
 		if src == "" {
-			src = "../../../karga"
+			src = "../../../karga-cli"
 		}
 		if src, err = filepath.Abs(src); err == nil {
 			karga = filepath.Join(dir, "karga")
@@ -162,7 +162,7 @@ func freePort(t *testing.T) int {
 // cleanup removes the release and, as a safety net, anything Docker still has labelled with it.
 func (e *env) cleanup(rel string) {
 	e.t.Cleanup(func() {
-		_, _ = e.try("uninstall", rel, "--delete-volumes")
+		_, _ = e.try("uninstall", rel, "--delete-volumes", "--yes")
 		filter := "label=io.karga.release=" + rel
 		for _, args := range [][]string{
 			{"ps", "-aq", "--filter", filter},
@@ -289,7 +289,7 @@ func TestRedisLifecycle(t *testing.T) {
 	if got := redis(t, port, "GET e2e"); !strings.HasPrefix(got, "$-1") {
 		t.Fatalf("data not wiped: %q", got)
 	}
-	if out := e.run("volume", "restore", rel, "redis-data", backup); !strings.Contains(out, "restored from") {
+	if out := e.run("volume", "restore", rel, "redis-data", backup, "--yes"); !strings.Contains(out, "restored from") {
 		t.Fatalf("volume restore:\n%s", out)
 	}
 	if got := redis(t, port, "GET e2e"); !strings.Contains(got, "kept") {
@@ -334,7 +334,7 @@ func TestRedisLifecycle(t *testing.T) {
 	}
 
 	// 7. Uninstall keeps the volume, 8. a reinstall finds the data again.
-	e.run("uninstall", rel)
+	e.run("uninstall", rel, "--yes")
 	if err := exec.Command("docker", "volume", "inspect", rel+"-redis-data").Run(); err != nil {
 		t.Fatalf("volume not retained: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestRedisLifecycle(t *testing.T) {
 	}
 
 	// 9. --delete-volumes removes the data.
-	e.run("uninstall", rel, "--delete-volumes")
+	e.run("uninstall", rel, "--delete-volumes", "--yes")
 	if err := exec.Command("docker", "volume", "inspect", rel+"-redis-data").Run(); err == nil {
 		t.Fatal("volume still exists after --delete-volumes")
 	}

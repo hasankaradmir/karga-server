@@ -58,7 +58,7 @@ jobs:
       # The e2e tests drive the karga CLI, built from its repository.
       - uses: actions/checkout@v4
         with:
-          repository: hasankaradmir/karga
+          repository: hasankaradmir/karga-cli
           path: karga-cli
       - uses: actions/setup-go@v5
         with:

@@ -13,7 +13,7 @@ test:
 test-integration:
 	go test -tags integration -race -count=1 ./...
 
-# Builds karga-server and the karga CLI (from KARGA_CLI_SRC, default ../karga) and drives them
+# Builds karga-server and the karga CLI (from KARGA_CLI_SRC, default ../karga-cli) and drives them
 # against Docker.
 test-e2e:
 	go test -tags e2e -count=1 ./tests/e2e/...

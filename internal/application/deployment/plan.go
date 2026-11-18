@@ -10,15 +10,16 @@ import (
 	"strings"
 	"sync/atomic"
 
-	sdkplan "github.com/hasankaradmir/karga-sdk/plan"
-	"github.com/hasankaradmir/karga-sdk/release"
+	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )
 
 // Change is what a plan does to one resource: the wire part the CLI sees, and what the executor
 // needs to apply it.
 type Change struct {
-	sdkplan.Change
+	api.Change
 	// Resource is the desired resource (nil for delete).
 	Resource *resource.Resource `json:"-"`
 	// Spec and Digest describe the desired state to record once applied.
@@ -38,8 +39,8 @@ type Plan struct {
 }
 
 // Wire is the plan as the CLI sees it.
-func (p Plan) Wire() sdkplan.Plan {
-	out := sdkplan.Plan{Changes: make([]sdkplan.Change, len(p.Changes))}
+func (p Plan) Wire() api.Plan {
+	out := api.Plan{Changes: make([]api.Change, len(p.Changes))}
 	for i, c := range p.Changes {
 		out.Changes[i] = c.Change
 	}
@@ -49,25 +50,18 @@ func (p Plan) Wire() sdkplan.Plan {
 // HasChanges reports whether applying the plan would touch the runtime.
 func (p Plan) HasChanges() bool { return p.Wire().HasChanges() }
 
-// Names shared with the CLI through the SDK.
+// Wire names the CLI sees.
 type (
-	FieldChange  = sdkplan.FieldChange
-	ResourceDiff = sdkplan.ResourceDiff
+	FieldChange  = api.FieldChange
+	ResourceDiff = api.ResourceDiff
 )
 
 // Actions in a plan.
 const (
-	ActionCreate    = sdkplan.ActionCreate
-	ActionUpdate    = sdkplan.ActionUpdate
-	ActionDelete    = sdkplan.ActionDelete
-	ActionUnchanged = sdkplan.ActionUnchanged
-)
-
-var (
-	fieldChanges = sdkplan.FieldChanges
-	// CompareManifests diffs two stored manifests; CompareValues two values documents.
-	CompareManifests = sdkplan.CompareManifests
-	CompareValues    = sdkplan.CompareValues
+	ActionCreate    = api.ActionCreate
+	ActionUpdate    = api.ActionUpdate
+	ActionDelete    = api.ActionDelete
+	ActionUnchanged = api.ActionUnchanged
 )
 
 // digestKey keys the digests of secret material (R7): without it a weak secret could be guessed
@@ -167,10 +161,14 @@ func Specs(rs []resource.Resource) (map[Key]release.AppliedResource, error) {
 	return out, nil
 }
 
+// Anonymous are, per workload name, the image VOLUME paths its current container keeps in anonymous
+// volumes (no Volume is mounted there). They are found in the runtime before planning.
+type Anonymous map[string][]string
+
 // Diff compares the desired manifest with what is applied. Changing a Network or Volume is refused:
 // it would mean recreating it, which breaks attached workloads or destroys data. strategy overrides
 // the workloads' updateStrategy when not empty.
-func Diff(releaseName string, desired []resource.Resource, applied []release.AppliedResource, strategy string) (Plan, error) {
+func Diff(releaseName string, desired []resource.Resource, applied []release.AppliedResource, strategy string, anon Anonymous) (Plan, error) {
 	if strategy != "" && strategy != resource.StrategyRecreate && strategy != resource.StrategyReplace {
 		return Plan{}, fmt.Errorf("unknown strategy %q (want recreate or replace)", strategy)
 	}
@@ -208,7 +206,7 @@ func Diff(releaseName string, desired []resource.Resource, applied []release.App
 		r := r
 		k := keyOf(r)
 		want := specs[k]
-		c := Change{Change: sdkplan.Change{Kind: k.Kind, Name: k.Name}, Resource: &r, Spec: want.Spec, Digest: want.Digest, RuntimeName: RuntimeName(releaseName, k.Name)}
+		c := Change{Change: api.Change{Kind: k.Kind, Name: k.Name}, Resource: &r, Spec: want.Spec, Digest: want.Digest, RuntimeName: RuntimeName(releaseName, k.Name)}
 		if k.Kind == resource.KindService {
 			c.RuntimeName = ProxyName(releaseName) // a Service has no container; the release proxy serves it
 		}
@@ -223,7 +221,7 @@ func Diff(releaseName string, desired []resource.Resource, applied []release.App
 			c.Fields = fieldChanges(k.Kind, have.Spec, want.Spec)
 			w, isWorkload := r.Spec.(*resource.WorkloadSpec)
 			if isWorkload {
-				c.Strategy, c.StrategyReason = workloadStrategy(w, strategy, behind[k.Name] != nil, hadProxy[k.Name])
+				c.Strategy, c.StrategyReason = workloadStrategy(w, anon[k.Name], strategy, behind[k.Name] != nil, hadProxy[k.Name])
 			}
 			if len(c.Fields) == 0 {
 				why := "(mounted Config/Secret content or previous failure)"
@@ -259,7 +257,7 @@ func Diff(releaseName string, desired []resource.Resource, applied []release.App
 	})
 	for _, a := range removed {
 		a := a
-		c := Change{Change: sdkplan.Change{Kind: a.Kind, Name: a.Name, Action: ActionDelete}, Applied: &a, RuntimeName: a.RuntimeName}
+		c := Change{Change: api.Change{Kind: a.Kind, Name: a.Name, Action: ActionDelete}, Applied: &a, RuntimeName: a.RuntimeName}
 		c.Notice = c.note()
 		plan.Changes = append(plan.Changes, c)
 	}
@@ -271,20 +269,20 @@ func Diff(releaseName string, desired []resource.Resource, applied []release.App
 
 // workloadStrategy adds the service transitions to strategyFor: a workload a Service starts or
 // stops targeting gains or loses its backend alias, which only a recreate can do.
-func workloadStrategy(w *resource.WorkloadSpec, override string, now, had bool) (string, string) {
+func workloadStrategy(w *resource.WorkloadSpec, anon []string, override string, now, had bool) (string, string) {
 	switch {
 	case now && !had:
 		return resource.StrategyRecreate, "a service now targets it"
 	case !now && had:
 		return resource.StrategyRecreate, "no service targets it anymore"
 	}
-	return strategyFor(w, override)
+	return strategyFor(w, anon, override)
 }
 
 // strategyFor decides how a workload update is applied. replace runs the new container next to the
 // old one, which is only safe without read-write volumes (two writers on the same data) and with a
 // healthcheck (to know it is ready).
-func strategyFor(w *resource.WorkloadSpec, override string) (string, string) {
+func strategyFor(w *resource.WorkloadSpec, anon []string, override string) (string, string) {
 	requested, _ := w.Strategy()
 	if override != "" {
 		requested = override
@@ -292,18 +290,18 @@ func strategyFor(w *resource.WorkloadSpec, override string) (string, string) {
 	if requested != resource.StrategyReplace {
 		return resource.StrategyRecreate, ""
 	}
-	return eligible(w)
+	return eligible(w, anon)
 }
 
 // eligible checks whether w can be replaced, ignoring what was requested.
-func eligible(w *resource.WorkloadSpec) (string, string) {
+func eligible(w *resource.WorkloadSpec, anon []string) (string, string) {
 	for _, m := range w.Mounts {
 		if m.Volume != "" && !m.ReadOnly {
 			return resource.StrategyRecreate, fmt.Sprintf("mounts volume %s read-write", m.Volume)
 		}
 	}
-	if len(w.AnonymousVolumes) > 0 {
-		return resource.StrategyRecreate, fmt.Sprintf("keeps image VOLUME %s in an anonymous volume", strings.Join(w.AnonymousVolumes, ", "))
+	if len(anon) > 0 {
+		return resource.StrategyRecreate, fmt.Sprintf("keeps image VOLUME %s in an anonymous volume", strings.Join(anon, ", "))
 	}
 	if w.HealthCheck == nil {
 		return resource.StrategyRecreate, "no healthCheck to verify readiness"

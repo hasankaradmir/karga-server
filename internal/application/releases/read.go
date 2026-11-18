@@ -12,8 +12,9 @@ import (
 	"strings"
 
 	"github.com/hasankaradmir/karga-sdk/api"
-	"github.com/hasankaradmir/karga-sdk/release"
 	"github.com/hasankaradmir/karga-sdk/resource"
+
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
@@ -22,16 +23,18 @@ import (
 )
 
 // List returns every release.
-func (s *Service) List(ctx context.Context) ([]release.Release, error) {
-	return s.Store.ListReleases(ctx)
+func (s *Service) List(ctx context.Context) ([]api.Release, error) {
+	rels, err := s.Store.ListReleases(ctx)
+	return wireAll(rels, wireRelease), err
 }
 
 // History returns a release's revisions, oldest first.
-func (s *Service) History(ctx context.Context, name string) ([]release.Revision, error) {
+func (s *Service) History(ctx context.Context, name string) ([]api.Revision, error) {
 	if _, err := s.Store.GetRelease(ctx, name); err != nil {
 		return nil, err
 	}
-	return s.Store.ListRevisions(ctx, name)
+	revs, err := s.Store.ListRevisions(ctx, name)
+	return wireAll(revs, wireRevision), err
 }
 
 // revisionOrCurrent resolves revision 0 to the current revision.
@@ -106,7 +109,7 @@ func (s *Service) Status(ctx context.Context, name string) (*StatusReport, error
 	if err != nil {
 		return nil, err
 	}
-	rep := &StatusReport{Release: rel, Resources: []ResourceStatus{}}
+	rep := &StatusReport{Release: wireRelease(rel), Resources: []ResourceStatus{}}
 	if op, err := s.Store.RunningOperation(ctx, name); err == nil {
 		rep.Interrupted = describe(op)
 		if op.Hostname == s.Hostname && processAlive(op.PID) {
@@ -381,8 +384,9 @@ func (s *Service) Diff(ctx context.Context, name string, from, to int) (*Revisio
 }
 
 // Resources lists what is applied for a release (for completion and tools; no runtime is read).
-func (s *Service) Resources(ctx context.Context, name string) ([]release.AppliedResource, error) {
-	return s.Store.ListResources(ctx, name)
+func (s *Service) Resources(ctx context.Context, name string) ([]api.AppliedResource, error) {
+	rs, err := s.Store.ListResources(ctx, name)
+	return wireAll(rs, wireApplied), err
 }
 
 // BackupState writes a consistent copy of the state database to w.
