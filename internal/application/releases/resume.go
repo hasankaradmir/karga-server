@@ -20,14 +20,14 @@ const ResumeOperation = "resume"
 // --timeout), recorded with the operation. Other operations are aborted; the reconciler starts what
 // they stopped.
 func (s *Lifecycle) Resume(ctx context.Context) {
-	rels, err := s.Store.ListReleases(ctx)
+	rels, err := s.c.store.ListReleases(ctx)
 	if err != nil {
-		s.Log.Error("resume: list releases", "error", err)
+		s.c.log.Error("resume: list releases", "error", err)
 		return
 	}
 	for _, rel := range rels {
 		if err := s.resumeRelease(ctx, rel.Name); err != nil {
-			s.Log.Error("resume interrupted operation", "release", rel.Name, "error", err)
+			s.c.log.Error("resume interrupted operation", "release", rel.Name, "error", err)
 		}
 	}
 }
@@ -36,30 +36,30 @@ func (s *Lifecycle) Resume(ctx context.Context) {
 // no operation of this process runs, so one recorded with this process's PID is an earlier
 // process's that had the same PID.
 func (s *Lifecycle) resumeRelease(ctx context.Context, name string) error {
-	unlock, err := s.lock(ctx, name, false)
+	unlock, err := s.c.locks.lock(ctx, name)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	rel, err := s.Store.GetRelease(ctx, name)
+	rel, err := s.c.store.GetRelease(ctx, name)
 	if err != nil {
 		return err
 	}
-	op, err := s.Store.RunningOperation(ctx, name)
+	op, err := s.c.store.RunningOperation(ctx, name)
 	if errors.Is(err, ports.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if op.Hostname == s.Hostname && op.PID != s.PID && processAlive(op.PID) {
+	if op.Hostname == s.c.hostname && op.PID != s.c.pid && processAlive(op.PID) {
 		return nil // a live process still works on it
 	}
 	return s.resume(ctx, rel, op)
 }
 
 func (s *Lifecycle) resume(ctx context.Context, rel release.Release, op release.Operation) error {
-	s.Log.Warn("resuming interrupted operation", "release", rel.Name, "operation", op.ID, "type", op.Type, "revision", op.Revision)
+	s.c.log.Warn("resuming interrupted operation", "release", rel.Name, "operation", op.ID, "type", op.Type, "revision", op.Revision)
 	// Deploys and uninstalls abort the interrupted operation when they begin (Force): if they cannot
 	// begin (no container runtime yet), it stays running and the next start tries again.
 	switch op.Type {
@@ -71,41 +71,41 @@ func (s *Lifecycle) resume(ctx context.Context, rel release.Release, op release.
 		return err
 	}
 	op.Status, op.Error = release.OperationAborted, "interrupted: karga-server stopped"
-	return s.Store.FinishOperation(ctx, op)
+	return s.c.store.FinishOperation(ctx, op)
 }
 
 // redeploy deploys the revision op was deploying. Without it (stopped before it was recorded) nothing
 // had changed: the release goes back to its current revision.
 func (s *Lifecycle) redeploy(ctx context.Context, rel release.Release, op release.Operation) error {
-	rev, err := s.Store.GetRevision(ctx, rel.Name, op.Revision)
+	rev, err := s.c.store.GetRevision(ctx, rel.Name, op.Revision)
 	if errors.Is(err, ports.ErrNotFound) {
 		op.Status, op.Error = release.OperationAborted, "interrupted before it changed anything"
-		if err := s.Store.FinishOperation(ctx, op); err != nil {
+		if err := s.c.store.FinishOperation(ctx, op); err != nil {
 			return err
 		}
 		if rel.CurrentRevision == 0 {
-			s.discard(ctx, rel.Name)
+			s.c.discard(ctx, rel.Name)
 			return nil
 		}
-		rel.Status, rel.UpdatedAt = release.StatusDeployed, s.Now()
-		return s.Store.SaveRelease(ctx, rel)
+		rel.Status, rel.UpdatedAt = release.StatusDeployed, s.c.now()
+		return s.c.store.SaveRelease(ctx, rel)
 	}
 	if err != nil {
 		return err
 	}
 	rs, err := decodeManifest(rev.Manifest)
 	if err == nil {
-		err = s.restoreSecrets(rel.Name, rev.Number, rs)
+		err = s.c.restoreSecrets(rel.Name, rev.Number, rs)
 	}
 	if err != nil {
 		// Cannot deploy it again: the release is left failed, for the next upgrade or rollback.
-		rel.Status, rel.UpdatedAt = release.StatusFailed, s.Now()
+		rel.Status, rel.UpdatedAt = release.StatusFailed, s.c.now()
 		op.Status, op.Error = release.OperationAborted, "interrupted; cannot resume: "+err.Error()
-		return errors.Join(err, s.Store.FinishOperation(ctx, op), s.Store.UpdateRevisionStatus(ctx, rel.Name, rev.Number, release.RevisionFailed, "Interrupted: "+err.Error()),
-			s.Store.SaveRelease(ctx, rel))
+		return errors.Join(err, s.c.store.FinishOperation(ctx, op), s.c.store.UpdateRevisionStatus(ctx, rel.Name, rev.Number, release.RevisionFailed, "Interrupted: "+err.Error()),
+			s.c.store.SaveRelease(ctx, rel))
 	}
 	p := packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
-	_, err = s.deploy(ctx, deployInput{
+	_, err = s.c.deploy(ctx, deployInput{
 		// The request's own choices: a volume it was not allowed to delete is not deleted now either.
 		CommonOptions: CommonOptions{DeleteVolumes: op.Options.DeleteVolumes, Timeout: op.Options.Timeout, Force: true},
 		Strategy:      op.Options.Strategy,

@@ -5,36 +5,50 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )
 
+// opLocks serialize the operations of each release inside this process: a user's command waits
+// for a reconciliation in progress instead of failing; a reconciliation skips a busy release.
+type opLocks struct {
+	mu   sync.Mutex
+	busy map[string]*releaseLock // releases someone holds or waits for
+}
+
 // lock takes release rel for one operation, from reading its state to recording the outcome, so
-// what an operation plans cannot go stale before it runs. It waits until rel is free or ctx ends;
-// with try it does not wait. Call the returned function to let go.
-func (s *Core) lock(ctx context.Context, rel string, try bool) (func(), error) {
-	l := s.lockRef(rel)
-	unlock := func() {
-		<-l.ch
-		s.lockUnref(rel)
-	}
+// what an operation plans cannot go stale before it runs. It waits until rel is free or ctx ends.
+// Call the returned function to let go.
+func (o *opLocks) lock(ctx context.Context, rel string) (func(), error) {
+	l := o.ref(rel)
 	select {
 	case l.ch <- struct{}{}:
-		return unlock, nil
-	default:
+		return o.unlock(rel, l), nil
+	case <-ctx.Done():
+		o.unref(rel)
+		return nil, fmt.Errorf("waiting for the operation running on %s: %w", rel, ctx.Err())
 	}
-	if try {
-		s.lockUnref(rel)
+}
+
+// tryLock is lock without waiting: it fails with ErrLocked when rel is busy.
+func (o *opLocks) tryLock(rel string) (func(), error) {
+	l := o.ref(rel)
+	select {
+	case l.ch <- struct{}{}:
+		return o.unlock(rel, l), nil
+	default:
+		o.unref(rel)
 		return nil, fmt.Errorf("%w: a command is working on %s", ErrLocked, rel)
 	}
-	select {
-	case l.ch <- struct{}{}:
-		return unlock, nil
-	case <-ctx.Done():
-		s.lockUnref(rel)
-		return nil, fmt.Errorf("waiting for the operation running on %s: %w", rel, ctx.Err())
+}
+
+func (o *opLocks) unlock(rel string, l *releaseLock) func() {
+	return func() {
+		<-l.ch
+		o.unref(rel)
 	}
 }
 
@@ -45,27 +59,27 @@ type releaseLock struct {
 	refs int
 }
 
-func (s *Core) lockRef(rel string) *releaseLock {
-	s.busyMu.Lock()
-	defer s.busyMu.Unlock()
-	if s.busy == nil {
-		s.busy = map[string]*releaseLock{}
+func (o *opLocks) ref(rel string) *releaseLock {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.busy == nil {
+		o.busy = map[string]*releaseLock{}
 	}
-	l := s.busy[rel]
+	l := o.busy[rel]
 	if l == nil {
 		l = &releaseLock{ch: make(chan struct{}, 1)}
-		s.busy[rel] = l
+		o.busy[rel] = l
 	}
 	l.refs++
 	return l
 }
 
-func (s *Core) lockUnref(rel string) {
-	s.busyMu.Lock()
-	defer s.busyMu.Unlock()
-	if l := s.busy[rel]; l != nil {
+func (o *opLocks) unref(rel string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if l := o.busy[rel]; l != nil {
 		if l.refs--; l.refs == 0 {
-			delete(s.busy, rel)
+			delete(o.busy, rel)
 		}
 	}
 }
@@ -90,24 +104,24 @@ func describe(op release.Operation) string {
 
 // begin records a running operation; the caller holds the release's lock. A live process holding the
 // release always wins; a dead one is only overridden with force (D15).
-func (s *Core) begin(ctx context.Context, rel, typ string, revision int, force bool, opts release.Options) (release.Operation, error) {
+func (s *core) begin(ctx context.Context, rel, typ string, revision int, force bool, opts release.Options) (release.Operation, error) {
 	op := release.Operation{Release: rel, Type: typ, Revision: revision, Status: release.OperationRunning,
-		PID: s.PID, Hostname: s.Hostname, Actor: actorOf(ctx), Options: opts, StartedAt: s.Now()}
-	id, err := s.Store.BeginOperation(ctx, op, func(running release.Operation) error {
+		PID: s.pid, Hostname: s.hostname, Actor: actorOf(ctx), Options: opts, StartedAt: s.now()}
+	id, err := s.store.BeginOperation(ctx, op, func(running release.Operation) error {
 		// Under the release mutex no operation of this process runs: one with its PID is from an
 		// earlier process that got the same PID (a container's PID 1).
-		if running.Hostname == s.Hostname && running.PID != s.PID && processAlive(running.PID) {
+		if running.Hostname == s.hostname && running.PID != s.pid && processAlive(running.PID) {
 			return fmt.Errorf("%w: %s", ErrLocked, describe(running))
 		}
 		if !force {
 			return fmt.Errorf("%w: %s\nInspect with 'karga status %s'; rerun with --force to continue", ErrInterrupted, describe(running), rel)
 		}
-		s.Log.Warn("aborting interrupted operation", "release", rel, "operation", running.ID)
+		s.log.Warn("aborting interrupted operation", "release", rel, "operation", running.ID)
 		return nil
 	})
 	op.ID = id
 	if err == nil {
-		s.Log.Info("operation", "operation_id", id, "release", rel, "type", typ, "revision", revision, "user", op.Actor)
+		s.log.Info("operation", "operation_id", id, "release", rel, "type", typ, "revision", revision, "user", op.Actor)
 	}
 	return op, err
 }
@@ -131,13 +145,13 @@ func actorOf(ctx context.Context) string {
 
 // finish records the end of an operation. It uses a context that survives cancellation (Ctrl-C) so
 // the operation is not left running.
-func (s *Core) finish(ctx context.Context, op release.Operation, err error) {
+func (s *core) finish(ctx context.Context, op release.Operation, err error) {
 	ctx = context.WithoutCancel(ctx)
 	op.Status = release.OperationSucceeded
 	if err != nil {
 		op.Status, op.Error = release.OperationFailed, err.Error()
 	}
-	if ferr := s.Store.FinishOperation(ctx, op); ferr != nil {
-		s.Log.Error("record operation result", "release", op.Release, "error", ferr)
+	if ferr := s.store.FinishOperation(ctx, op); ferr != nil {
+		s.log.Error("record operation result", "release", op.Release, "error", ferr)
 	}
 }

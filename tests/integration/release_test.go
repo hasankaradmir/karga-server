@@ -45,7 +45,7 @@ func TestRedisReleaseLifecycle(t *testing.T) {
 		t.Fatalf("after upgrade: %+v", st)
 	}
 	var out strings.Builder
-	if err := s.Reads.Logs(ctx, releases.LogsRequest{Release: name, Tail: 50}, &out); err != nil || !strings.Contains(out.String(), "Ready to accept connections") {
+	if err := s.Containers.Logs(ctx, releases.LogsRequest{Release: name, Tail: 50}, &out); err != nil || !strings.Contains(out.String(), "Ready to accept connections") {
 		t.Fatalf("logs: %v\n%s", err, out.String())
 	}
 

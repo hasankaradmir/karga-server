@@ -13,12 +13,12 @@ import (
 )
 
 // digestJSON is the keyed digest of v's JSON: values and manifests may hold secret material.
-func (s *Core) digestJSON(v any) (string, []byte, error) {
+func (s *core) digestJSON(v any) (string, []byte, error) {
 	js, err := json.Marshal(v)
 	if err != nil {
 		return "", nil, err
 	}
-	return s.Deploy.Digest(js), js, nil
+	return s.env.Digest(js), js, nil
 }
 
 // keyFile holds the key of the state's digests of secret material.
@@ -91,24 +91,26 @@ func syncDir(dir string) error {
 // RegisterSecrets gives the log redactor the Secret values of every release's current revision,
 // as Materialize wrote them. karga-server calls it when it starts, so values are masked before
 // any release is applied again. A revision without secret files (none, or pruned) is skipped.
-func (s *Core) RegisterSecrets(ctx context.Context) {
-	rels, err := s.Store.ListReleases(ctx)
+func (s *Service) RegisterSecrets(ctx context.Context) { s.c.registerSecrets(ctx) }
+
+func (s *core) registerSecrets(ctx context.Context) {
+	rels, err := s.store.ListReleases(ctx)
 	if err != nil {
-		s.Log.Warn("register secrets: list releases", "error", err)
+		s.log.Warn("register secrets: list releases", "error", err)
 		return
 	}
 	for _, rel := range rels {
 		if rel.CurrentRevision == 0 {
 			continue
 		}
-		files, _ := filepath.Glob(filepath.Join(deployment.RevisionDir(s.Home, rel.Name, rel.CurrentRevision), "secrets", "*", "*"))
+		files, _ := filepath.Glob(filepath.Join(deployment.RevisionDir(s.home, rel.Name, rel.CurrentRevision), "secrets", "*", "*"))
 		for _, f := range files {
 			b, err := os.ReadFile(f)
 			if err != nil {
-				s.Log.Warn("register secrets: read", "release", rel.Name, "file", f, "error", err)
+				s.log.Warn("register secrets: read", "release", rel.Name, "file", f, "error", err)
 				continue
 			}
-			s.Redact(string(b))
+			s.redact(string(b))
 		}
 	}
 }

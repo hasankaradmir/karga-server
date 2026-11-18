@@ -104,8 +104,14 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 	}
 	// The composition root: Envoy runs the proxies, the host's network runs probes and port tests.
 	host := &proxyops.Host{Proxies: envoy.Proxies{}, Net: hostnet.Net{}}
+	// The queue comes first: the service tells it what changed, the loop takes from it.
+	q := reconciler.NewQueue(0)
+	notify := q.Notify
+	if cfg.ReconcileInterval < 0 {
+		notify = nil
+	}
 	svc, err := releases.New(releases.Deps{Store: store, Runtime: func(context.Context) (ports.Runtime, error) { return rt, nil },
-		Host: host, Home: cfg.Home, Redact: redact, Log: cfg.Log, AllowedCaps: cfg.AllowedCaps})
+		Host: host, Home: cfg.Home, Redact: redact, Log: cfg.Log, AllowedCaps: cfg.AllowedCaps, Notify: notify})
 	if err != nil {
 		_ = store.Close()
 		unlock()
@@ -120,8 +126,7 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 	host.UseRuntime(info)
 	s := &Server{cfg: cfg, Service: svc, store: store, unlock: unlock}
 	if cfg.ReconcileInterval >= 0 {
-		s.Loop = reconciler.New(svc, cfg.ReconcileInterval, cfg.Log)
-		svc.AfterChange = s.Loop.Notify
+		s.Loop = reconciler.New(q, svc.Reads, svc.Lifecycle, rt, reconciler.Options{Interval: cfg.ReconcileInterval, Log: cfg.Log})
 	}
 	return s, nil
 }

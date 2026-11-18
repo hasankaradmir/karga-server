@@ -49,7 +49,7 @@ or repairs anything (section 5).
 
 **Reconciliation.** Desired state is each release's current revision and its applied resources;
 only install, upgrade and rollback change it. karga-server's reconciler (`internal/application/
-reconciler`, the loop; `releases.Service.Reconcile`, the repairs) brings the runtime back to it:
+reconciler`, the queue and the loop; `releases.Lifecycle.Repair`, the repairs) brings the runtime back to it:
 
 - *Triggers:* Docker events of karga's containers (die, stop, destroy, oom, unhealthy; 2 s debounce),
   a pass over every release every 30 s (`--reconcile-interval`), the server's start, and every
@@ -70,10 +70,12 @@ reconciler`, the loop; `releases.Service.Reconcile`, the repairs) brings the run
 cmd/karga-server                entry point
 internal/server                 karga-server: state, runtime, socket, peer credentials; backend.go maps
                                 the API (karga-sdk/api) to the release service and back
-internal/application/releases   the release service: one Core (state, runtime, locks, deploy steps)
-                                shared by Lifecycle (install, upgrade, rollback, uninstall, resume,
-                                repair), Reads (status, history, logs, exec), Volumes and Gateway
-internal/application/deployment plan (diff, strategies), execute, release proxy, probes (deployment.Env)
+internal/application/releases   the release service, built once by New(Deps): one unexported core
+                                (state, runtime, locks, deploy steps) shared by Lifecycle (install,
+                                upgrade, rollback, uninstall, resume, repair), Reads (status, history,
+                                operations), Containers (logs, exec), Volumes and Gateway
+internal/application/deployment plan (diff, strategies), execute, release proxy, probes (deployment.Env,
+                                made once by NewEnv with the state home and the digest key)
 internal/application/gateway    the host gateway: settings, exposures, its Envoy
 internal/application/proxyops   what both share: runtime names and removal, the proxy Host
 internal/ports                  Runtime, StateStore, ProxyControl and HostNet; contract suites

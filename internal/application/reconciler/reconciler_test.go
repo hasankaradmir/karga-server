@@ -28,8 +28,9 @@ func TestEventTriggersRepair(t *testing.T) {
 	defer func() { _ = store.Close() }()
 	rt := fakeruntime.New().WithGateway()
 	rt.EventsC = make(chan ports.RuntimeEvent)
+	q := NewQueue(50 * time.Millisecond)
 	svc, err := releases.New(releases.Deps{Store: store, Runtime: func(context.Context) (ports.Runtime, error) { return rt, nil },
-		Host: &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, Home: home})
+		Host: &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}, Home: home, Notify: q.Notify})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,8 +38,7 @@ func TestEventTriggersRepair(t *testing.T) {
 		Name: "cache", Package: "../../../tests/testdata/redis", Values: releases.Values{Sets: packages.Sets([]string{"service.enabled=false"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	loop := New(svc, 0, nil) // events only
-	loop.Debounce = 50 * time.Millisecond
+	loop := New(q, svc.Reads, svc.Lifecycle, rt, Options{}) // events only
 	stopped := make(chan struct{})
 	go func() { loop.Run(ctx); close(stopped) }()
 	// The repair records its operation after the container is back: let it finish before the

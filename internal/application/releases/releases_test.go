@@ -71,7 +71,7 @@ func (e *env) upgrade(sets ...string) (*Result, error) {
 
 func (e *env) release() release.Release {
 	e.t.Helper()
-	r, err := e.svc.Store.GetRelease(context.Background(), "cache")
+	r, err := e.svc.c.store.GetRelease(context.Background(), "cache")
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestDryRunTouchesNothing(t *testing.T) {
 	if err != nil || !res.DryRun || !changed(res.Plan) {
 		t.Fatalf("dry run: %+v %v", res, err)
 	}
-	if _, err := e.svc.Store.GetRelease(context.Background(), "cache"); !errors.Is(err, ports.ErrNotFound) {
+	if _, err := e.svc.c.store.GetRelease(context.Background(), "cache"); !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("dry run created a release: %v", err)
 	}
 	if len(e.rt.Calls) != 1 || e.rt.Calls[0] != "Info:" { // reading runtime info is all it may do
@@ -138,7 +138,7 @@ func TestUpgradeFailRollback(t *testing.T) {
 	if rel.Status != release.StatusFailed || rel.CurrentRevision != 2 {
 		t.Fatalf("after failure: %+v", rel)
 	}
-	rev3 := must[release.Revision](t)(e.svc.Store.GetRevision(context.Background(), "cache", 3))
+	rev3 := must[release.Revision](t)(e.svc.c.store.GetRevision(context.Background(), "cache", 3))
 	if rev3.Status != release.RevisionFailed || !strings.Contains(rev3.Description, "unhealthy") {
 		t.Fatalf("revision 3: %+v", rev3)
 	}
@@ -217,8 +217,8 @@ func TestInterruptedOperation(t *testing.T) {
 	must[*Result](t)(e.install())
 	begin := func(pid int) {
 		t.Helper()
-		if _, err := e.svc.Store.BeginOperation(ctx, release.Operation{Release: "cache", Type: "upgrade", Revision: 2,
-			PID: pid, Hostname: e.svc.Hostname, StartedAt: time.Now()}, func(release.Operation) error { return nil }); err != nil {
+		if _, err := e.svc.c.store.BeginOperation(ctx, release.Operation{Release: "cache", Type: "upgrade", Revision: 2,
+			PID: pid, Hostname: e.svc.c.hostname, StartedAt: time.Now()}, func(release.Operation) error { return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -291,7 +291,7 @@ func TestUninstall(t *testing.T) {
 	if _, err := e.svc.Lifecycle.Uninstall(ctx, UninstallRequest{Name: "cache", DeleteVolumes: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.Store.GetRelease(ctx, "cache"); !errors.Is(err, ports.ErrNotFound) {
+	if _, err := e.svc.c.store.GetRelease(ctx, "cache"); !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("release should be gone: %v", err)
 	}
 	if len(e.rt.Volumes) != 0 {
@@ -313,7 +313,7 @@ func TestManifestAndStatus(t *testing.T) {
 			t.Fatalf("manifest secret: %v", s.Values)
 		}
 	}
-	rev := must[release.Revision](t)(e.svc.Store.GetRevision(ctx, "db", 1))
+	rev := must[release.Revision](t)(e.svc.c.store.GetRevision(ctx, "db", 1))
 	if strings.Contains(string(rev.Manifest), "hunter2") {
 		t.Fatal("stored manifest contains the secret")
 	}
@@ -365,11 +365,11 @@ func TestReplaceUpgradeAndNonDisruptiveFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "revision 2 is still serving") {
 		t.Fatalf("failed replace: %v", err)
 	}
-	r := must[release.Release](t)(e.svc.Store.GetRelease(ctx, "site"))
+	r := must[release.Release](t)(e.svc.c.store.GetRelease(ctx, "site"))
 	if r.Status != release.StatusDeployed || r.CurrentRevision != 2 {
 		t.Fatalf("release after failed replace: %+v", r)
 	}
-	if rev := must[release.Revision](t)(e.svc.Store.GetRevision(ctx, "site", 3)); rev.Status != release.RevisionFailed {
+	if rev := must[release.Revision](t)(e.svc.c.store.GetRevision(ctx, "site", 3)); rev.Status != release.RevisionFailed {
 		t.Fatalf("revision 3: %+v", rev)
 	}
 	if e.rt.Workloads["site-web"].State != ports.StateRunning {
@@ -422,7 +422,7 @@ func TestWriteOnlyValuesNotStored(t *testing.T) {
 	if _, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "db", Package: pgPkg, Values: pg("database.password=hunter2")}, nil); err != nil {
 		t.Fatal(err)
 	}
-	rev := must[release.Revision](t)(e.svc.Store.GetRevision(ctx, "db", 1))
+	rev := must[release.Revision](t)(e.svc.c.store.GetRevision(ctx, "db", 1))
 	for _, v := range []map[string]any{rev.Values, rev.ValuesAll} {
 		if v["database"].(map[string]any)["password"] != "<redacted>" {
 			t.Fatalf("stored values: %#v", v)
@@ -462,19 +462,19 @@ func TestStateKeyAndKeyedDigests(t *testing.T) {
 	if _, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: CommonOptions{}, Name: "cache", Package: redisPkg, Values: e.opts()}, nil); err != nil {
 		t.Fatal(err)
 	}
-	keyPath := filepath.Join(e.svc.Home, "state.key")
+	keyPath := filepath.Join(e.svc.c.home, "state.key")
 	info, err := os.Stat(keyPath)
 	if err != nil || info.Mode().Perm() != 0o600 || info.Size() != 32 {
 		t.Fatalf("state key: %v %v", info, err)
 	}
-	rev, err := e.svc.Store.GetRevision(ctx, "cache", 1)
+	rev, err := e.svc.c.store.GetRevision(ctx, "cache", 1)
 	if err != nil || !strings.HasPrefix(rev.ValuesDigest, "hmac-sha256:") {
 		t.Fatalf("values digest not keyed: %q %v", rev.ValuesDigest, err)
 	}
 	// Another key gives another digest; the same key the same one.
-	a := e.svc.Deploy.Digest([]byte("pw"))
+	a := e.svc.c.env.Digest([]byte("pw"))
 	with := func(key []byte) *deployment.Env {
-		return deployment.NewEnv(e.svc.Deploy.Host(), deployment.EnvConfig{DigestKey: key})
+		return deployment.NewEnv(e.svc.c.env.Host(), deployment.EnvConfig{DigestKey: key})
 	}
 	if with([]byte("another-key-of-16b")).Digest([]byte("pw")) == a {
 		t.Fatal("digest does not depend on the key")
@@ -512,7 +512,7 @@ func TestFailedInstallLeavesNothing(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "nothing was installed") {
 		t.Fatalf("install: %v", err)
 	}
-	if _, err := e.svc.Store.GetRelease(context.Background(), "cache"); !errors.Is(err, ports.ErrNotFound) {
+	if _, err := e.svc.c.store.GetRelease(context.Background(), "cache"); !errors.Is(err, ports.ErrNotFound) {
 		t.Fatalf("failed install left a release: %v", err)
 	}
 	delete(e.rt.Fail, "EnsureImage:redis:7.4")
@@ -629,7 +629,7 @@ func TestUpgradeDeletingVolumeNeedsFlag(t *testing.T) {
 	if _, err := e.svc.Lifecycle.Upgrade(ctx, without, nil); err == nil || !strings.Contains(err.Error(), "deletes volume scratch and its data") {
 		t.Fatalf("upgrade without --delete-volumes: %v", err)
 	}
-	if rel := must[release.Release](t)(e.svc.Store.GetRelease(ctx, "s")); rel.CurrentRevision != 1 {
+	if rel := must[release.Release](t)(e.svc.c.store.GetRelease(ctx, "s")); rel.CurrentRevision != 1 {
 		t.Fatalf("refused upgrade changed the release: %+v", rel)
 	}
 	if _, ok := e.rt.Volumes["s-scratch"]; !ok {
@@ -683,25 +683,25 @@ func TestConcurrentUpgradesSerialize(t *testing.T) {
 // A user's command waits for the release; giving up waiting does not take it.
 func TestLockHonoursContext(t *testing.T) {
 	e := newEnv(t)
-	unlock, err := e.svc.lock(context.Background(), "cache", false)
+	unlock, err := e.svc.c.locks.lock(context.Background(), "cache")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.lock(context.Background(), "cache", true); !errors.Is(err, ErrLocked) {
+	if _, err := e.svc.c.locks.tryLock("cache"); !errors.Is(err, ErrLocked) {
 		t.Fatalf("try: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := e.svc.lock(ctx, "cache", false); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := e.svc.c.locks.lock(ctx, "cache"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("wait: %v", err)
 	}
 	unlock()
-	again, err := e.svc.lock(context.Background(), "cache", true)
+	again, err := e.svc.c.locks.tryLock("cache")
 	if err != nil {
 		t.Fatalf("after unlock: %v", err)
 	}
 	again()
-	if n := len(e.svc.busy); n != 0 {
+	if n := len(e.svc.c.locks.busy); n != 0 {
 		t.Fatalf("%d lock entries left for releases nobody holds", n)
 	}
 }
@@ -725,7 +725,7 @@ func TestRegisterSecretsAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got []string
-	restarted, err := New(Deps{Store: e.svc.Store, Runtime: e.svc.Runtime, Host: e.svc.Deploy.Host(), Home: e.svc.Home,
+	restarted, err := New(Deps{Store: e.svc.c.store, Runtime: e.svc.c.rtFn, Host: e.svc.c.env.Host(), Home: e.svc.c.home,
 		Redact: func(v string) { got = append(got, v) }})
 	if err != nil {
 		t.Fatal(err)
@@ -735,7 +735,7 @@ func TestRegisterSecretsAfterRestart(t *testing.T) {
 		t.Fatalf("registered %d values, not the password", len(got))
 	}
 	// A release whose revision directory is gone (pruned, or a copied state) is skipped.
-	if err := os.RemoveAll(filepath.Join(e.svc.Home, "releases")); err != nil {
+	if err := os.RemoveAll(filepath.Join(e.svc.c.home, "releases")); err != nil {
 		t.Fatal(err)
 	}
 	got = nil

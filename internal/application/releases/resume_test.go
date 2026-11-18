@@ -24,23 +24,23 @@ func (e *env) crashWith(op string, revision int, status release.Status, opts rel
 		rel.CurrentRevision = revision - 1
 	}
 	rel.Status = status
-	if err := e.svc.Store.SaveRelease(ctx, rel); err != nil {
+	if err := e.svc.c.store.SaveRelease(ctx, rel); err != nil {
 		e.t.Fatal(err)
 	}
-	if _, err := e.svc.Store.GetRevision(ctx, "cache", revision); err == nil {
-		if err := e.svc.Store.UpdateRevisionStatus(ctx, "cache", revision, release.RevisionPending, "Upgrade complete"); err != nil {
+	if _, err := e.svc.c.store.GetRevision(ctx, "cache", revision); err == nil {
+		if err := e.svc.c.store.UpdateRevisionStatus(ctx, "cache", revision, release.RevisionPending, "Upgrade complete"); err != nil {
 			e.t.Fatal(err)
 		}
 	}
-	if _, err := e.svc.Store.BeginOperation(ctx, release.Operation{Release: "cache", Type: op, Revision: revision,
-		Status: release.OperationRunning, PID: 1 << 22, Hostname: e.svc.Hostname, Options: opts, StartedAt: e.svc.Now()}, nil); err != nil {
+	if _, err := e.svc.c.store.BeginOperation(ctx, release.Operation{Release: "cache", Type: op, Revision: revision,
+		Status: release.OperationRunning, PID: 1 << 22, Hostname: e.svc.c.hostname, Options: opts, StartedAt: e.svc.c.now()}, nil); err != nil {
 		e.t.Fatal(err)
 	}
 }
 
 func (e *env) lastOps(n int) []release.Operation {
 	e.t.Helper()
-	ops, err := e.svc.Store.ListOperations(context.Background(), "cache", 0, n)
+	ops, err := e.svc.c.store.ListOperations(context.Background(), "cache", 0, n)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -68,10 +68,10 @@ func TestResumeFinishesAnInterruptedUpgrade(t *testing.T) {
 		ops[0].Actor != ServerActor {
 		t.Fatalf("operations: %+v", ops)
 	}
-	if rev := must[release.Revision](t)(e.svc.Store.GetRevision(context.Background(), "cache", 2)); rev.Status != release.RevisionDeployed {
+	if rev := must[release.Revision](t)(e.svc.c.store.GetRevision(context.Background(), "cache", 2)); rev.Status != release.RevisionDeployed {
 		t.Fatalf("revision: %+v", rev)
 	}
-	revs := must[[]release.Revision](t)(e.svc.Store.ListRevisions(context.Background(), "cache"))
+	revs := must[[]release.Revision](t)(e.svc.c.store.ListRevisions(context.Background(), "cache"))
 	if len(revs) != 2 {
 		t.Fatalf("resume recorded a new revision: %d", len(revs))
 	}
@@ -116,7 +116,7 @@ func TestResumeAbortsOtherOperationsAndUninstallsAgain(t *testing.T) {
 	must[*Result](t)(e.install())
 	e.crashWith("uninstall", 2, release.StatusUninstalling, release.Options{})
 	e.svc.Lifecycle.Resume(context.Background())
-	if _, err := e.svc.Store.GetRelease(context.Background(), "cache"); err == nil {
+	if _, err := e.svc.c.store.GetRelease(context.Background(), "cache"); err == nil {
 		t.Fatal("release kept by an uninstall without --keep-history")
 	}
 }

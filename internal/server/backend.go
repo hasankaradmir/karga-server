@@ -139,14 +139,14 @@ func (b Backend) Resources(ctx context.Context, req api.ReleaseRequest) ([]api.A
 
 // Logs implements api.Backend.
 func (b Backend) Logs(ctx context.Context, req api.LogsRequest, w io.Writer) error {
-	return b.S.Reads.Logs(ctx, releases.LogsRequest{Release: req.Release, Workloads: req.Workloads, Proxy: req.Proxy, Gateway: req.Gateway,
+	return b.S.Containers.Logs(ctx, releases.LogsRequest{Release: req.Release, Workloads: req.Workloads, Proxy: req.Proxy, Gateway: req.Gateway,
 		Tail: req.Tail, Follow: req.Follow}, w)
 }
 
 // Exec implements api.Backend.
 func (b Backend) Exec(ctx context.Context, req api.ExecRequest) (int, error) {
 	o := req.ExecOptions
-	return b.S.Reads.Exec(ctx, req.Release, req.Workload, ports.ExecOptions{Cmd: o.Cmd, TTY: o.TTY, Stdin: o.Stdin, Stdout: o.Stdout, Stderr: o.Stderr,
+	return b.S.Containers.Exec(ctx, req.Release, req.Workload, ports.ExecOptions{Cmd: o.Cmd, TTY: o.TTY, Stdin: o.Stdin, Stdout: o.Stdout, Stderr: o.Stderr,
 		Width: o.Width, Height: o.Height, Resize: o.Resize})
 }
 
@@ -181,7 +181,7 @@ func (b Backend) Resume(ctx context.Context, req api.ReleaseRequest) error {
 
 // Events implements api.Backend.
 func (b Backend) Events(ctx context.Context, req api.EventsRequest) ([]api.Operation, error) {
-	ops, err := b.S.Reads.Events(ctx, req.Name, req.AfterID, req.Limit)
+	ops, err := b.S.Reads.Operations(ctx, req.Name, req.AfterID, req.Limit)
 	return wireAll(ops, func(o release.Operation) api.Operation {
 		return api.Operation{ID: o.ID, Release: o.Release, Type: o.Type, Revision: o.Revision, Status: string(o.Status),
 			Actor: o.Actor, Steps: wireAll(o.Steps, wireStep), Error: o.Error, StartedAt: o.StartedAt, FinishedAt: o.FinishedAt}

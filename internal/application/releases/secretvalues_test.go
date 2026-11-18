@@ -56,7 +56,7 @@ func TestWriteOnlyUnderMapsAndListsNotStored(t *testing.T) {
 	if err := install(false, "users.alice.password=alice-secret-1", "keys[0].token=token-secret-1"); err != nil {
 		t.Fatal(err)
 	}
-	rev, err := e.svc.Store.GetRevision(ctx, "w", 1)
+	rev, err := e.svc.c.store.GetRevision(ctx, "w", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

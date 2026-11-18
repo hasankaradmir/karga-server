@@ -13,8 +13,8 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
-func (s *Core) getRelease(ctx context.Context, name string) (*release.Release, error) {
-	rel, err := s.Store.GetRelease(ctx, name)
+func (s *core) getRelease(ctx context.Context, name string) (*release.Release, error) {
+	rel, err := s.store.GetRelease(ctx, name)
 	if errors.Is(err, ports.ErrNotFound) {
 		return nil, nil
 	}
@@ -25,7 +25,7 @@ func (s *Core) getRelease(ctx context.Context, name string) (*release.Release, e
 }
 
 // render loads and renders a package for revision of release name.
-func (s *Core) render(ctx context.Context, name, path string, opts packages.Options) (deployInput, error) {
+func (s *core) render(ctx context.Context, name, path string, opts packages.Options) (deployInput, error) {
 	revision, err := s.nextRevision(ctx, name)
 	if err != nil {
 		return deployInput{}, err
@@ -50,7 +50,7 @@ func valuesOptions(v Values) packages.Options {
 
 // Install installs a package. Installing again with the same package and values is a no-op.
 func (s *Lifecycle) Install(ctx context.Context, req InstallRequest, progress func(deployment.Event)) (*Result, error) {
-	unlock, err := s.lock(ctx, req.Name, false)
+	unlock, err := s.c.locks.lock(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -59,22 +59,22 @@ func (s *Lifecycle) Install(ctx context.Context, req InstallRequest, progress fu
 }
 
 func (s *Lifecycle) install(ctx context.Context, req InstallRequest, progress func(deployment.Event)) (*Result, error) {
-	existing, err := s.getRelease(ctx, req.Name)
+	existing, err := s.c.getRelease(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
-	in, err := s.render(ctx, req.Name, req.Package, valuesOptions(req.Values))
+	in, err := s.c.render(ctx, req.Name, req.Package, valuesOptions(req.Values))
 	if err != nil {
 		return nil, err
 	}
 	if existing != nil {
 		switch {
 		case existing.Status == release.StatusDeployed:
-			cur, err := s.Store.GetRevision(ctx, req.Name, existing.CurrentRevision)
+			cur, err := s.c.store.GetRevision(ctx, req.Name, existing.CurrentRevision)
 			if err != nil {
 				return nil, err
 			}
-			valuesDigest, _, err := s.digestJSON(in.Values)
+			valuesDigest, _, err := s.c.digestJSON(in.Values)
 			if err != nil {
 				return nil, err
 			}
@@ -88,17 +88,17 @@ func (s *Lifecycle) install(ctx context.Context, req InstallRequest, progress fu
 		// A never-deployed failed release, an uninstalled one or an interrupted one is retried.
 	}
 	in.CommonOptions, in.Type, in.Description, in.Existing, in.Progress = req.CommonOptions, "install", "Install complete", existing, progress
-	return s.deploy(ctx, in)
+	return s.c.deploy(ctx, in)
 }
 
 // Upgrade renders the package with new values and applies the difference.
 func (s *Lifecycle) Upgrade(ctx context.Context, req UpgradeRequest, progress func(deployment.Event)) (*Result, error) {
-	unlock, err := s.lock(ctx, req.Name, false)
+	unlock, err := s.c.locks.lock(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	existing, err := s.getRelease(ctx, req.Name)
+	existing, err := s.c.getRelease(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func (s *Lifecycle) Upgrade(ctx context.Context, req UpgradeRequest, progress fu
 	}
 	opts := valuesOptions(req.Values)
 	if req.ReuseValues && existing.CurrentRevision > 0 {
-		cur, err := s.Store.GetRevision(ctx, req.Name, existing.CurrentRevision)
+		cur, err := s.c.store.GetRevision(ctx, req.Name, existing.CurrentRevision)
 		if err != nil {
 			return nil, err
 		}
@@ -132,23 +132,23 @@ func (s *Lifecycle) Upgrade(ctx context.Context, req UpgradeRequest, progress fu
 		}
 		opts.Values.Base = dropValues(cur.Values, hidden)
 	}
-	in, err := s.render(ctx, req.Name, req.Package, opts)
+	in, err := s.c.render(ctx, req.Name, req.Package, opts)
 	if err != nil {
 		return nil, err
 	}
 	in.CommonOptions, in.Type, in.Description, in.Existing = req.CommonOptions, "upgrade", "Upgrade complete", existing
 	in.Strategy, in.Progress = req.Strategy, progress
-	return s.deploy(ctx, in)
+	return s.c.deploy(ctx, in)
 }
 
 // Rollback re-applies the desired state of an earlier revision as a new revision.
 func (s *Lifecycle) Rollback(ctx context.Context, req RollbackRequest, progress func(deployment.Event)) (*Result, error) {
-	unlock, err := s.lock(ctx, req.Name, false)
+	unlock, err := s.c.locks.lock(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	existing, err := s.getRelease(ctx, req.Name)
+	existing, err := s.c.getRelease(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func (s *Lifecycle) Rollback(ctx context.Context, req RollbackRequest, progress 
 			return nil, err
 		}
 	}
-	rev, err := s.Store.GetRevision(ctx, req.Name, target)
+	rev, err := s.c.store.GetRevision(ctx, req.Name, target)
 	if err != nil {
 		return nil, err
 	}
@@ -172,15 +172,15 @@ func (s *Lifecycle) Rollback(ctx context.Context, req RollbackRequest, progress 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.restoreSecrets(req.Name, target, rs); err != nil {
+	if err := s.c.restoreSecrets(req.Name, target, rs); err != nil {
 		return nil, err
 	}
-	number, err := s.nextRevision(ctx, req.Name)
+	number, err := s.c.nextRevision(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
 	p := packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
-	return s.deploy(ctx, deployInput{
+	return s.c.deploy(ctx, deployInput{
 		CommonOptions: req.CommonOptions, Progress: progress, Name: req.Name, Type: "rollback", Description: fmt.Sprintf("Rollback to %d", target),
 		Package: p, PackageDigest: rev.PackageDigest, Overrides: rev.Values, Values: rev.ValuesAll,
 		Resources: rs, Revision: number, Existing: existing, Strategy: req.Strategy, Notes: rev.Notes,
@@ -193,7 +193,7 @@ func (s *Lifecycle) rollbackTarget(ctx context.Context, rel *release.Release) (i
 	if rel.Status == release.StatusFailed && rel.CurrentRevision > 0 {
 		return rel.CurrentRevision, nil
 	}
-	revs, err := s.Store.ListRevisions(ctx, rel.Name)
+	revs, err := s.c.store.ListRevisions(ctx, rel.Name)
 	if err != nil {
 		return 0, err
 	}
@@ -208,7 +208,7 @@ func (s *Lifecycle) rollbackTarget(ctx context.Context, rel *release.Release) (i
 // Uninstall removes the release's workloads and networks; volumes are kept unless DeleteVolumes or
 // retention: delete. With KeepHistory the revisions stay and the release is marked uninstalled.
 func (s *Lifecycle) Uninstall(ctx context.Context, req UninstallRequest) (*Result, error) {
-	unlock, err := s.lock(ctx, req.Name, false)
+	unlock, err := s.c.locks.lock(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +217,7 @@ func (s *Lifecycle) Uninstall(ctx context.Context, req UninstallRequest) (*Resul
 }
 
 func (s *Lifecycle) uninstallRelease(ctx context.Context, req UninstallRequest) (*Result, error) {
-	existing, err := s.getRelease(ctx, req.Name)
+	existing, err := s.c.getRelease(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -227,23 +227,23 @@ func (s *Lifecycle) uninstallRelease(ctx context.Context, req UninstallRequest) 
 	if existing.Status == release.StatusUninstalled {
 		return nil, fmt.Errorf("%w: release %s is already uninstalled", ports.ErrConflict, req.Name)
 	}
-	rt, err := s.runtime(ctx)
+	rt, err := s.c.runtime(ctx)
 	if err != nil {
 		return nil, err
 	}
 	res := &Result{Release: req.Name, Revision: existing.CurrentRevision, From: existing.CurrentRevision, DryRun: req.DryRun}
 	if req.DryRun {
 		res.Status = string(existing.Status)
-		res.Plan, err = s.Deploy.DeletePlan(ctx, rt, req.Name, req.DeleteVolumes)
+		res.Plan, err = s.c.env.DeletePlan(ctx, rt, req.Name, req.DeleteVolumes)
 		return res, err
 	}
-	op, err := s.begin(ctx, req.Name, "uninstall", existing.CurrentRevision, req.Force,
+	op, err := s.c.begin(ctx, req.Name, "uninstall", existing.CurrentRevision, req.Force,
 		release.Options{DeleteVolumes: req.DeleteVolumes, KeepHistory: req.KeepHistory})
 	if err != nil {
 		return nil, err
 	}
 	err = s.uninstall(ctx, rt, *existing, req)
-	s.finish(ctx, op, err)
+	s.c.finish(ctx, op, err)
 	if err != nil {
 		return nil, err
 	}
@@ -258,20 +258,20 @@ func (s *Lifecycle) uninstall(ctx context.Context, rt ports.Runtime, rel release
 	if err := release.Transition(rel.Status, release.StatusUninstalling); err != nil {
 		return err
 	}
-	rel.Status, rel.UpdatedAt = release.StatusUninstalling, s.Now()
-	if err := s.Store.SaveRelease(ctx, rel); err != nil {
+	rel.Status, rel.UpdatedAt = release.StatusUninstalling, s.c.now()
+	if err := s.c.store.SaveRelease(ctx, rel); err != nil {
 		return err
 	}
 	bg := context.WithoutCancel(ctx)
-	if err := s.Deploy.Delete(ctx, rt, req.Name, req.DeleteVolumes); err != nil {
+	if err := s.c.env.Delete(ctx, rt, req.Name, req.DeleteVolumes); err != nil {
 		rel.Status = release.StatusFailed
-		return errors.Join(err, s.Store.SaveRelease(bg, rel))
+		return errors.Join(err, s.c.store.SaveRelease(bg, rel))
 	}
 	if !req.KeepHistory {
-		return s.Store.DeleteRelease(bg, req.Name)
+		return s.c.store.DeleteRelease(bg, req.Name)
 	}
-	rel.Status, rel.UpdatedAt = release.StatusUninstalled, s.Now()
-	return s.Store.InTx(bg, func(st ports.StateStore) error {
+	rel.Status, rel.UpdatedAt = release.StatusUninstalled, s.c.now()
+	return s.c.store.InTx(bg, func(st ports.StateStore) error {
 		applied, err := st.ListResources(bg, req.Name)
 		if err != nil {
 			return err

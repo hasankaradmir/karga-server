@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
@@ -40,54 +39,55 @@ func (e invalid) Unwrap() error { return e.error }
 
 func (invalid) Is(target error) bool { return target == ports.ErrInvalid }
 
-// Service is the release service: one Core shared by its four faces.
+// Service is the release service. Its faces share one core: the state, the runtime, the locks and
+// the deploy steps; nothing outside the package reaches it.
 type Service struct {
-	*Core
 	// Lifecycle installs, upgrades, rolls back, uninstalls, resumes and repairs releases.
 	Lifecycle *Lifecycle
-	// Reads answers questions about releases and reaches into their containers (logs, exec).
+	// Reads answers questions about releases; it changes nothing.
 	Reads *Reads
+	// Containers reach into a release's containers: logs and exec.
+	Containers *Containers
 	// Volumes backs up and restores a release's volumes.
 	Volumes *Volumes
 	// Gateway reads and changes the host gateway.
 	Gateway *Gateway
+
+	c *core
 }
 
 // Lifecycle changes releases.
-type Lifecycle struct{ *Core }
+type Lifecycle struct{ c *core }
 
 // Reads reads releases; it changes nothing.
-type Reads struct{ *Core }
+type Reads struct{ c *core }
+
+// Containers reach into a release's containers.
+type Containers struct{ c *core }
 
 // Volumes copies volume data in and out.
-type Volumes struct{ *Core }
+type Volumes struct{ c *core }
 
 // Gateway holds the host gateway's settings and health.
-type Gateway struct{ *Core }
+type Gateway struct{ c *core }
 
-// Core is what the faces share: the state, the runtime, the locks and the deploy steps. Runtime is
-// opened lazily so read-only commands never need Docker.
-type Core struct {
-	Store ports.StateStore
-	// Deploy plans and applies deployments on this host.
-	Deploy  *deployment.Env
-	Runtime func(context.Context) (ports.Runtime, error)
-	Home    string
-	// Redact registers secret values with the log redactor.
-	Redact   func(string)
-	Log      *slog.Logger
-	Now      func() time.Time
-	PID      int
-	Hostname string
-
-	// AfterChange, if set, is told the name of a release an install, upgrade or rollback changed.
-	AfterChange func(name string)
+// core is what the faces share. It is set up by New and does not change after.
+type core struct {
+	store ports.StateStore
+	// env plans and applies deployments on this host.
+	env      *deployment.Env
+	rtFn     func(context.Context) (ports.Runtime, error)
+	home     string
+	redact   func(string) // registers secret values with the log redactor
+	log      *slog.Logger
+	now      func() time.Time
+	pid      int
+	hostname string
+	// notify is told the name of a release an install, upgrade or rollback changed.
+	notify func(name string)
 
 	repairs repairs
-	// busy serializes the operations of a release inside this process: a user's command waits for
-	// a reconciliation in progress instead of failing; a reconciliation skips a busy release.
-	busyMu sync.Mutex
-	busy   map[string]*releaseLock // releases someone holds or waits for
+	locks   opLocks
 }
 
 // Deps are what the release service is made of.
@@ -105,6 +105,9 @@ type Deps struct {
 	// AllowedCaps are the Linux capabilities, besides resource.DefaultCaps, the host administrator
 	// lets packages add (karga-server --allow-capabilities).
 	AllowedCaps []string
+	// Notify, if set, is told the name of a release an install, upgrade or rollback changed (the
+	// reconciler's queue).
+	Notify func(name string)
 }
 
 // New returns the release service of d, with process defaults filled in. It reads (or creates) the
@@ -122,7 +125,10 @@ func New(d Deps) (*Service, error) {
 		d.Log = slog.New(slog.DiscardHandler)
 	}
 	env := deployment.NewEnv(d.Host, deployment.EnvConfig{Home: d.Home, DigestKey: key, Redact: d.Redact, AllowedCaps: d.AllowedCaps})
-	c := &Core{Store: d.Store, Deploy: env, Runtime: d.Runtime, Home: d.Home, Redact: d.Redact, Log: d.Log, Now: time.Now,
-		PID: os.Getpid(), Hostname: hostname}
-	return &Service{Core: c, Lifecycle: &Lifecycle{c}, Reads: &Reads{c}, Volumes: &Volumes{c}, Gateway: &Gateway{c}}, nil
+	if d.Notify == nil {
+		d.Notify = func(string) {}
+	}
+	c := &core{store: d.Store, env: env, rtFn: d.Runtime, home: d.Home, redact: d.Redact, log: d.Log, now: time.Now,
+		pid: os.Getpid(), hostname: hostname, notify: d.Notify}
+	return &Service{Lifecycle: &Lifecycle{c}, Reads: &Reads{c}, Containers: &Containers{c}, Volumes: &Volumes{c}, Gateway: &Gateway{c}, c: c}, nil
 }

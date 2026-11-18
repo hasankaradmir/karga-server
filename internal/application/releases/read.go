@@ -17,15 +17,15 @@ import (
 
 // List returns every release.
 func (s *Reads) List(ctx context.Context) ([]release.Release, error) {
-	return s.Store.ListReleases(ctx)
+	return s.c.store.ListReleases(ctx)
 }
 
 // History returns a release's revisions, oldest first.
 func (s *Reads) History(ctx context.Context, name string) ([]release.Revision, error) {
-	if _, err := s.Store.GetRelease(ctx, name); err != nil {
+	if _, err := s.c.store.GetRelease(ctx, name); err != nil {
 		return nil, err
 	}
-	revs, err := s.Store.ListRevisions(ctx, name)
+	revs, err := s.c.store.ListRevisions(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -45,9 +45,9 @@ func (s *Reads) History(ctx context.Context, name string) ([]release.Revision, e
 }
 
 // revisionOrCurrent resolves revision 0 to the current revision.
-func (s *Core) revisionOrCurrent(ctx context.Context, name string, number int) (release.Revision, error) {
+func (s *core) revisionOrCurrent(ctx context.Context, name string, number int) (release.Revision, error) {
 	if number == 0 {
-		rel, err := s.Store.GetRelease(ctx, name)
+		rel, err := s.store.GetRelease(ctx, name)
 		if err != nil {
 			return release.Revision{}, err
 		}
@@ -55,12 +55,12 @@ func (s *Core) revisionOrCurrent(ctx context.Context, name string, number int) (
 			return release.Revision{}, fmt.Errorf("release %s has no deployed revision", name)
 		}
 	}
-	return s.Store.GetRevision(ctx, name, number)
+	return s.store.GetRevision(ctx, name, number)
 }
 
 // GetValues returns the user overrides of a revision (0 = current), or with all the merged values.
 func (s *Reads) GetValues(ctx context.Context, name string, revision int, all bool) (map[string]any, error) {
-	rev, err := s.revisionOrCurrent(ctx, name, revision)
+	rev, err := s.c.revisionOrCurrent(ctx, name, revision)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func (s *Reads) GetValues(ctx context.Context, name string, revision int, all bo
 // GetManifest returns a revision's resources with secret values shown as <redacted>.
 // GetNotes returns the rendered NOTES.txt of a revision (0: the current one), "" if the package has none.
 func (s *Reads) GetNotes(ctx context.Context, name string, revision int) (string, error) {
-	rev, err := s.revisionOrCurrent(ctx, name, revision)
+	rev, err := s.c.revisionOrCurrent(ctx, name, revision)
 	if err != nil {
 		return "", err
 	}
@@ -81,7 +81,7 @@ func (s *Reads) GetNotes(ctx context.Context, name string, revision int) (string
 }
 
 func (s *Reads) GetManifest(ctx context.Context, name string, revision int) ([]resource.Resource, error) {
-	rev, err := s.revisionOrCurrent(ctx, name, revision)
+	rev, err := s.c.revisionOrCurrent(ctx, name, revision)
 	if err != nil {
 		return nil, err
 	}
@@ -103,21 +103,21 @@ func (s *Reads) GetManifest(ctx context.Context, name string, revision int) ([]r
 
 // Status reports the release and the live state of each of its resources.
 func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) {
-	rel, err := s.Store.GetRelease(ctx, name)
+	rel, err := s.c.store.GetRelease(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	rep := &StatusReport{Release: rel, Resources: []ResourceStatus{}}
-	if op, err := s.Store.RunningOperation(ctx, name); err == nil {
+	if op, err := s.c.store.RunningOperation(ctx, name); err == nil {
 		rep.Interrupted = describe(op)
-		if op.Hostname == s.Hostname && processAlive(op.PID) {
+		if op.Hostname == s.c.hostname && processAlive(op.PID) {
 			rep.Interrupted = "in progress: " + rep.Interrupted
 		}
 	} else if !errors.Is(err, ports.ErrNotFound) {
 		return nil, err
 	}
-	rep.Reconcile = &ReconcileStatus{GaveUp: s.repairs.gaveUp(name, s.Now())}
-	if ops, err := s.Store.ListOperations(ctx, name, 0, 50); err == nil {
+	rep.Reconcile = &ReconcileStatus{GaveUp: s.c.repairs.gaveUp(name, s.c.now())}
+	if ops, err := s.c.store.ListOperations(ctx, name, 0, 50); err == nil {
 		for _, op := range ops {
 			if op.Type == ReconcileOperation && op.Status != release.OperationRunning {
 				rep.Reconcile.Last, rep.Reconcile.Status, rep.Reconcile.Error = op.FinishedAt, string(op.Status), op.Error
@@ -125,11 +125,11 @@ func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) 
 			}
 		}
 	}
-	applied, err := s.Store.ListResources(ctx, name)
+	applied, err := s.c.store.ListResources(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	rt, err := s.runtime(ctx)
+	rt, err := s.c.runtime(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -160,17 +160,17 @@ func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) 
 				st.Actual, st.Health, st.Restarts, st.OOMKilled = ws.State, ws.Health, ws.RestartCount, ws.OOMKilled
 				if r, derr := resource.DecodeStored(a.Spec); a.Kind == resource.KindWorkload && derr == nil {
 					if w, ok := r.Spec.(*resource.WorkloadSpec); ok {
-						st.Health = s.Deploy.ProbeHealth(ctx, ws, w) // tcp/http checks are karga's
+						st.Health = s.c.env.ProbeHealth(ctx, ws, w) // tcp/http checks are karga's
 					}
 				}
 			}
 			if a.Kind == deployment.KindProxy {
-				st.Backend = s.backends(deployment.ProxyDir(s.Home, name), "")
+				st.Backend = s.backends(deployment.ProxyDir(s.c.home, name), "")
 			}
 		case resource.KindService:
 			// A Service has no container: it is routed when the release proxy sends its ports somewhere.
 			st.Actual = "not routed"
-			if b := s.backends(deployment.ProxyDir(s.Home, name), a.Name+"-p"); b != "" {
+			if b := s.backends(deployment.ProxyDir(s.c.home, name), a.Name+"-p"); b != "" {
 				st.Actual, st.Backend = "routed", b
 			}
 		case resource.KindNetwork, resource.KindVolume:
@@ -200,7 +200,7 @@ func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) 
 // backends lists the aliases a release proxy routes to, e.g. "karga-api-r2, karga-web-r3", for the
 // clusters whose name starts with prefix.
 func (s *Reads) backends(dir, prefix string) string {
-	eps, _ := s.Deploy.Host().Proxies.Endpoints(dir)
+	eps, _ := s.c.env.Host().Proxies.Endpoints(dir)
 	var out []string
 	for cluster, ep := range eps {
 		if !strings.HasPrefix(cluster, prefix) {
@@ -213,39 +213,13 @@ func (s *Reads) backends(dir, prefix string) string {
 	return strings.Join(slices.Compact(out), ", ")
 }
 
-// Exec runs a command in a running workload of a release and returns its exit code.
-func (s *Reads) Exec(ctx context.Context, rel, workload string, opts ports.ExecOptions) (int, error) {
-	if _, err := s.Store.GetRelease(ctx, rel); err != nil {
-		return -1, err
-	}
-	applied, err := s.Store.ListResources(ctx, rel)
-	if err != nil {
-		return -1, err
-	}
-	var names []string
-	for _, a := range applied {
-		if a.Kind != resource.KindWorkload {
-			continue
-		}
-		if a.Name == workload {
-			rt, err := s.Runtime(ctx)
-			if err != nil {
-				return -1, err
-			}
-			return rt.Exec(ctx, a.RuntimeName, opts)
-		}
-		names = append(names, a.Name)
-	}
-	return -1, fmt.Errorf("release %s has no workload %q (workloads: %s)", rel, workload, strings.Join(names, ", "))
-}
-
 // Diff compares revision from with revision to of a release (to 0: the current one).
 func (s *Reads) Diff(ctx context.Context, name string, from, to int) (*RevisionDiff, error) {
-	a, err := s.Store.GetRevision(ctx, name, from)
+	a, err := s.c.store.GetRevision(ctx, name, from)
 	if err != nil {
 		return nil, err
 	}
-	b, err := s.revisionOrCurrent(ctx, name, to)
+	b, err := s.c.revisionOrCurrent(ctx, name, to)
 	if err != nil {
 		return nil, err
 	}
@@ -266,5 +240,10 @@ func (s *Reads) Diff(ctx context.Context, name string, from, to int) (*RevisionD
 
 // Resources lists what is applied for a release (for completion and tools; no runtime is read).
 func (s *Reads) Resources(ctx context.Context, name string) ([]release.AppliedResource, error) {
-	return s.Store.ListResources(ctx, name)
+	return s.c.store.ListResources(ctx, name)
+}
+
+// Operations lists the operations of a release (all for ""), newest first.
+func (s *Reads) Operations(ctx context.Context, name string, afterID int64, limit int) ([]release.Operation, error) {
+	return s.c.store.ListOperations(ctx, name, afterID, limit)
 }

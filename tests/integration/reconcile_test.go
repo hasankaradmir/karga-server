@@ -28,8 +28,8 @@ func TestReconcilerRepairsFromDockerEvents(t *testing.T) {
 		Values: releases.Values{Sets: packages.Sets([]string{"strategy=recreate"}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	loop := reconciler.New(s, 0, nil)
-	loop.Only = func(rel string) bool { return rel == name } // other tests share the host
+	loop := reconciler.New(reconciler.NewQueue(0), s.Reads, s.Lifecycle, rt,
+		reconciler.Options{Only: func(rel string) bool { return rel == name }}) // other tests share the host
 	go loop.Run(ctx)
 	container := name + "-web"
 	running := func(why string) {
@@ -64,7 +64,7 @@ func TestReconcilerRepairsFromDockerEvents(t *testing.T) {
 	// The container runs before the reconciliation that started it is recorded as finished.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		ops, err := s.Reads.Events(ctx, name, 0, 20)
+		ops, err := s.Reads.Operations(ctx, name, 0, 20)
 		if err != nil {
 			t.Fatal(err)
 		}
