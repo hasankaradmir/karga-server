@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
+	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -74,8 +75,9 @@ type Gateway struct{ c *core }
 // core is what the faces share. It is set up by New and does not change after.
 type core struct {
 	store ports.StateStore
-	// env plans and applies deployments on this host.
+	// env plans and applies deployments on this host; gw is the host gateway.
 	env      *deployment.Env
+	gw       *gateway.Gateway
 	rt       ports.Runtime
 	home     string
 	redact   func(string) // registers secret values with the log redactor
@@ -129,7 +131,7 @@ func New(d Deps) (*Service, error) {
 	if d.Notify == nil {
 		d.Notify = func(string) {}
 	}
-	c := &core{store: d.Store, env: env, rt: d.Runtime, home: d.Home, redact: d.Redact, log: d.Log, now: time.Now,
+	c := &core{store: d.Store, env: env, gw: gateway.New(d.Runtime, d.Host, d.Home), rt: d.Runtime, home: d.Home, redact: d.Redact, log: d.Log, now: time.Now,
 		pid: os.Getpid(), hostname: hostname, notify: d.Notify}
 	return &Service{Lifecycle: &Lifecycle{c}, Reads: &Reads{c}, Containers: &Containers{c}, Volumes: &Volumes{c}, Gateway: &Gateway{c}, c: c}, nil
 }

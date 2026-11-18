@@ -58,7 +58,7 @@ func (e *Env) Preflight(ctx context.Context, rt ports.Runtime, info ports.Runtim
 
 	if e.host.Supported() {
 		var gwErr error
-		warnings, gwErr = gateway.Check(ctx, rt, e.host, e.home, release, rs)
+		warnings, gwErr = gateway.New(rt, e.host, e.home).Check(ctx, release, rs)
 		errs = append(errs, gwErr)
 	}
 	return warnings, errors.Join(errs...)

@@ -8,7 +8,6 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
-	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -16,7 +15,8 @@ import (
 // listener of another protocol, or a tcp listener, host and path or certificate another release
 // already holds. It binds a listener nobody uses yet once, to see that no other process holds it.
 // What it cannot check, but does not stop a deployment, it returns as warnings.
-func Check(ctx context.Context, rt Runtime, h *proxyops.Host, home, rel string, rs []resource.Resource) (warnings []string, err error) {
+func (g *Gateway) Check(ctx context.Context, rel string, rs []resource.Resource) (warnings []string, err error) {
+	rt, h, home := g.rt, g.host, g.home
 	settings, err := ReadSettings(home)
 	if err != nil {
 		return nil, err

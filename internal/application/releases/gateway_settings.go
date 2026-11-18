@@ -14,8 +14,7 @@ import (
 
 // Routes lists what the host gateway serves, across releases.
 func (s *Gateway) Routes(ctx context.Context) ([]gateway.Exposed, error) {
-	rt := s.c.rt
-	return gateway.Routes(ctx, rt, s.c.home)
+	return s.c.gw.Routes(ctx)
 }
 
 // Settings returns the host's gateway settings and, per listener, the services using it.
@@ -24,15 +23,13 @@ func (s *Gateway) Settings(ctx context.Context) (gateway.Settings, map[string][]
 	if err != nil {
 		return settings, nil, err
 	}
-	rt := s.c.rt
-	users, err := gateway.Users(ctx, rt, s.c.home)
+	users, err := s.c.gw.Users(ctx)
 	return settings, users, err
 }
 
 // Health reports the gateway container and whether its Envoy is ready.
 func (s *Gateway) Health(ctx context.Context) (gateway.State, error) {
-	rt := s.c.rt
-	return gateway.Health(ctx, rt, s.c.env.Host(), s.c.home)
+	return s.c.gw.Health(ctx)
 }
 
 // SetAccessLog stores the access log setting and applies it to a running gateway.
@@ -88,7 +85,7 @@ func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settin
 		if err != nil {
 			return err
 		}
-		users, err := gateway.Users(ctx, rt, s.c.home)
+		users, err := s.c.gw.Users(ctx)
 		if err != nil {
 			return err
 		}
@@ -103,7 +100,7 @@ func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settin
 	if _, err := rt.GetWorkload(ctx, gateway.ContainerName); errors.Is(err, ports.ErrNotFound) {
 		return nil // applied when a release next exposes something
 	}
-	targets, err := gateway.Sync(ctx, rt, s.c.env.Host(), s.c.home)
+	targets, err := s.c.gw.Sync(ctx)
 	if err != nil {
 		return err
 	}

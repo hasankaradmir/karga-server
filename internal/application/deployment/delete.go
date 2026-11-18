@@ -44,7 +44,7 @@ func (e *Env) Delete(ctx context.Context, rt ports.Runtime, release string, dele
 	if e.home != "" {
 		errs = append(errs, os.RemoveAll(filepath.Join(e.home, "releases", release)), os.RemoveAll(ProxyDir(e.home, release)))
 		if e.host.Supported() {
-			_, err := gateway.Sync(ctx, rt, e.host, e.home)
+			_, err := gateway.New(rt, e.host, e.home).Sync(ctx)
 			errs = append(errs, err)
 		}
 	}

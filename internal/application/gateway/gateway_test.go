@@ -123,7 +123,7 @@ func TestCheckExposures(t *testing.T) {
 	check := func(e resource.Exposure) string {
 		svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
 			Workload: "w", Ports: []resource.ServicePort{{Name: "p", Port: 80, TargetPort: "p"}}, Expose: []resource.Exposure{e}}}
-		_, err := Check(ctx, rt, h, home, "mine", []resource.Resource{svc}) // warnings: ports a test cannot bind
+		_, err := New(rt, h, home).Check(ctx, "mine", []resource.Resource{svc}) // warnings: ports a test cannot bind
 		if err == nil {
 			return ""
 		}
@@ -178,21 +178,21 @@ func TestSyncFollowsExposures(t *testing.T) {
 	home := t.TempDir()
 	rt := fakeruntime.New("img", envoy.Image())
 	proxyOf(t, rt, home, "a", nil, nil)
-	if _, err := Sync(ctx, rt, h, home); err != nil {
+	if _, err := New(rt, h, home).Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.GetWorkload(ctx, ContainerName); err == nil {
 		t.Fatal("gateway started with nothing exposed")
 	}
 	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "web", Host: "b.example", Path: "/"}})
-	targets, err := Sync(ctx, rt, h, home)
+	targets, err := New(rt, h, home).Sync(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.GetWorkload(ctx, ContainerName); err != nil || len(targets) != 2 {
 		t.Fatalf("gateway: %v, targets %+v", err, targets)
 	}
-	routes, err := Routes(ctx, rt, home)
+	routes, err := New(rt, nil, home).Routes(ctx)
 	if err != nil || len(routes) != 1 || routes[0] != (Exposed{Listener: "web:80", Route: "b.example/", Release: "b", Service: "web:80", Upstream: "127.0.0.1:4001"}) {
 		t.Fatalf("routes: %+v %v", routes, err)
 	}
@@ -235,7 +235,7 @@ func TestExposeChecksUnderTheLock(t *testing.T) {
 	svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
 		Workload: "w", Ports: []resource.ServicePort{{Name: "p", Port: 80, TargetPort: "p"}},
 		Expose: []resource.Exposure{{Port: "p", Listener: "web", Host: "a.example", Path: "/"}}}}
-	_, err := Expose(ctx, rt, h, home, "mine", []resource.Resource{svc},
+	_, err := New(rt, h, home).Expose(ctx, "mine", []resource.Resource{svc},
 		[]Route{{Service: "s", Port: 80, Listener: "web", Host: "a.example", Path: "/"}})
 	if err == nil || !strings.Contains(err.Error(), "already routed to other/web") {
 		t.Fatalf("Expose: %v", err)

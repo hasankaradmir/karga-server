@@ -272,9 +272,9 @@ func (r *run) expose(ctx context.Context) error {
 		return nil
 	}
 	progress(ctx, "Gateway", gateway.ContainerName, PhaseSwitch, "updating the host gateway")
-	targets, err := gateway.Expose(ctx, r.rt, r.e.host, r.e.home, r.req.Release, r.req.Resources, exposeRoutes(r.svcs, r.paths))
+	targets, err := gateway.New(r.rt, r.e.host, r.e.home).Expose(ctx, r.req.Release, r.req.Resources, exposeRoutes(r.svcs, r.paths))
 	if err == nil {
-		err = envoyErr(ctx, r.rt, gateway.ContainerName, gateway.Wait(ctx, r.e.host, r.e.home, r.req.Release, targets))
+		err = envoyErr(ctx, r.rt, gateway.ContainerName, gateway.New(r.rt, r.e.host, r.e.home).Wait(ctx, r.req.Release, targets))
 	}
 	if err != nil {
 		r.disrupted = true

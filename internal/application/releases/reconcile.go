@@ -334,7 +334,7 @@ func (s *Lifecycle) act(ctx context.Context, op *release.Operation, rel release.
 			}
 			step(p, err)
 		case "sync":
-			_, err := gateway.Sync(ctx, rt, s.c.env.Host(), s.c.home)
+			_, err := s.c.gw.Sync(ctx)
 			step(p, err)
 		case "create":
 			steps, err := s.recreate(ctx, rt, op, rel, present)
