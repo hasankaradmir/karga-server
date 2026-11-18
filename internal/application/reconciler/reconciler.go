@@ -27,7 +27,8 @@ type Loop struct {
 
 	mu      sync.Mutex
 	pending map[string]*time.Timer
-	queue   chan string // release names; "" means every release
+	retries map[string]*time.Timer // repairs waiting out their backoff
+	queue   chan string            // release names; "" means every release
 }
 
 // New returns a loop for svc.
@@ -35,7 +36,7 @@ func New(svc *releases.Service, interval time.Duration, log *slog.Logger) *Loop 
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Loop{Svc: svc, Interval: interval, Log: log, pending: map[string]*time.Timer{}, queue: make(chan string, 256)}
+	return &Loop{Svc: svc, Interval: interval, Log: log, pending: map[string]*time.Timer{}, retries: map[string]*time.Timer{}, queue: make(chan string, 256)}
 }
 
 // Notify asks for a reconciliation of release name after Debounce ("" means every release).
@@ -117,6 +118,19 @@ func (l *Loop) one(ctx context.Context, name string) {
 	}
 	for what, why := range res.GaveUp {
 		l.Log.Warn("reconcile gave up", "release", name, "resource", what, "error", why)
+	}
+	// A repair waiting out its backoff is retried when it may run, events or not.
+	if at := l.Svc.NextRepair(name); !at.IsZero() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if _, ok := l.retries[name]; !ok {
+			l.retries[name] = time.AfterFunc(time.Until(at), func() {
+				l.mu.Lock()
+				delete(l.retries, name)
+				l.mu.Unlock()
+				l.Notify(name)
+			})
+		}
 	}
 }
 

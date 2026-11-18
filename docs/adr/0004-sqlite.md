@@ -1,6 +1,6 @@
 # ADR-0004: SQLite state
 
-**Status:** accepted
+**Status:** superseded by ADR-0017 (state in YAML files).
 
 **Decision:** Release state (releases, immutable revisions, applied resources, operations) lives in a
 SQLite database in `$KARGA_HOME` (pure-Go driver, WAL, schema migrations with `user_version`).

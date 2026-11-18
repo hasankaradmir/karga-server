@@ -21,7 +21,7 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
-	"github.com/hasankaradmir/karga-server/internal/adapters/sqlite"
+	"github.com/hasankaradmir/karga-server/internal/adapters/filestore"
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 	"github.com/hasankaradmir/karga-server/internal/ports/runtimetest"
@@ -42,7 +42,7 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	home := t.TempDir()
-	store, err := sqlite.Open(context.Background(), filepath.Join(home, "karga.db"))
+	store, err := filestore.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

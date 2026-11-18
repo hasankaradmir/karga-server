@@ -5,7 +5,7 @@
 **Decision:** karga lives in three public repositories:
 
 - **karga-server** (`github.com/hasankaradmir/karga-server`): the server, its adapters (Docker,
-  SQLite, Envoy), the systemd unit and install script, the integration and e2e tests, and the
+  file store, Envoy), the systemd unit and install script, the integration and e2e tests, and the
   design documents (`docs/`).
 - **karga** (`github.com/hasankaradmir/karga-cli`): the CLI, its install script, the user
   documentation (README, USAGE).

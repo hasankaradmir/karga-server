@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -133,6 +134,26 @@ func (r *repairs) probeOK(key string) {
 	defer r.mu.Unlock()
 	r.get(key).probes = 0
 }
+
+// next is the earliest time a repair of rel that is waiting out its backoff may run again (zero if none).
+func (r *repairs) next(rel string, now time.Time) time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var at time.Time
+	for k, p := range r.m {
+		if !strings.HasPrefix(k, rel+"/") || !p.next.After(now) || r.recent(p, now) >= repairMaxFails {
+			continue
+		}
+		if at.IsZero() || p.next.Before(at) {
+			at = p.next
+		}
+	}
+	return at
+}
+
+// NextRepair is when a failed repair of release name may be tried again (zero if none waits): a
+// loop that reacts to events only must come back then, as no event may follow.
+func (s *Service) NextRepair(name string) time.Time { return s.repairs.next(name, s.Now()) }
 
 // gaveUp lists what karga stopped repairing in a release.
 func (r *repairs) gaveUp(rel string, now time.Time) map[string]string {

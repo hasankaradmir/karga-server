@@ -40,11 +40,11 @@ func TestConfigGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cds, err := ClustersJSON(sample)
+	cds, err := Clusters(sample)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, got := range map[string][]byte{"envoy.json": boot, "lds.json": lds, "cds.json": cds} {
+	for name, got := range map[string][]byte{"envoy.yaml": boot, "lds.yaml": lds, "cds.yaml": cds} {
 		golden := filepath.Join("testdata", name)
 		if *update {
 			if err := os.MkdirAll("testdata", 0o755); err != nil {

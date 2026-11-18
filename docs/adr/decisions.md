@@ -9,7 +9,7 @@ directory.
 | D2 | Upgrades | Default strategy recreate, no automatic revert: a failed revision stays failed and `karga rollback` goes back. |
 | D3 | Failed upgrades | The previous revision's state, files and history stay intact; a running container is not guaranteed. Narrowed by D18. |
 | D4 | Dependencies | Deferred; one package is one release. |
-| D5 | Stack | cobra, modernc.org/sqlite, moby client, Sprig, santhosh-tekuri/jsonschema, Masterminds/semver, go.yaml.in/yaml, log/slog. |
+| D5 | Stack | cobra, moby client, Sprig, santhosh-tekuri/jsonschema, Masterminds/semver, go.yaml.in/yaml, log/slog. |
 | D6 | Secrets | Secret values become files mounted read-only from a 0700 directory; stored manifests keep only keyed digests (D22). |
 | D7 | Naming | Template context `.Values`, `.Release`, `.Package`, `.Files`; values flags `-f`, `--set`, `--set-string`. |
 | D8 | Determinism | Non-deterministic template functions are removed; `keys`/`values` are sorted. |

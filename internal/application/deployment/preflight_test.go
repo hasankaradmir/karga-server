@@ -58,7 +58,7 @@ func TestPreflightRuntimeAndCapabilities(t *testing.T) {
 	vol := resource.Resource{Kind: resource.KindVolume, Metadata: resource.Metadata{Name: "d"},
 		Spec: &resource.VolumeSpec{Driver: "nfs", MountOptions: []string{"nocopy"}}}
 	err := Preflight(context.Background(), rt, info, t.TempDir(), "web", []string{"podman"}, []resource.Resource{vol, webWithPort(80)}, nil)
-	for _, want := range []string{`does not support runtime "docker"`, "volume driver nfs", "mountOptions", "memory limit", "cpu limit", "exec healthcheck"} {
+	for _, want := range []string{`does not support runtime "docker"`, "volume driver nfs", "memory limit", "cpu limit", "exec healthcheck"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("missing %q in %v", want, err)
 		}

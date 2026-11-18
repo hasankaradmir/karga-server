@@ -198,7 +198,7 @@ func removeProxy(ctx context.Context, rt ports.Runtime, home, rel string, c Chan
 	if c.Name != ProxyResource {
 		return os.RemoveAll(filepath.Join(ProxyDir(home, rel), c.Name))
 	}
-	for _, f := range []string{"envoy.json", "lds.json", "cds.json", "admin.sock", "expose.json"} {
+	for _, f := range []string{"envoy.yaml", "lds.yaml", "cds.yaml", "admin.sock", "expose.yaml"} {
 		if err := os.Remove(filepath.Join(ProxyDir(home, rel), f)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}

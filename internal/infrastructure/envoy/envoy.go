@@ -1,5 +1,5 @@
 // Package envoy writes the file-based configuration of karga's Envoy proxies and reads their admin
-// API (ADR-009, ADR-010). Switching a cluster's endpoint in cds.json moves new connections to
+// API (ADR-009, ADR-010). Switching a cluster's endpoint in cds.yaml moves new connections to
 // another container while existing ones finish on the old one.
 package envoy
 
@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
@@ -42,13 +44,14 @@ func Image() string {
 // Command runs Envoy on the mounted bootstrap file with one worker thread (ADR-010: low resources).
 // It starts with a flag, so both the distroless entrypoint (envoy) and the debian one accept it.
 func Command() []string {
-	return []string{"-c", MountPath + "/envoy.json", "--concurrency", "1", "--log-level", "warn"}
+	return []string{"-c", MountPath + "/envoy.yaml", "--concurrency", "1", "--log-level", "warn"}
 }
 
 const (
-	bootstrapFile = "envoy.json"
-	listenersFile = "lds.json"
-	clustersFile  = "cds.json"
+	// Envoy reads YAML by the file extension.
+	bootstrapFile = "envoy.yaml"
+	listenersFile = "lds.yaml"
+	clustersFile  = "cds.yaml"
 	adminSocket   = "admin.sock"
 )
 
@@ -110,14 +113,14 @@ func Bootstrap(node string, socketMode int) ([]byte, error) {
 			},
 		}
 	}
-	return json.MarshalIndent(map[string]any{
+	return toYAML(map[string]any{
 		"node":  map[string]any{"id": node, "cluster": "karga"},
 		"admin": map[string]any{"address": map[string]any{"pipe": map[string]any{"path": MountPath + "/" + adminSocket, "mode": socketMode}}},
 		"dynamic_resources": map[string]any{
 			"lds_config": source(listenersFile),
 			"cds_config": source(clustersFile),
 		},
-	}, "", "  ")
+	})
 }
 
 func tcpName(address string, port int) string  { return fmt.Sprintf("tcp_%s_%d", address, port) }
@@ -149,7 +152,7 @@ func Write(dir, node string, socketMode int, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	cds, err := ClustersJSON(cfg)
+	cds, err := Clusters(cfg)
 	if err != nil {
 		return err
 	}
@@ -206,19 +209,19 @@ func Endpoints(dir string) (map[string]string, error) {
 	}
 	var cfg struct {
 		Resources []struct {
-			Name           string `json:"name"`
+			Name           string `yaml:"name"`
 			LoadAssignment struct {
 				Endpoints []struct {
 					LbEndpoints []struct {
 						Endpoint struct {
-							Address address `json:"address"`
-						} `json:"endpoint"`
-					} `json:"lb_endpoints"`
-				} `json:"endpoints"`
-			} `json:"load_assignment"`
-		} `json:"resources"`
+							Address address `yaml:"address"`
+						} `yaml:"endpoint"`
+					} `yaml:"lb_endpoints"`
+				} `yaml:"endpoints"`
+			} `yaml:"load_assignment"`
+		} `yaml:"resources"`
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("%s: %w", filepath.Join(dir, clustersFile), err)
 	}
 	out := map[string]string{}
@@ -234,9 +237,9 @@ func Endpoints(dir string) (map[string]string, error) {
 
 type address struct {
 	SocketAddress struct {
-		Address   string `json:"address"`
-		PortValue int    `json:"port_value"`
-	} `json:"socket_address"`
+		Address   string `json:"address" yaml:"address"`
+		PortValue int    `json:"port_value" yaml:"port_value"`
+	} `json:"socket_address" yaml:"socket_address"`
 }
 
 func (a address) String() string {
@@ -524,4 +527,18 @@ func describe(want map[string]string) string {
 		parts = append(parts, want[c])
 	}
 	return strings.Join(slices.Compact(parts), ", ")
+}
+
+// toYAML writes v as YAML with sorted keys: equal configurations give equal files.
+func toYAML(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

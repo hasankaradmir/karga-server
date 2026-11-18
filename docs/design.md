@@ -71,7 +71,7 @@ internal/application/deployment plan (diff, strategies), execute, release proxy,
   .../deployment/gateway        the host gateway
   .../deployment/runtimeops     primitives shared by the executor and the gateway
 internal/ports                  Runtime, StateStore and ProxyControl interfaces; runtime contract suite
-internal/adapters/{docker,sqlite,fakeruntime}
+internal/adapters/{docker,filestore,fakeruntime}
 internal/infrastructure/{envoy,config}
 
 karga-sdk: api (the wire contract: types, error kinds, version, Backend, client, HTTP handler),
@@ -84,7 +84,7 @@ The SDK depends on nothing of the CLI or the server, and the server on nothing o
 enforced by `depguard` in each repository's `.golangci.yml`.
 The application layer talks to the container runtime, the state and the proxies only through
 `ports` (`Runtime`, `StateStore`, `ProxyControl` with the proxy configuration model); the
-composition root (`internal/server`) picks the adapters: Docker, SQLite and Envoy. `depguard`
+composition root (`internal/server`) picks the adapters: Docker, the file store and Envoy. `depguard`
 enforces it. Every
 runtime adapter passes the same contract suite (`internal/ports/runtimetest`); the fake runtime used
 by unit tests passes it too.
@@ -134,18 +134,17 @@ default shows up in the plan as a field change.
 
 ## 5. Releases and state
 
-The state is a SQLite database (`$KARGA_HOME/karga.db`, mode 0600, WAL):
+The state is YAML files under `$KARGA_HOME/state` (ADR-0017), mode 0600 in 0700 directories:
 
-| Table | Holds |
-|-------|-------|
-| releases | name, package, status, current revision |
-| revisions | immutable: package digest, values (writeOnly redacted), rendered manifest (secret values as digests), notes, status |
-| resources | what is applied now, one row per resource: runtime name, spec, digest |
-| operations | running and finished operations with their steps, PID and hostname |
+| File | Holds |
+|------|-------|
+| `releases/<r>/release.yaml` | name, package, status, current revision |
+| `releases/<r>/revisions/<n>.yaml` | immutable: package digest, values (writeOnly redacted), rendered manifest (secret values as digests), notes, status |
+| `releases/<r>/resources/<kind>_<name>.yaml` | what is applied now: runtime name, spec, digest |
+| `operations/<r>.yaml` | the release's newest 200 operations with their steps, PID, hostname and user |
 
-Migrations are numbered SQL files applied in order; the version is SQLite's `user_version`.
-Opening and migrating hold `karga.db.lock`; before migrating an existing database karga copies it
-to `karga.db.bak-v<n>` and refuses a database written by a newer karga.
+Files are replaced atomically; a transaction writes the release file last, so a crash leaves at
+most unreferenced files. `version.yaml` holds the format version; a newer one is refused.
 
 Every mutating command records an operation first. An operation whose process is alive on this
 host locks the release; one whose process is gone is aborted only with `--force`. Operations do

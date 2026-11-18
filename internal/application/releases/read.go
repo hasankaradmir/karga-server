@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -226,17 +223,17 @@ func (s *Service) Gateway(ctx context.Context) ([]gateway.Exposed, error) {
 }
 
 // GatewaySettings returns the host's gateway settings and, per listener, the services using it.
-func (s *Service) GatewaySettings(ctx context.Context) (gateway.Settings, map[string][]string, error) {
+func (s *Service) GatewaySettings(ctx context.Context) (api.Settings, map[string][]string, error) {
 	settings, err := gateway.ReadSettings(s.Home)
 	if err != nil {
-		return settings, nil, err
+		return api.Settings{}, nil, err
 	}
 	rt, err := s.Runtime(ctx)
 	if err != nil {
-		return settings, nil, err
+		return wireSettings(settings), nil, err
 	}
 	users, err := gateway.Users(ctx, rt, s.Home)
-	return settings, users, err
+	return wireSettings(settings), users, err
 }
 
 // GatewayHealth reports the gateway container and whether its Envoy is ready.
@@ -265,9 +262,9 @@ func (s *Service) SetGatewayListen(ctx context.Context, addrs []string) error {
 }
 
 // AddGatewayListener defines a listener services can expose ports on.
-func (s *Service) AddGatewayListener(ctx context.Context, l gateway.Listener) error {
+func (s *Service) AddGatewayListener(ctx context.Context, l api.Listener) error {
 	return s.updateGateway(ctx, func(g *gateway.Settings, _ map[string][]string) error {
-		g.Listeners = append(g.Listeners, l)
+		g.Listeners = append(g.Listeners, gateway.Listener{Name: l.Name, Port: l.Port, Protocol: l.Protocol})
 		return nil
 	})
 }
@@ -388,30 +385,4 @@ func (s *Service) Diff(ctx context.Context, name string, from, to int) (*Revisio
 func (s *Service) Resources(ctx context.Context, name string) ([]api.AppliedResource, error) {
 	rs, err := s.Store.ListResources(ctx, name)
 	return wireAll(rs, wireApplied), err
-}
-
-// BackupState writes a consistent copy of the state database to w.
-func (s *Service) BackupState(ctx context.Context, w io.Writer) error {
-	b, ok := s.Store.(interface {
-		Backup(ctx context.Context, dest string) error
-	})
-	if !ok {
-		return errors.New("this state store cannot be backed up")
-	}
-	dir, err := os.MkdirTemp(s.Home, ".backup-")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	tmp := filepath.Join(dir, "karga.db")
-	if err := b.Backup(ctx, tmp); err != nil {
-		return err
-	}
-	f, err := os.Open(tmp)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	_, err = io.Copy(w, f)
-	return err
 }

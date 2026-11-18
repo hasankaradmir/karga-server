@@ -36,9 +36,6 @@ func Preflight(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, ho
 			need(r, ports.CapNetworkDriver(s.Driver), "network driver "+s.Driver)
 		case *resource.VolumeSpec:
 			need(r, ports.CapVolumeDriver(s.Driver), "volume driver "+s.Driver)
-			if len(s.MountOptions) > 0 {
-				errs = append(errs, fmt.Errorf("%s %q: spec.mountOptions is not supported yet", r.Kind, r.Metadata.Name))
-			}
 		case *resource.WorkloadSpec:
 			if s.Resources != nil && s.Resources.Memory != "" {
 				need(r, ports.CapResourcesMemory, "a memory limit")
@@ -71,7 +68,7 @@ func capName(c string) string { return strings.TrimPrefix(strings.ToUpper(c), "C
 
 func capAllowed(c string, allowed []string) bool {
 	c = capName(c)
-	if slices.Contains(resource.DefaultCaps, c) {
+	if slices.Contains(resource.DefaultCaps(), c) {
 		return true
 	}
 	for _, a := range allowed {

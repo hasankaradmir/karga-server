@@ -1,7 +1,7 @@
 # karga-server
 
 The server of [karga](https://github.com/hasankaradmir/karga-cli), package management for containers
-on a **single host** without Kubernetes. karga-server owns the state (SQLite), talks to Docker,
+on a **single host** without Kubernetes. karga-server owns the state (YAML files), talks to Docker,
 runs installs, upgrades and rollbacks, and keeps every release running as declared: it repairs
 removed, stopped, unhealthy or hand-changed containers. The **karga** CLI is its client on a local
 unix socket; both use the API of [karga-sdk](https://github.com/hasankaradmir/karga-sdk).
@@ -112,12 +112,12 @@ outside or from other workloads. Notes:
 
 ## State
 
-Everything karga knows is in `$KARGA_HOME/karga.db` (SQLite, `0600`), which only karga-server
-opens; proxy and gateway configuration are rebuilt from it and from Docker. `karga state backup
-<file>` writes a consistent copy at any time (the server streams it to the CLI). To restore, stop
-karga-server and copy the file over `karga.db`. Before upgrading
-the database schema karga keeps a copy as `karga.db.bak-v<schema>`, and it refuses a database written
-by a newer karga.
+Everything karga knows is in YAML files under `$KARGA_HOME/state` (directories `0700`, files
+`0600`): a directory per release with its revisions and applied resources, and each release's
+operations (ADR-0017). Only karga-server writes them; proxy and gateway configuration are rebuilt
+from them and from Docker. To back up, stop karga-server and copy `$KARGA_HOME` (the state, the
+`state.key`, `gateway.yaml` and the revisions' Config and Secret files); restore by copying it back.
+karga-server refuses state written by a newer version.
 
 `karga volume backup <release> <volume> <file.tar.gz>` copies a volume's files through a workload
 that mounts it (no helper container). It runs live by default; `--stop` stops the workloads

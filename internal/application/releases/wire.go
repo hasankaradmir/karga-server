@@ -3,6 +3,8 @@ package releases
 import (
 	"github.com/hasankaradmir/karga-sdk/api"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
+
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )
 
@@ -44,6 +46,14 @@ func wireAll[T, W any](in []T, f func(T) W) []W {
 	out := make([]W, len(in))
 	for i, v := range in {
 		out[i] = f(v)
+	}
+	return out
+}
+
+func wireSettings(g gateway.Settings) api.Settings {
+	out := api.Settings{Listen: g.Listen, AccessLog: g.AccessLog, Listeners: []api.Listener{}}
+	for _, l := range g.Listeners {
+		out.Listeners = append(out.Listeners, api.Listener{Name: l.Name, Port: l.Port, Protocol: l.Protocol})
 	}
 	return out
 }

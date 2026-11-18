@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -30,7 +29,7 @@ import (
 	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/docker"
-	"github.com/hasankaradmir/karga-server/internal/adapters/sqlite"
+	"github.com/hasankaradmir/karga-server/internal/adapters/filestore"
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/deployment/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
@@ -163,7 +162,7 @@ func service(t *testing.T, name string) (*releases.Service, ports.Runtime) {
 func serviceIn(t *testing.T, home, name string) (*releases.Service, ports.Runtime) {
 	t.Helper()
 	rt := newRuntime(t)
-	store, err := sqlite.Open(context.Background(), filepath.Join(home, "karga.db"))
+	store, err := filestore.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

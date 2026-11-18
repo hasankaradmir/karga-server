@@ -4,13 +4,14 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"path"
 	"strings"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 
 	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
@@ -20,16 +21,16 @@ import (
 
 // A volume backup is a gzipped tar: a manifest entry, then the volume's files below "data/".
 const (
-	backupManifest = "karga-backup.json"
+	backupManifest = "karga-backup.yaml"
 	backupRoot     = "data"
 )
 
 // BackupManifest describes a volume backup file.
 type BackupManifest struct {
-	Release   string    `json:"release"`
-	Volume    string    `json:"volume"`
-	MountPath string    `json:"mountPath"`
-	Created   time.Time `json:"created"`
+	Release   string    `yaml:"release"`
+	Volume    string    `yaml:"volume"`
+	MountPath string    `yaml:"mountPath"`
+	Created   time.Time `yaml:"created"`
 }
 
 // VolumeBackupRequest is shared with the CLI (karga-sdk/api).
@@ -135,7 +136,7 @@ func (s *Service) BackupVolume(ctx context.Context, req VolumeBackupRequest, w i
 	src := ms[0]
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
-	man, _ := json.Marshal(BackupManifest{Release: req.Release, Volume: req.Volume, MountPath: src.path, Created: s.Now().UTC()})
+	man, _ := yaml.Marshal(BackupManifest{Release: req.Release, Volume: req.Volume, MountPath: src.path, Created: s.Now().UTC()})
 	if err := tw.WriteHeader(&tar.Header{Name: backupManifest, Mode: 0o600, Size: int64(len(man)), ModTime: s.Now()}); err != nil {
 		return err
 	}
@@ -185,11 +186,11 @@ func (s *Service) RestoreVolume(ctx context.Context, req VolumeRestoreRequest, r
 		return fmt.Errorf("%s is not a karga volume backup", req.Name)
 	}
 	var man BackupManifest
-	if err := json.NewDecoder(tr).Decode(&man); err != nil {
+	if err := yaml.NewDecoder(tr).Decode(&man); err != nil {
 		return fmt.Errorf("%s: manifest: %w", req.Name, err)
 	}
 	if (man.Release != req.Release || man.Volume != req.Volume) && !req.Force {
-		return fmt.Errorf("%s is a backup of volume %q of release %s; use --force to restore it into %q of %s",
+		return fmt.Errorf("%s is a backup of volume %q of release %s; use --from-other-volume to restore it into %q of %s",
 			req.Name, man.Volume, man.Release, req.Volume, req.Release)
 	}
 

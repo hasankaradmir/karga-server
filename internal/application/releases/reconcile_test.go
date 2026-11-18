@@ -154,3 +154,32 @@ func TestReconcileBacksOffAndGivesUp(t *testing.T) {
 		t.Fatalf("forced: %+v", res)
 	}
 }
+
+// A failed repair says when it may run again, so a loop without new events comes back.
+func TestNextRepair(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	must[*Result](t)(e.install())
+	if at := e.svc.NextRepair("cache"); !at.IsZero() {
+		t.Fatalf("nothing waits: %v", at)
+	}
+	if err := e.rt.StopWorkload(ctx, "cache-redis", 0); err != nil {
+		t.Fatal(err)
+	}
+	e.rt.Fail = map[string]error{"StartWorkload:cache-redis": errors.New("busy")}
+	now := time.Now()
+	e.svc.Now = func() time.Time { return now }
+	must[*ReconcileResult](t)(e.svc.Reconcile(ctx, "cache", false))
+	if at := e.svc.NextRepair("cache"); !at.Equal(now.Add(repairFirstDelay)) {
+		t.Fatalf("next repair at %v, want %v", at, now.Add(repairFirstDelay))
+	}
+	if at := e.svc.NextRepair("other"); !at.IsZero() {
+		t.Fatalf("another release waits: %v", at)
+	}
+	e.rt.Fail = nil
+	now = now.Add(repairFirstDelay)
+	must[*ReconcileResult](t)(e.svc.Reconcile(ctx, "cache", false))
+	if at := e.svc.NextRepair("cache"); !at.IsZero() {
+		t.Fatalf("a successful repair waits for nothing: %v", at)
+	}
+}

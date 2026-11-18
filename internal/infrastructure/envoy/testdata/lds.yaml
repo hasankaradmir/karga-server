@@ -1,0 +1,128 @@
+resources:
+  - '@type': type.googleapis.com/envoy.config.listener.v3.Listener
+    address:
+      socket_address:
+        address: 127.0.0.1
+        port_value: 5432
+    filter_chains:
+      - filters:
+          - name: envoy.filters.network.tcp_proxy
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+              cluster: db_pg_p5432
+              max_connect_attempts: 3
+              stat_prefix: tcp_127.0.0.1_5432
+    name: tcp_127.0.0.1_5432
+  - '@type': type.googleapis.com/envoy.config.listener.v3.Listener
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 443
+    filter_chains:
+      - filter_chain_match:
+          server_names:
+            - secure.example
+        filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              http_filters:
+                - name: envoy.filters.http.router
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+              merge_slashes: true
+              normalize_path: true
+              route_config:
+                name: http_0.0.0.0_443
+                virtual_hosts:
+                  - domains:
+                      - secure.example
+                      - secure.example:*
+                    name: secure.example
+                    routes:
+                      - match:
+                          prefix: /
+                        route:
+                          cluster: app_web_p3000
+                          retry_policy:
+                            num_retries: 2
+                            retry_on: connect-failure
+              stat_prefix: http_0.0.0.0_443
+              use_remote_address: true
+        transport_socket:
+          name: envoy.transport_sockets.tls
+          typed_config:
+            '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+            common_tls_context:
+              tls_certificates:
+                - certificate_chain:
+                    filename: /etc/karga-proxy/certs/app_443_secure.example.crt
+                  private_key:
+                    filename: /etc/karga-proxy/certs/app_443_secure.example.key
+    listener_filters:
+      - name: envoy.filters.listener.tls_inspector
+        typed_config:
+          '@type': type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
+    name: http_0.0.0.0_443
+  - '@type': type.googleapis.com/envoy.config.listener.v3.Listener
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 80
+    filter_chains:
+      - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              http_filters:
+                - name: envoy.filters.http.router
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+              merge_slashes: true
+              normalize_path: true
+              route_config:
+                name: http_0.0.0.0_80
+                virtual_hosts:
+                  - domains:
+                      - app.local
+                      - app.local:*
+                    name: app.local
+                    routes:
+                      - match:
+                          prefix: /api
+                        route:
+                          cluster: app_api_p8080
+                          retry_policy:
+                            num_retries: 2
+                            retry_on: connect-failure
+                      - match:
+                          prefix: /
+                        route:
+                          cluster: app_web_p3000
+                          retry_policy:
+                            num_retries: 2
+                            retry_on: connect-failure
+                  - domains:
+                      - b.local
+                      - b.local:*
+                    name: b.local
+                    routes:
+                      - match:
+                          prefix: /
+                        route:
+                          cluster: b_web_p3000
+                          retry_policy:
+                            num_retries: 2
+                            retry_on: connect-failure
+                  - domains:
+                      - secure.example
+                      - secure.example:*
+                    name: secure.example-https
+                    routes:
+                      - match:
+                          prefix: /
+                        redirect:
+                          https_redirect: true
+              stat_prefix: http_0.0.0.0_80
+              use_remote_address: true
+    name: http_0.0.0.0_80

@@ -22,7 +22,7 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/api"
 
-	"github.com/hasankaradmir/karga-server/internal/adapters/sqlite"
+	"github.com/hasankaradmir/karga-server/internal/adapters/filestore"
 	"github.com/hasankaradmir/karga-server/internal/application/reconciler"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/config"
@@ -69,7 +69,7 @@ type Server struct {
 	cfg     Config
 	Service *releases.Service
 	Loop    *reconciler.Loop
-	store   *sqlite.Store
+	store   *filestore.Store
 	unlock  func()
 }
 
@@ -92,7 +92,7 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := sqlite.Open(ctx, filepath.Join(cfg.Home, "karga.db"))
+	store, err := filestore.Open(cfg.Home)
 	if err != nil {
 		unlock()
 		return nil, err

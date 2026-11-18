@@ -46,8 +46,15 @@ First release.
 - Repairs no longer update a release proxy (after a server upgrade, for example); they only create
   what is missing.
 - The Envoy admin client no longer keeps a connection pool per proxy.
+- A repair waiting out its backoff is tried again when it may run, even if no Docker event follows
+  (a container removed while the reconciler looked at it stayed down).
 
 ### Breaking (compared with earlier builds)
+- The state is YAML files under `$KARGA_HOME/state` (ADR-0017) instead of a SQLite database, and
+  nothing karga-server stores is JSON: `gateway.yaml`, `expose.yaml`, Envoy's `envoy.yaml`,
+  `lds.yaml`, `cds.yaml`, the volume backup manifest. A `karga.db` of an earlier build is refused,
+  not converted. `karga state backup` is gone: a backup is a copy of `$KARGA_HOME`. A release keeps
+  its newest 200 operations.
 - API 2.0 (karga-sdk): a CLI and a server work together when their major API version is the same.
   The state model (releases, revisions, operations) lives in karga-server and the CLI sees views of
   it. `--allow-capabilities`: packages may add only Docker's default capabilities unless the
@@ -82,7 +89,7 @@ First release.
   stored), `karga create` to start one, `lint`, `template`, notes (`NOTES.txt`).
 - Resources: Workload, Service, Volume, Network, Config, Secret.
 - Releases: install, upgrade (`--reuse-values`, `--install`), rollback, uninstall; immutable
-  revisions in SQLite; `history`, `diff`, `status --watch`, `get values|manifest|notes`.
+  revisions in karga-server's state; `history`, `diff`, `status --watch`, `get values|manifest|notes`.
 - Plans as a summary (`--verbose` for fields) and live progress while applying.
 - An upgrade recreates containers, networks and volumes removed outside karga; an install that
   fails before creating anything leaves no release behind.
@@ -101,7 +108,7 @@ First release.
 - `tcp`/`http` health checks need no tool in the image.
 
 ### Operations
-- `karga logs`, `karga exec`, `karga gateway status`, `karga state backup`,
+- `karga logs`, `karga exec`, `karga gateway status`,
   `karga volume backup|restore`, shell completion.
 - Memory (without extra swap), CPU and process limits; OOM kills and restarts in `status`;
   container log rotation; `no-new-privileges` by default and a `security` block.

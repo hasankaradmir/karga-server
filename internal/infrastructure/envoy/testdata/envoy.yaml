@@ -1,0 +1,21 @@
+admin:
+  address:
+    pipe:
+      mode: 384
+      path: /etc/karga-proxy/admin.sock
+dynamic_resources:
+  cds_config:
+    path_config_source:
+      path: /etc/karga-proxy/cds.yaml
+      watched_directory:
+        path: /etc/karga-proxy
+    resource_api_version: V3
+  lds_config:
+    path_config_source:
+      path: /etc/karga-proxy/lds.yaml
+      watched_directory:
+        path: /etc/karga-proxy
+    resource_api_version: V3
+node:
+  cluster: karga
+  id: web

@@ -42,7 +42,7 @@ func validateSettings(s Settings) error {
 			errs = append(errs, fmt.Errorf("listener %q: port %d is used by listener %q", l.Name, l.Port, other))
 		}
 		portsUsed[l.Port] = l.Name
-		if l.Protocol != api.ProtocolTCP && l.Protocol != api.ProtocolHTTP && l.Protocol != api.ProtocolHTTPS {
+		if l.Protocol != ProtocolTCP && l.Protocol != ProtocolHTTP && l.Protocol != ProtocolHTTPS {
 			errs = append(errs, fmt.Errorf("listener %q: protocol %q must be tcp, http or https", l.Name, l.Protocol))
 		}
 	}
@@ -54,5 +54,5 @@ func validateSettings(s Settings) error {
 
 // DefaultListeners are the listeners a new host starts with.
 func DefaultListeners() []Listener {
-	return []Listener{{Name: "web", Port: 80, Protocol: api.ProtocolHTTP}, {Name: "websecure", Port: 443, Protocol: api.ProtocolHTTPS}}
+	return []Listener{{Name: "web", Port: 80, Protocol: ProtocolHTTP}, {Name: "websecure", Port: 443, Protocol: ProtocolHTTPS}}
 }

@@ -20,6 +20,8 @@ import (
 	"strings"
 	"syscall"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/hasankaradmir/karga-sdk/api"
 	"github.com/hasankaradmir/karga-sdk/resource"
 
@@ -42,7 +44,7 @@ func Dir(home string) string { return filepath.Join(home, "gateway") }
 
 // ExposeFile lists what a release exposes ([]Route). It lives in the release proxy's directory, so
 // changing a host or path rewrites a file instead of recreating the proxy container.
-func ExposeFile(home, rel string) string { return filepath.Join(home, "proxies", rel, "expose.json") }
+func ExposeFile(home, rel string) string { return filepath.Join(home, "proxies", rel, "expose.yaml") }
 
 // Port is a service port a release proxy publishes on a loopback upstream port for the gateway.
 type Port struct {
@@ -54,16 +56,16 @@ type Port struct {
 // Route attaches a service port to a gateway listener: by Host and Path (a prefix) on an http or
 // https listener, or alone on a tcp one.
 type Route struct {
-	Service  string `json:"service"`
-	Port     int    `json:"port"`
-	Listener string `json:"listener"`
-	Host     string `json:"host,omitempty"`
-	Path     string `json:"path,omitempty"`
+	Service  string `yaml:"service"`
+	Port     int    `yaml:"port"`
+	Listener string `yaml:"listener"`
+	Host     string `yaml:"host,omitempty"`
+	Path     string `yaml:"path,omitempty"`
 	// TLSSecret and CertDir (its materialized directory, with tls.crt and tls.key) serve HTTPS.
-	TLSSecret string `json:"tlsSecret,omitempty"`
-	CertDir   string `json:"certDir,omitempty"`
+	TLSSecret string `yaml:"tlsSecret,omitempty"`
+	CertDir   string `yaml:"certDir,omitempty"`
 	// HealthPath is checked by HTTP instead of a TCP connect (the workload's http health check).
-	HealthPath string `json:"healthPath,omitempty"`
+	HealthPath string `yaml:"healthPath,omitempty"`
 }
 
 // allocatePort picks a free loopback port for an upstream. Docker binds it right after; a race
@@ -115,7 +117,7 @@ func ReadExpose(home, rel string) ([]Route, error) {
 		return nil, err
 	}
 	var out []Route
-	if err := json.Unmarshal(data, &out); err != nil {
+	if err := yaml.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("%s: %w", ExposeFile(home, rel), err)
 	}
 	return out, nil
@@ -129,14 +131,14 @@ func WriteExpose(home, rel string, routes []Route) error {
 		}
 		return nil
 	}
-	js, err := json.Marshal(routes)
+	data, err := yaml.Marshal(routes)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(ExposeFile(home, rel)), 0o700); err != nil {
 		return err
 	}
-	return writeFile(ExposeFile(home, rel), js)
+	return writeFile(ExposeFile(home, rel), data)
 }
 
 // findTargets lists every release proxy that publishes upstream ports, with its release's routes.
@@ -465,22 +467,33 @@ func Wait(ctx context.Context, px runtimeops.ProxyControl, home, rel string, tar
 
 // Listener protocols.
 const (
-	ProtocolTCP   = api.ProtocolTCP
-	ProtocolHTTP  = api.ProtocolHTTP
-	ProtocolHTTPS = api.ProtocolHTTPS
+	ProtocolTCP   = "tcp"
+	ProtocolHTTP  = "http"
+	ProtocolHTTPS = "https"
 )
 
-// Listener is shared with the CLI (karga-sdk/api).
-type Listener = api.Listener
+// Listener is a port the gateway serves on every listen address. A tcp listener belongs to one
+// service; http and https listeners are shared by host and path.
+type Listener struct {
+	Name     string `yaml:"name"`
+	Port     int    `yaml:"port"`
+	Protocol string `yaml:"protocol"`
+}
 
-// Settings is shared with the CLI (karga-sdk/api).
-type Settings = api.Settings
+// Settings are the host administrator's gateway, stored in $KARGA_HOME/gateway.yaml: where it
+// listens, on which listeners, and whether it logs access. Packages cannot change them.
+type Settings struct {
+	// Listen are the host addresses every listener binds (default 127.0.0.1).
+	Listen    []string   `yaml:"listen,omitempty"`
+	Listeners []Listener `yaml:"listeners"`
+	AccessLog bool       `yaml:"accessLog"`
+}
 
 // DefaultListen is where the gateway listens until the administrator sets addresses: nothing is
 // reachable from other machines until the administrator says so.
 const DefaultListen = "127.0.0.1"
 
-func settingsPath(home string) string { return filepath.Join(home, "gateway.json") }
+func settingsPath(home string) string { return filepath.Join(home, "gateway.yaml") }
 
 // ReadSettings returns the stored settings, with defaults for what was never set.
 func ReadSettings(home string) (Settings, error) {
@@ -491,7 +504,7 @@ func ReadSettings(home string) (Settings, error) {
 	case err != nil:
 		return s, err
 	default:
-		if err := json.Unmarshal(data, &s); err != nil {
+		if err := yaml.Unmarshal(data, &s); err != nil {
 			return s, fmt.Errorf("%s: %w", settingsPath(home), err)
 		}
 	}
@@ -512,7 +525,7 @@ func WriteSettings(home string, s Settings) error {
 	if s.Listeners == nil {
 		s.Listeners = []Listener{}
 	}
-	data, err := json.Marshal(s)
+	data, err := yaml.Marshal(s)
 	if err != nil {
 		return err
 	}

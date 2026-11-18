@@ -70,7 +70,7 @@ func filterListener(name, address string, port int, filter string, cfg validated
 	}, nil
 }
 
-// Listeners renders lds.json. Output is sorted so equal configs give equal files.
+// Listeners renders lds.yaml. Output is sorted so equal configs give equal files.
 func Listeners(c Config) ([]byte, error) {
 	var items []validated
 	var logs []*accesslogv3.AccessLog
@@ -237,8 +237,8 @@ func virtualHosts(routes []HTTPRoute) []*routev3.VirtualHost {
 	return out
 }
 
-// ClustersJSON renders cds.json.
-func ClustersJSON(c Config) ([]byte, error) {
+// Clusters renders cds.yaml.
+func Clusters(c Config) ([]byte, error) {
 	cs := slices.Clone(c.Clusters)
 	slices.SortFunc(cs, func(a, b Cluster) int { return strings.Compare(a.Name, b.Name) })
 	var items []validated
@@ -314,9 +314,33 @@ func resources(items []validated) ([]byte, error) {
 	if len(resp.Resources) == 0 {
 		raw = []byte(`{"resources":[]}`)
 	}
-	var out bytes.Buffer
-	if err := json.Indent(&out, raw, "", "  "); err != nil {
+	// Envoy's own JSON mapping, stored as YAML.
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var doc any
+	if err := dec.Decode(&doc); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	return toYAML(numbers(doc))
+}
+
+// numbers turns JSON numbers into ints or floats, so YAML writes them as numbers.
+func numbers(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, c := range t {
+			t[k] = numbers(c)
+		}
+	case []any:
+		for i, c := range t {
+			t[i] = numbers(c)
+		}
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			return i
+		}
+		f, _ := t.Float64()
+		return f
+	}
+	return v
 }

@@ -2,7 +2,6 @@ package reconciler
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -11,7 +10,7 @@ import (
 	"github.com/hasankaradmir/karga-sdk/api"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
-	"github.com/hasankaradmir/karga-server/internal/adapters/sqlite"
+	"github.com/hasankaradmir/karga-server/internal/adapters/filestore"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
@@ -22,7 +21,7 @@ func TestEventTriggersRepair(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	home := t.TempDir()
-	store, err := sqlite.Open(ctx, filepath.Join(home, "karga.db"))
+	store, err := filestore.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +34,11 @@ func TestEventTriggersRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	loop := New(svc, 0, nil) // events only
-	go loop.Run(ctx)
+	stopped := make(chan struct{})
+	go func() { loop.Run(ctx); close(stopped) }()
+	// The repair records its operation after the container is back: let it finish before the
+	// temporary state directory goes.
+	defer func() { cancel(); <-stopped }()
 
 	if err := rt.DeleteWorkload(ctx, "cache-redis"); err != nil {
 		t.Fatal(err)
