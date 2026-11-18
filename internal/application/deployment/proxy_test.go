@@ -41,7 +41,7 @@ func withProxySupport(t *testing.T, on bool) {
 }
 
 // withProxies controls the proxies with px for the duration of a test.
-func withProxies(t *testing.T, px proxyops.ProxyControl) {
+func withProxies(t *testing.T, px ports.ProxyControl) {
 	t.Helper()
 	old := testHost.Proxies
 	testHost.Proxies = px

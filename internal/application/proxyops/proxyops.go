@@ -58,13 +58,10 @@ func IPOverlap(a, b string) bool {
 	return unspecified(a) || unspecified(b)
 }
 
-// ProxyControl writes karga's proxies' configuration and reads their state.
-type ProxyControl = ports.ProxyControl
-
 // Host is what karga's proxies and probes need from the host: the proxies' control, the host's
 // network, and whether the runtime can run the proxies. karga-server makes one and passes it down.
 type Host struct {
-	Proxies ProxyControl
+	Proxies ports.ProxyControl
 	Net     ports.HostNet
 	// supported says whether the runtime can run karga's proxies: they rely on bind-mounted unix
 	// sockets, inotify and (the gateway) the host network namespace (a local, rootful Docker on Linux).

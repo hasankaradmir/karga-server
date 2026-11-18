@@ -45,7 +45,7 @@ func TestGatewayConfigListenersAndRedirects(t *testing.T) {
 	if len(cfg.TCP) != 2 || cfg.TCP[0].Port != 5432 || cfg.TCP[0].Cluster != "a_db_p5432" || cfg.TCP[1].Address != "10.0.0.5" {
 		t.Fatalf("tcp listeners on every listen address: %+v", cfg.TCP)
 	}
-	var tls, plain []envoy.HTTPListener
+	var tls, plain []ports.ProxyHTTPListener
 	for _, l := range cfg.HTTP {
 		switch l.Port {
 		case 443:
