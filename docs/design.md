@@ -26,7 +26,7 @@ package marketplace, automatic database migration rollback, platforms other than
 ## 2. Architecture
 
 karga is two programs (ADR-0012) in three repositories (ADR-0013): karga-server (this one), the
-karga CLI, and karga-sdk, the Go module both use. **karga-server** owns the state database and the container
+karga CLI, and karga-sdk, the Go module both use. **karga-server** owns the state and the container
 runtime; it serves the release operations on a local unix socket (`/run/karga/karga.sock`, HTTP and
 JSON, no remote API). The **karga** CLI is its client: it packs packages and values files and sends
 them, and streams progress, logs, `exec` (an upgraded connection carrying frames) and backups. Only
@@ -152,16 +152,17 @@ most unreferenced files. `version.yaml` holds the format version; a newer one is
 Every mutating command records an operation first. An operation whose process is alive on this
 host locks the release; one whose process is gone is aborted only with `--force`. Operations do
 not depend on their client's connection. When karga-server starts it resumes the operations it
-left running: install, upgrade and rollback deploy their recorded revision again (the plan skips
-what is done; no new revision), uninstall runs again keeping volumes and history, others are
-aborted. The finishing operation is recorded as `resume`. A failed apply
+left running, with the options recorded on the operation (`--delete-volumes`, `--strategy`,
+`--timeout`, `--keep-history`): install, upgrade and rollback deploy their recorded revision again
+(the plan skips what is done; no new revision), uninstall runs again, others are aborted
+(ADR-0015). The finishing operation is recorded as `resume`. A failed apply
 marks the revision failed; an install that failed before creating anything removes the release; if nothing that was running changed (an image that cannot be pulled, an
 unhealthy new container in a replace), the release keeps its status. Rollback re-applies a stored
 revision as a new revision. `--history-max` (default 10) prunes old revisions.
 
 Digests of secret material (Secret values, values, manifests) are HMAC-SHA256 keyed by
 `$KARGA_HOME/state.key` (32 random bytes, created on first use), so a weak password cannot be
-guessed offline from the database.
+guessed offline from the state files.
 
 ## 6. Planning
 
@@ -251,7 +252,8 @@ count.
 
 ## 10. Security model
 
-- Access to the Docker socket is root-equivalent; karga is meant for the host's administrator.
+- One trust level (ADR-0016): whoever can open the karga socket (group `karga`) administers the
+  host, as with the Docker socket. There are no users, roles or remote access.
 - Containers are never privileged and run with `no-new-privileges` by default; the `security` block
   adds a read-only root filesystem, capability changes and a user. A package may add only Docker's
   default capabilities unless the administrator allows more (`--allow-capabilities`). The gateway
@@ -260,7 +262,7 @@ count.
   upstreams, and the gateway serves only the listeners the administrator defines, on `127.0.0.1`
   unless told otherwise.
 - Secret files are mounted read-only from a 0700 directory; secret values never appear in output,
-  logs or the database (only keyed digests); `writeOnly` values are stored as `<redacted>`, and a
+  logs or the state (only keyed digests); `writeOnly` values are stored as `<redacted>`, and a
   package that uses one outside a Secret is refused.
 - Config and Secret directories are updated in place: running containers keep seeing them.
 - A package cannot exhaust the server: rendering is bounded in depth, time and output, and archives
