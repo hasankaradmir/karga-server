@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/hasankaradmir/karga-sdk/packages"
-
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
@@ -104,7 +102,7 @@ func (s *Lifecycle) redeploy(ctx context.Context, rel release.Release, op releas
 		return errors.Join(err, s.c.store.FinishOperation(ctx, op), s.c.store.UpdateRevisionStatus(ctx, rel.Name, rev.Number, release.RevisionFailed, "Interrupted: "+err.Error()),
 			s.c.store.SaveRelease(ctx, rel))
 	}
-	p := packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
+	p := pkgOf(rev)
 	_, err = s.c.deploy(ctx, deployInput{
 		// The request's own choices: a volume it was not allowed to delete is not deleted now either.
 		CommonOptions: CommonOptions{DeleteVolumes: op.Options.DeleteVolumes, Timeout: op.Options.Timeout, Force: true},

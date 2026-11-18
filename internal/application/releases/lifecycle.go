@@ -178,7 +178,7 @@ func (s *Lifecycle) Rollback(ctx context.Context, req RollbackRequest, progress 
 	if err != nil {
 		return nil, err
 	}
-	p := packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
+	p := pkgOf(rev)
 	return s.c.deploy(ctx, deployInput{
 		CommonOptions: req.CommonOptions, Progress: progress, Name: req.Name, Type: release.OpRollback, Description: fmt.Sprintf("Rollback to %d", target),
 		Package: p, PackageDigest: rev.PackageDigest, Overrides: rev.Values, Values: rev.ValuesAll,

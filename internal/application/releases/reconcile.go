@@ -404,6 +404,7 @@ func (s *Lifecycle) healed(ctx context.Context, rt ports.Runtime, rel string, a 
 	}
 }
 
+// pkgOf is the package metadata a revision records.
 func pkgOf(rev release.Revision) packages.Metadata {
 	return packages.Metadata{Name: rev.PackageName, Version: rev.PackageVersion, Runtime: packages.Runtime{Supported: rev.RuntimeSupported}}
 }
