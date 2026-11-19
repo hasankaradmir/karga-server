@@ -51,13 +51,13 @@ func TestEventTriggersRepair(t *testing.T) {
 	// temporary state directory goes.
 	defer func() { cancel(); <-stopped }()
 
-	if err := rt.DeleteWorkload(ctx, "cache-redis"); err != nil {
+	if err := rt.DeleteWorkload(ctx, rt.Name("cache-redis")); err != nil {
 		t.Fatal(err)
 	}
 	rt.EventsC <- ports.RuntimeEvent{Release: "cache", Container: "cache-redis", Action: "destroy"}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if st, err := rt.GetWorkload(ctx, "cache-redis"); err == nil && st.State == ports.StateRunning {
+		if st, err := rt.GetWorkload(ctx, rt.Name("cache-redis")); err == nil && st.State == ports.StateRunning {
 			return
 		}
 		if time.Now().After(deadline) {

@@ -213,10 +213,19 @@ Progress events (pull, create, wait, switch, drain, stop, done) are reported as 
 - **recreate** (default): stop the old container (SIGTERM, then a kill after the workload's
   `stopTimeout`, default 10s, which is also set on the container for `docker stop`), start the new
   one. Short outage.
-- **replace:** start `<name>-next` next to the old container, wait until healthy, switch traffic,
-  let the old one drain for `drainTimeout`, remove it and rename `<name>-next`. Needs a health
-  check and read-only volumes (two writers on the same data are unsafe); otherwise the plan falls
-  back to recreate and says why. An interrupted replace is repaired before the next plan.
+- **replace:** start the new container next to the old one, wait until healthy, switch traffic,
+  let the old one drain for `drainTimeout` and remove it; nothing is renamed. Needs a health check
+  and read-only volumes (two writers on the same data are unsafe); otherwise the plan falls back to
+  recreate and says why. An interrupted replace is repaired before the next plan: of the two
+  containers the one the release proxy routes to is kept and recorded.
+
+A workload's container is named `<release>-<workload>-<hash>`, the hash being the first 6 hex
+digits of the workload's digest (its spec and the contents of the Configs and Secrets it mounts),
+like a Kubernetes pod-template-hash: the same spec keeps its name, a changed one gets a new name.
+The state records each container's name; karga finds the containers of a release by label
+(`io.karga.release`, `io.karga.name`), never by building the name. A failed replace leaves its new
+container stopped next to the old one, for its logs; the next deployment removes it. The release
+proxy (`<release>-karga-proxy`), Networks and Volumes (`<release>-<name>`) keep fixed names.
 
 ## 8. Traffic: Services, the release proxy and the gateway (ADR-0011)
 
@@ -228,7 +237,8 @@ Services is refused.
   the Services' workloads and carries the Service names as aliases on them. It listens on every
   Service port and forwards to the backend alias of the container currently running the Service's
   workload (`karga-<workload>-r<revision>`). Workloads carry no alias of their own name (Docker
-  still resolves the container name, `<release>-<workload>`). One proxy has one address, so a port number belongs to one Service of the release. The
+  still resolves the container name, which changes with every update: reach a workload through its
+  Service). One proxy has one address, so a port number belongs to one Service of the release. The
   exposed Service ports are published on loopback upstream ports chosen by karga and recorded in a
   container label (`io.karga.gateway`); adding one recreates the proxy. What the release exposes
   (listener, host, path, certificate directory) is written to `$KARGA_HOME/proxies/<release>/expose.yaml`,

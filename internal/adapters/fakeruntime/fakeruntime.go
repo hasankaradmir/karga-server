@@ -9,6 +9,7 @@ import (
 	"io"
 	"maps"
 	pathpkg "path"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -20,6 +21,10 @@ import (
 )
 
 // Runtime is safe for concurrent use. Set Fail["<Op>:<name>"] to make an operation fail.
+//
+// A workload's container name ends with its digest (proxyops.WorkloadName): Calls record it
+// without that suffix and Fail matches it with or without, so tests do not depend on digests.
+// Containers returns the real names.
 type Runtime struct {
 	mu        sync.Mutex
 	Images    map[string]bool
@@ -28,8 +33,10 @@ type Runtime struct {
 	Workloads map[string]*Workload
 	// Fail injects errors, e.g. Fail["StartWorkload:web-redis"] = errors.New("boom").
 	Fail map[string]error
-	// Calls records every operation as "<Op>:<name>" in order.
+	// Calls records every operation as "<Op>:<name>" in order, container names without their digest
+	// suffix; Raw records them with it.
 	Calls []string
+	Raw   []string
 	// Health is the health a started workload with a healthcheck reports (default healthy).
 	Health string
 	// Capabilities overrides the reported capabilities when non-nil.
@@ -76,9 +83,74 @@ func New(pulled ...string) *Runtime {
 }
 
 func (r *Runtime) call(op, name string) error {
-	key := op + ":" + name
+	key := op + ":" + unhashed(op, name)
 	r.Calls = append(r.Calls, key)
+	r.Raw = append(r.Raw, op+":"+name)
+	if err, ok := r.Fail[op+":"+name]; ok {
+		return err
+	}
 	return r.Fail[key]
+}
+
+// containerOps are the operations that name a container.
+var containerOps = map[string]bool{"CreateWorkload": true, "StartWorkload": true, "StopWorkload": true,
+	"DeleteWorkload": true, "GetWorkload": true, "Exec": true, "ExportPath": true, "ImportPath": true}
+
+// workloadHash is the suffix proxyops.WorkloadName adds.
+var workloadHash = regexp.MustCompile(`-[0-9a-f]{6}$`)
+
+// unhashed drops the digest suffix from the container name of a container operation.
+// shortcut: a workload named like "<x>-cafe12" loses its last part too; no test names one so.
+func unhashed(op, name string) string {
+	if !containerOps[op] {
+		return name
+	}
+	return workloadHash.ReplaceAllString(name, "")
+}
+
+// Name returns the container name of base ("<release>-<workload>", without the digest suffix),
+// or base when no container matches.
+func (r *Runtime) Name(base string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.Workloads[base]; ok {
+		return base
+	}
+	for _, n := range slices.Sorted(maps.Keys(r.Workloads)) {
+		if unhashed("GetWorkload", n) == base {
+			return n
+		}
+	}
+	return base
+}
+
+// Lookup returns the workload whose container is base (see Name).
+func (r *Runtime) Lookup(base string) (*Workload, bool) {
+	n := r.Name(base)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	w, ok := r.Workloads[n]
+	return w, ok
+}
+
+// Workload returns the workload whose container is base (see Name), nil if none.
+func (r *Runtime) Workload(base string) *Workload {
+	w, _ := r.Lookup(base)
+	return w
+}
+
+// Containers returns the names of release's containers of workload (by label), sorted.
+func (r *Runtime) Containers(release, workload string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for n, w := range r.Workloads {
+		if l := w.Request.Labels; l[ports.LabelRelease] == release && l[ports.LabelKind] == "Workload" && l[ports.LabelName] == workload {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // WithGateway makes the runtime report the default capabilities plus karga's gateway, as Docker
@@ -317,6 +389,9 @@ func (r *Runtime) GetWorkload(_ context.Context, name string) (ports.WorkloadSta
 	if err := r.Fail["GetWorkload:"+name]; err != nil {
 		return ports.WorkloadStatus{}, err
 	}
+	if err := r.Fail["GetWorkload:"+unhashed("GetWorkload", name)]; err != nil {
+		return ports.WorkloadStatus{}, err
+	}
 	w, ok := r.Workloads[name]
 	if !ok {
 		return ports.WorkloadStatus{}, fmt.Errorf("workload %s: %w", name, ports.ErrNotFound)
@@ -507,26 +582,6 @@ func (r *Runtime) PublishedPorts(context.Context) ([]ports.PublishedPort, error)
 		}
 	}
 	return out, nil
-}
-
-// RenameWorkload implements ports.Runtime.
-func (r *Runtime) RenameWorkload(_ context.Context, from, to string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err := r.call("RenameWorkload", from+"->"+to); err != nil {
-		return err
-	}
-	w, ok := r.Workloads[from]
-	if !ok {
-		return fmt.Errorf("workload %s: %w", from, ports.ErrNotFound)
-	}
-	if _, taken := r.Workloads[to]; taken {
-		return fmt.Errorf("workload %s: %w", to, ports.ErrConflict)
-	}
-	delete(r.Workloads, from)
-	w.Request.Name = to
-	r.Workloads[to] = w
-	return nil
 }
 
 // ConnectNetwork implements ports.Runtime.

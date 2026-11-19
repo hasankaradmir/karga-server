@@ -12,15 +12,12 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
-// nextSuffix names the container a replace starts next to the current one.
-const nextSuffix = "-next"
-
 // recreateWorkload recreates a workload: the old container goes first, so ports and names are free.
 // Its anonymous volumes (image VOLUME paths no Volume covers) move to the new container, as docker
 // compose does, so their data survives the update.
 func recreateWorkload(ctx context.Context, rt ports.Runtime, c Change, owned map[string]bool, rel string, s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string, behind bool) error {
-	name := proxyops.RuntimeName(rel, c.Name)
-	wr, err := workloadRequest(rel, c.Name, s, lbl, paths, behind)
+	name := c.RuntimeName
+	wr, err := workloadRequest(rel, c.Name, name, s, lbl, paths, behind)
 	if err != nil {
 		return err
 	}
@@ -71,12 +68,13 @@ func takeOver(ctx context.Context, rt ports.Runtime, name string, mounts []ports
 // replaceWorkload updates a workload without downtime (ADR-0011): its clients reach it only
 // through its Services, that is through the release proxy, so switching the proxy switches all of
 // them, from the release's networks and through the gateway alike:
-//  1. remove a leftover <name>-next of this release;
-//  2. create <name>-next with its revision's backend alias (nobody resolves it yet), start it and
-//     wait until healthy; on failure stop it (kept for inspection) and return untouched;
+//  1. remove a leftover container of this release with the new name (an earlier attempt);
+//  2. create the new container, named after its digest, with its revision's backend alias (nobody
+//     resolves it yet), start it and wait until healthy; on failure stop it (kept for inspection)
+//     and return untouched;
 //  3. point the proxy at the new alias and wait until it routes there; on failure restore it;
-//  4. wait until the proxy drained the old container (at most the drain timeout), stop it, remove
-//     it and rename <name>-next to the canonical name.
+//  4. wait until the proxy drained the old container (at most the drain timeout), stop it and
+//     remove it. The new container keeps its name: nothing is renamed.
 //
 // A workload no Service targets receives no traffic: it is started next to the old one and the old
 // one is stopped once the new one is healthy.
@@ -84,19 +82,17 @@ func takeOver(ctx context.Context, rt ports.Runtime, name string, mounts []ports
 // touched reports whether anything that was serving traffic has been changed.
 func (e *Env) replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecRequest, c Change, owned map[string]bool,
 	s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string, svcs services) (touched bool, err error) {
-	name := proxyops.RuntimeName(req.Release, c.Name)
-	next := name + nextSuffix
+	next := c.RuntimeName
 	behind := svcs.wl[c.Name] != nil
 	if owned[ports.ObjectWorkload+"/"+next] {
 		if err := proxyops.RemoveWorkload(ctx, rt, next); err != nil {
 			return false, err
 		}
 	}
-	wr, err := workloadRequest(req.Release, c.Name, s, lbl, paths, behind)
+	wr, err := workloadRequest(req.Release, c.Name, next, s, lbl, paths, behind)
 	if err != nil {
 		return false, err
 	}
-	wr.Name = next
 	progress(ctx, c.Kind, c.Name, PhaseCreate, "starting %s next to %s", next, c.Applied.RuntimeName)
 	if err := rt.CreateWorkload(ctx, wr); err != nil {
 		return false, err
@@ -122,8 +118,10 @@ func (e *Env) replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecReq
 			return false, stopNext(err)
 		}
 		if err := envoyErr(ctx, rt, ProxyName(req.Release), e.host.Proxies.WaitReady(ctx, ProxyDir(e.home, req.Release), proxyWant(svcs, c.Name, alias), proxyops.ProxyReadyTimeout)); err != nil {
-			// The proxy may have routed to the new backend for a moment: count it as touched.
-			return true, stopNext(errors.Join(err, e.writeProxy(ctx, rt, req, svcs, nil)))
+			// The proxy may have routed to the new backend for a moment: count it as touched. The new
+			// container stops first, so the proxy goes back to the old one, which still runs.
+			err = stopNext(err)
+			return true, errors.Join(err, e.writeProxy(ctx, rt, req, svcs, nil))
 		}
 		progress(ctx, c.Kind, c.Name, PhaseDrain, "waiting up to %s for connections to %s to finish", drain, c.Applied.RuntimeName)
 		if _, err := e.host.Proxies.WaitDrained(ctx, ProxyDir(e.home, req.Release), proxyClusters(svcs, c.Name), drain); err != nil {
@@ -135,44 +133,49 @@ func (e *Env) replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecReq
 	if err := rt.StopWorkload(ctx, old, 0); err != nil && !errors.Is(err, ports.ErrNotFound) {
 		return true, err
 	}
-	if err := proxyops.DeleteWorkload(ctx, rt, old); err != nil {
-		return true, err
-	}
-	return true, rt.RenameWorkload(ctx, next, name)
+	return true, proxyops.DeleteWorkload(ctx, rt, old)
 }
 
 // RepairReplace repairs what an interrupted replace leaves behind, before the next plan is made:
-// with both <name> and <name>-next present the one the proxies route to is kept (the old one
-// unless they had switched); with only <name>-next it takes the canonical name and is returned with
-// an empty digest so the plan applies the workload again.
+// another container of a workload next to the one the state records. The one the proxy routes to
+// is kept (the recorded one unless it had switched) and the other removed; a kept new one is
+// returned with its own name and digest, so the plan sees what runs.
 func (e *Env) RepairReplace(ctx context.Context, rt ports.Runtime, rel string, applied []release.AppliedResource) ([]release.AppliedResource, error) {
-	owned, err := managedObjects(ctx, rt, rel)
+	objs, err := rt.ListManaged(ctx, rel)
 	if err != nil {
 		return nil, err
 	}
 	var repaired []release.AppliedResource
 	for _, a := range applied {
-		if a.Kind != resource.KindWorkload || !owned[ports.ObjectWorkload+"/"+a.RuntimeName+nextSuffix] {
+		if a.Kind != resource.KindWorkload {
 			continue
 		}
-		next := a.RuntimeName + nextSuffix
-		if owned[ports.ObjectWorkload+"/"+a.RuntimeName] && e.routedTo(ctx, rt, rel, a.Name, next) {
-			if err := proxyops.RemoveWorkload(ctx, rt, a.RuntimeName); err != nil {
-				return nil, err
+		recorded := false
+		var others []ports.Object
+		for _, o := range objs {
+			switch {
+			case o.Kind != ports.ObjectWorkload || o.Labels[ports.LabelKind] != resource.KindWorkload || o.Labels[ports.LabelName] != a.Name:
+			case o.Name == a.RuntimeName:
+				recorded = true
+			default:
+				others = append(others, o)
 			}
-			delete(owned, ports.ObjectWorkload+"/"+a.RuntimeName)
 		}
-		if owned[ports.ObjectWorkload+"/"+a.RuntimeName] {
-			if err := proxyops.RemoveWorkload(ctx, rt, next); err != nil {
-				return nil, err
+		for _, o := range others {
+			if recorded && !e.routedTo(ctx, rt, rel, a.Name, o.Name) {
+				if err := proxyops.RemoveWorkload(ctx, rt, o.Name); err != nil { // the old one still serves
+					return nil, err
+				}
+				continue
 			}
-			continue
+			if recorded {
+				if err := proxyops.RemoveWorkload(ctx, rt, a.RuntimeName); err != nil { // the proxy had switched
+					return nil, err
+				}
+			}
+			a.RuntimeName, a.Digest, recorded = o.Name, o.Labels[ports.LabelDigest], true
+			repaired = append(repaired, a)
 		}
-		if err := rt.RenameWorkload(ctx, next, a.RuntimeName); err != nil {
-			return nil, err
-		}
-		a.Digest = ""
-		repaired = append(repaired, a)
 	}
 	return repaired, nil
 }

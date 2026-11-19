@@ -148,6 +148,20 @@ func (e *env) try(args ...string) (string, error) {
 	return string(out), err
 }
 
+// containerOf returns the container of release's workload, found by label: its name ends with the
+// workload's digest.
+func containerOf(t *testing.T, release, workload string) string {
+	t.Helper()
+	out, err := exec.Command("docker", "ps", "-a", "--format", "{{.Names}}",
+		"--filter", "label=io.karga.release="+release, "--filter", "label=io.karga.kind=Workload",
+		"--filter", "label=io.karga.name="+workload).Output()
+	names := strings.Fields(string(out))
+	if err != nil || len(names) != 1 {
+		t.Fatalf("containers of %s/%s: %v %v", release, workload, names, err)
+	}
+	return names[0]
+}
+
 func releaseName(prefix string) string {
 	b := make([]byte, 3)
 	_, _ = rand.Read(b)
@@ -308,7 +322,7 @@ func TestRedisLifecycle(t *testing.T) {
 		t.Fatalf("key after restore: %q", got)
 	}
 	// The workload publishes nothing; the release proxy only a loopback upstream for the gateway.
-	if out, _ := exec.Command("docker", "port", rel+"-redis").Output(); len(strings.TrimSpace(string(out))) != 0 {
+	if out, _ := exec.Command("docker", "port", containerOf(t, rel, "redis")).Output(); len(strings.TrimSpace(string(out))) != 0 {
 		t.Fatalf("the workload published ports: %s", out)
 	}
 	if out, _ := exec.Command("docker", "port", rel+"-karga-proxy").Output(); !strings.Contains(string(out), "127.0.0.1:") || strings.Contains(string(out), "0.0.0.0") {
@@ -371,7 +385,7 @@ func TestPostgresSecretStaysOutOfDocker(t *testing.T) {
 	if st, actual := status(t, e, rel); st != "deployed" || actual["Workload"] != "running/healthy" {
 		t.Fatalf("status: %s %v", st, actual)
 	}
-	inspect, err := exec.Command("docker", "inspect", rel+"-postgres").Output()
+	inspect, err := exec.Command("docker", "inspect", containerOf(t, rel, "postgres")).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +451,7 @@ func TestServerRestartResumesAnUpgrade(t *testing.T) {
 		!strings.Contains(out, " "+me.Username+" ") || !strings.Contains(out, " karga-server ") {
 		t.Fatalf("events:\n%s", out)
 	}
-	if img, _ := exec.Command("docker", "inspect", "-f", "{{.Config.Image}}", rel+"-redis").Output(); strings.TrimSpace(string(img)) != "redis:7.4-alpine" {
+	if img, _ := exec.Command("docker", "inspect", "-f", "{{.Config.Image}}", containerOf(t, rel, "redis")).Output(); strings.TrimSpace(string(img)) != "redis:7.4-alpine" {
 		t.Fatalf("image after resume: %q", img)
 	}
 }

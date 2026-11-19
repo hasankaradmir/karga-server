@@ -130,7 +130,7 @@ func TestEnvironmentFromSecret(t *testing.T) {
 	if strings.Contains(spec, "s3cret") || !strings.Contains(spec, "DB_PASSWORD") {
 		t.Fatalf("stored spec: %s", spec)
 	}
-	wr, err := workloadRequest("web", "app", w.Spec.(*resource.WorkloadSpec), nil, paths, false)
+	wr, err := workloadRequest("web", "app", "web-app", w.Spec.(*resource.WorkloadSpec), nil, paths, false)
 	if err != nil {
 		t.Fatal(err)
 	}

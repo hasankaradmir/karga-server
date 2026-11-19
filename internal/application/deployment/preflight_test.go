@@ -135,3 +135,26 @@ func TestPreflightCapabilities(t *testing.T) {
 		t.Fatalf("ALL allows everything: %v", err)
 	}
 }
+
+// A container the plan would create under a name another release, or nothing of karga, holds is
+// refused before anything runs.
+func TestContainerClash(t *testing.T) {
+	ctx := context.Background()
+	rt := fakeruntime.New("img")
+	for name, rel := range map[string]string{"a-app-111111": "b", "a-db-222222": "", "a-own-333333": "a"} {
+		if err := rt.CreateWorkload(ctx, ports.WorkloadRequest{Name: name, Image: "img", Labels: map[string]string{ports.LabelRelease: rel}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := Plan{Changes: []Change{
+		{Summary: Summary{Kind: resource.KindWorkload, Name: "app", Action: ActionCreate}, RuntimeName: "a-app-111111"},
+		{Summary: Summary{Kind: resource.KindWorkload, Name: "db", Action: ActionUpdate}, RuntimeName: "a-db-222222"},
+		{Summary: Summary{Kind: resource.KindWorkload, Name: "own", Action: ActionCreate}, RuntimeName: "a-own-333333"},
+		{Summary: Summary{Kind: resource.KindWorkload, Name: "same", Action: ActionUnchanged}, RuntimeName: "a-app-111111"},
+	}}
+	err := containerClash(ctx, rt, ExecRequest{Release: "a", Plan: plan})
+	if !errors.Is(err, ports.ErrConflict) || !strings.Contains(err.Error(), `belongs to release "b"`) || !strings.Contains(err.Error(), "is not karga's") ||
+		strings.Contains(err.Error(), "own") || strings.Contains(err.Error(), `"same"`) {
+		t.Fatalf("clash: %v", err)
+	}
+}

@@ -32,10 +32,10 @@ func TestReconcileRepairs(t *testing.T) {
 	}
 
 	// A removed container is created again from the current revision, without a new revision.
-	if err := e.rt.DeleteWorkload(ctx, "cache-redis"); err != nil {
+	if err := e.rt.DeleteWorkload(ctx, e.rt.Name("cache-redis")); err != nil {
 		t.Fatal(err)
 	}
-	if res := reconcile(); !strings.Contains(actionsOf(res), "create:Workload/redis:done") || e.rt.Workloads["cache-redis"] == nil {
+	if res := reconcile(); !strings.Contains(actionsOf(res), "create:Workload/redis:done") || e.rt.Workload("cache-redis") == nil {
 		t.Fatalf("missing container: %s", actionsOf(res))
 	}
 	if rel := e.release(); rel.CurrentRevision != 1 || rel.Status != release.StatusDeployed {
@@ -43,10 +43,10 @@ func TestReconcileRepairs(t *testing.T) {
 	}
 
 	// A container stopped outside karga is started; an unhealthy one restarted.
-	if err := e.rt.StopWorkload(ctx, "cache-redis", 0); err != nil {
+	if err := e.rt.StopWorkload(ctx, e.rt.Name("cache-redis"), 0); err != nil {
 		t.Fatal(err)
 	}
-	if res := reconcile(); actionsOf(res) != "start:Workload/redis:done" || e.rt.Workloads["cache-redis"].State != ports.StateRunning {
+	if res := reconcile(); actionsOf(res) != "start:Workload/redis:done" || e.rt.Workload("cache-redis").State != ports.StateRunning {
 		t.Fatalf("stopped container: %s", actionsOf(res))
 	}
 	e.rt.Health = ports.HealthUnhealthy
@@ -56,14 +56,14 @@ func TestReconcileRepairs(t *testing.T) {
 	e.rt.Health = ""
 
 	// A container created from another spec (changed outside karga) is recreated.
-	e.rt.Workloads["cache-redis"].Request.Labels[ports.LabelDigest] = "sha256:other"
+	e.rt.Workload("cache-redis").Request.Labels[ports.LabelDigest] = "sha256:other"
 	if res := reconcile(); !strings.Contains(actionsOf(res), "create:Workload/redis:done") {
 		t.Fatalf("changed container: %s", actionsOf(res))
 	}
 
 	// A repair interrupted while the new container got ready leaves it failed; the next repair that
 	// gets it running records it as applied again.
-	if err := e.rt.DeleteWorkload(ctx, "cache-redis"); err != nil {
+	if err := e.rt.DeleteWorkload(ctx, e.rt.Name("cache-redis")); err != nil {
 		t.Fatal(err)
 	}
 	e.rt.Health = ports.HealthUnhealthy
@@ -95,13 +95,13 @@ func TestReconcileLeavesAlone(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	must[*Result](t)(e.install())
-	if err := e.rt.StopWorkload(ctx, "cache-redis", 0); err != nil {
+	if err := e.rt.StopWorkload(ctx, e.rt.Name("cache-redis"), 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.svc.Lifecycle.Pause(ctx, "cache", true); err != nil {
 		t.Fatal(err)
 	}
-	if res := must[*ReconcileResult](t)(e.svc.Lifecycle.Repair(ctx, "cache", false)); res.Skipped != "paused" || e.rt.Workloads["cache-redis"].State == ports.StateRunning {
+	if res := must[*ReconcileResult](t)(e.svc.Lifecycle.Repair(ctx, "cache", false)); res.Skipped != "paused" || e.rt.Workload("cache-redis").State == ports.StateRunning {
 		t.Fatalf("paused: %+v", res)
 	}
 	if err := e.svc.Lifecycle.Pause(ctx, "cache", false); err != nil {
@@ -125,7 +125,7 @@ func TestReconcileBacksOffAndGivesUp(t *testing.T) {
 	must[*Result](t)(e.install())
 	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 	e.svc.c.now = func() time.Time { return now }
-	if err := e.rt.StopWorkload(ctx, "cache-redis", 0); err != nil {
+	if err := e.rt.StopWorkload(ctx, e.rt.Name("cache-redis"), 0); err != nil {
 		t.Fatal(err)
 	}
 	e.rt.Fail["StartWorkload:cache-redis"] = errors.New("boom")
@@ -160,7 +160,7 @@ func TestNextRepair(t *testing.T) {
 	if at := e.svc.Lifecycle.NextRepair("cache"); !at.IsZero() {
 		t.Fatalf("nothing waits: %v", at)
 	}
-	if err := e.rt.StopWorkload(ctx, "cache-redis", 0); err != nil {
+	if err := e.rt.StopWorkload(ctx, e.rt.Name("cache-redis"), 0); err != nil {
 		t.Fatal(err)
 	}
 	e.rt.Fail = map[string]error{"StartWorkload:cache-redis": errors.New("busy")}

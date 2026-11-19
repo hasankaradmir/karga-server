@@ -120,7 +120,7 @@ func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
 		return nil, err
 	}
-	anon, err := anonymousVolumes(ctx, rt, in.Name, in.Resources)
+	anon, err := anonymousVolumes(ctx, rt, in.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 		s.notify(in.Name)
 	}
 	// Appended: the warnings of the run (the gateway's) are kept.
-	if anon, err := anonymousVolumes(ctx, rt, in.Name, in.Resources); err == nil {
+	if anon, err := anonymousVolumes(ctx, rt, in.Name); err == nil {
 		res.Warnings = append(res.Warnings, anonymousWarnings(anon)...)
 	}
 	if perr := s.prune(context.WithoutCancel(ctx), in.Name, historyMax(in.HistoryMax)); perr != nil {
@@ -218,21 +218,26 @@ func (s *core) discard(ctx context.Context, name string) bool {
 // anonymousVolumes finds the image VOLUME paths the release's current workload containers keep in
 // anonymous volumes. Such data moves to the new container on a recreate but cannot be shared by
 // two, so these workloads are never replaced.
-func anonymousVolumes(ctx context.Context, rt ports.Runtime, name string, rs []resource.Resource) (deployment.Anonymous, error) {
+func anonymousVolumes(ctx context.Context, rt ports.Runtime, name string) (deployment.Anonymous, error) {
+	objs, err := rt.ListManaged(ctx, name)
+	if err != nil {
+		return nil, err
+	}
 	anon := deployment.Anonymous{}
-	for _, r := range rs {
-		if r.Kind != resource.KindWorkload {
+	for _, o := range objs { // found by label: a workload's container name ends with its digest
+		if o.Kind != ports.ObjectWorkload || o.Labels[ports.LabelKind] != resource.KindWorkload {
 			continue
 		}
-		st, err := rt.GetWorkload(ctx, proxyops.RuntimeName(name, r.Metadata.Name))
+		st, err := rt.GetWorkload(ctx, o.Name)
 		if errors.Is(err, ports.ErrNotFound) {
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
+		w := o.Labels[ports.LabelName]
 		for _, m := range st.AnonymousVolumes {
-			anon[r.Metadata.Name] = append(anon[r.Metadata.Name], m.Target)
+			anon[w] = append(anon[w], m.Target)
 		}
 	}
 	return anon, nil
@@ -295,7 +300,7 @@ func (s *core) replan(ctx context.Context, rt ports.Runtime, in deployInput, app
 	if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
 		return plan, err
 	}
-	anon, err := anonymousVolumes(ctx, rt, in.Name, in.Resources)
+	anon, err := anonymousVolumes(ctx, rt, in.Name)
 	if err != nil {
 		return plan, err
 	}

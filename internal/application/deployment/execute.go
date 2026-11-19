@@ -12,7 +12,6 @@ import (
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
-	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
@@ -62,6 +61,27 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 	return nil
 }
 
+// containerClash refuses a container name the plan would create that another release, or no karga
+// release, holds: the create would fail half way through the plan.
+func containerClash(ctx context.Context, rt ports.Runtime, req ExecRequest) error {
+	var errs []error
+	for _, c := range req.Plan.Changes {
+		if c.Kind != resource.KindWorkload || (c.Action != ActionCreate && c.Action != ActionUpdate) {
+			continue
+		}
+		st, err := rt.GetWorkload(ctx, c.RuntimeName)
+		if err != nil || st.Labels[ports.LabelRelease] == req.Release {
+			continue
+		}
+		owner := "is not karga's"
+		if other := st.Labels[ports.LabelRelease]; other != "" {
+			owner = fmt.Sprintf("belongs to release %q", other)
+		}
+		errs = append(errs, fmt.Errorf("%s %q: its container %s %s; rename the workload or the release: %w", c.Kind, c.Name, c.RuntimeName, owner, ports.ErrConflict))
+	}
+	return errors.Join(errs...)
+}
+
 // preflightLocked runs Preflight under the gateway lock: another release could otherwise
 // bind a gateway port between this one listing the gateway's claims and test-binding the port.
 func (e *Env) preflightLocked(ctx context.Context, rt ports.Runtime, info ports.RuntimeInfo, req ExecRequest) error {
@@ -73,6 +93,7 @@ func (e *Env) preflightLocked(ctx context.Context, rt ports.Runtime, info ports.
 		defer unlock()
 	}
 	warnings, err := e.Preflight(ctx, rt, info, req.Release, req.Supported, req.Resources)
+	err = errors.Join(err, containerClash(ctx, rt, req))
 	if req.OnWarning != nil {
 		for _, w := range warnings {
 			req.OnWarning(w)
@@ -128,7 +149,7 @@ func (e *Env) waitChanged(ctx context.Context, rt ports.Runtime, rel string, cha
 	targets := make([]readyTarget, len(changed))
 	for i, c := range changed {
 		w, _ := workloadOf(c)
-		targets[i] = readyTarget{proxyops.RuntimeName(rel, c.Name), w}
+		targets[i] = readyTarget{c.RuntimeName, w}
 	}
 	notReady, werr := e.waitReady(ctx, rt, targets, timeout)
 	if werr == nil {
@@ -136,7 +157,7 @@ func (e *Env) waitChanged(ctx context.Context, rt ports.Runtime, rel string, cha
 	}
 	errs := []error{werr}
 	for _, c := range changed {
-		name := proxyops.RuntimeName(rel, c.Name)
+		name := c.RuntimeName
 		st, err := rt.GetWorkload(ctx, name)
 		if err == nil && !slices.Contains(notReady, name) && st.State == ports.StateRunning && st.Health != ports.HealthUnhealthy && st.Health != ports.HealthStarting {
 			continue

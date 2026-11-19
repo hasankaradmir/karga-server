@@ -443,14 +443,6 @@ func (r *Runtime) PublishedPorts(ctx context.Context) ([]ports.PublishedPort, er
 	return out, nil
 }
 
-// RenameWorkload implements ports.Runtime.
-func (r *Runtime) RenameWorkload(ctx context.Context, from, to string) error {
-	ctx, cancel := context.WithTimeout(ctx, callTimeout)
-	defer cancel()
-	_, err := r.c.ContainerRename(ctx, from, client.ContainerRenameOptions{NewName: to})
-	return wrap(err, fmt.Sprintf("rename workload %s to %s", from, to))
-}
-
 // ConnectNetwork implements ports.Runtime.
 func (r *Runtime) ConnectNetwork(ctx context.Context, workload, net string, aliases []string) error {
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)

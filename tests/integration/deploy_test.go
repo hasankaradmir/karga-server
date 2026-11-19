@@ -86,7 +86,7 @@ func TestRedis(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st, err := rt.GetWorkload(ctx, release+"-redis")
+	st, err := rt.GetWorkload(ctx, containerName(t, rt, release, "redis"))
 	if err != nil || st.State != ports.StateRunning || st.Health != ports.HealthHealthy {
 		t.Fatalf("redis status: %+v, %v", st, err)
 	}
@@ -114,7 +114,9 @@ func TestRedis(t *testing.T) {
 		t.Fatal(err)
 	}
 	objs := managed(t, rt, release)
-	if !hasObject(objs, ports.ObjectVolume, release+"-redis-data") || hasObject(objs, ports.ObjectWorkload, release+"-redis") {
+	if !hasObject(objs, ports.ObjectVolume, release+"-redis-data") || slices.ContainsFunc(objs, func(o ports.Object) bool {
+		return o.Kind == ports.ObjectWorkload && o.Labels[ports.LabelName] == "redis"
+	}) {
 		t.Fatalf("after delete: %+v", objs)
 	}
 }
@@ -128,7 +130,7 @@ func TestPostgres(t *testing.T) {
 	if _, err := deploy(t, rt, "postgres", release, "database.password=s3cret"); err != nil {
 		t.Fatal(err)
 	}
-	st, err := rt.GetWorkload(context.Background(), release+"-postgres")
+	st, err := rt.GetWorkload(context.Background(), containerName(t, rt, release, "postgres"))
 	if err != nil || st.Health != ports.HealthHealthy {
 		t.Fatalf("postgres status: %+v, %v", st, err)
 	}

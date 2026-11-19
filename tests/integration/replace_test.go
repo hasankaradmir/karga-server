@@ -70,7 +70,7 @@ func TestReplaceWithoutDowntime(t *testing.T) {
 		t.Fatalf("unexpected content: %s", got)
 	}
 
-	st := workload(t, rt, name+"-web")
+	st := workload(t, rt, recordedContainer(t, s, name, "web"))
 	if st.State != ports.StateRunning || st.Labels[ports.LabelRevision] != "2" {
 		t.Fatalf("canonical container: %+v", st)
 	}

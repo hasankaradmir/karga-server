@@ -371,7 +371,7 @@ func (s *Lifecycle) recreate(ctx context.Context, rt ports.Runtime, op *release.
 	if err := s.c.restoreSecrets(rel.Name, rev.Number, rs); err != nil {
 		return nil, err
 	}
-	anon, err := anonymousVolumes(ctx, rt, rel.Name, rs)
+	anon, err := anonymousVolumes(ctx, rt, rel.Name)
 	if err != nil {
 		return nil, err
 	}

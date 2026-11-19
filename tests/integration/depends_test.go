@@ -20,7 +20,7 @@ func TestDependsOnWaitsForTheService(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	name := releaseName("it-dep")
-	s, _ := service(t, name)
+	s, rt := service(t, name)
 	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
 		Values: releases.Values{Sets: packages.Sets([]string{"second=true", "apiDependsOn=true", "startDelay=3", "strategy=recreate"}...)}}, nil); err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestDependsOnWaitsForTheService(t *testing.T) {
 		}
 		return at
 	}
-	web, api := created(name+"-web"), created(name+"-api")
+	web, api := created(containerName(t, rt, name, "web")), created(containerName(t, rt, name, "api"))
 	if gap := api.Sub(web); gap < 3*time.Second {
 		t.Fatalf("api was created %s after web, before web could be ready", gap)
 	}

@@ -115,7 +115,7 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 	}
 
 	// Restarting the gateway, the proxy or the backend (which may change its IP) keeps routing.
-	for _, c := range []string{gateway.ContainerName, deployment.ProxyName(name), name + "-web"} {
+	for _, c := range []string{gateway.ContainerName, deployment.ProxyName(name), recordedContainer(t, s, name, "web")} {
 		if err := rt.StopWorkload(ctx, c, 2*time.Second); err != nil {
 			t.Fatal(err)
 		}
@@ -221,7 +221,7 @@ func TestGatewayRecreateWorkload(t *testing.T) {
 	if code, body := hostGet(t, port, "x"); code != http.StatusOK || body != "v1" {
 		t.Fatalf("through the gateway: %d %q", code, body)
 	}
-	if w := workload(t, rt, name+"-web"); len(w.IPs) == 0 {
+	if w := workload(t, rt, containerName(t, rt, name, "web")); len(w.IPs) == 0 {
 		t.Fatalf("workload: %+v", w)
 	}
 	pub, err := rt.PublishedPorts(ctx)
@@ -229,7 +229,7 @@ func TestGatewayRecreateWorkload(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range pub {
-		if p.Workload == name+"-web" {
+		if p.Workload == containerName(t, rt, name, "web") {
 			t.Fatalf("the workload published a port: %+v", p)
 		}
 	}

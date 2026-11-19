@@ -27,9 +27,9 @@ func labels(release string, revision int, kind, name string) map[string]string {
 // workloadRequest builds the container of a workload. It publishes no port and gets no alias of its
 // name: behind the release proxy (a Service targets it) it answers to its revision's backend alias,
 // meant for the proxy.
-func workloadRequest(release, name string, s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string, behind bool) (ports.WorkloadRequest, error) {
+func workloadRequest(release, name, container string, s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string, behind bool) (ports.WorkloadRequest, error) {
 	wr := ports.WorkloadRequest{
-		Name:          proxyops.RuntimeName(release, name),
+		Name:          container,
 		Labels:        lbl,
 		Image:         s.Image,
 		Command:       s.Command,

@@ -83,7 +83,7 @@ func (e *env) release() release.Release {
 	return r
 }
 
-func (e *env) image() string { return e.rt.Workloads["cache-redis"].Request.Image }
+func (e *env) image() string { return e.rt.Workload("cache-redis").Request.Image }
 
 func must[T any](t *testing.T) func(T, error) T {
 	return func(v T, err error) T {
@@ -147,14 +147,14 @@ func TestUpgradeFailRollback(t *testing.T) {
 	if rev3.Status != release.RevisionFailed || !strings.Contains(rev3.Description, "unhealthy") {
 		t.Fatalf("revision 3: %+v", rev3)
 	}
-	if w := e.rt.Workloads["cache-redis"]; w.State != ports.StateExited {
+	if w := e.rt.Workload("cache-redis"); w.State != ports.StateExited {
 		t.Fatalf("failed container should be stopped, got %+v", w)
 	}
 
 	// Rollback without a revision goes back to the last good one (2).
 	e.rt.Health = ""
 	res = must[*Result](t)(e.svc.Lifecycle.Rollback(context.Background(), RollbackRequest{CommonOptions: common(), Name: "cache"}, nil))
-	if res.Revision != 4 || e.image() != "redis:7.2" || e.rt.Workloads["cache-redis"].State != ports.StateRunning {
+	if res.Revision != 4 || e.image() != "redis:7.2" || e.rt.Workload("cache-redis").State != ports.StateRunning {
 		t.Fatalf("rollback: %+v image %s", res, e.image())
 	}
 	hist := must[[]release.Revision](t)(e.svc.Reads.History(context.Background(), "cache"))
@@ -334,7 +334,7 @@ func TestManifestAndStatus(t *testing.T) {
 	if workload.Actual != ports.StateRunning || workload.Health != ports.HealthHealthy || len(rep.Orphans) != 0 {
 		t.Fatalf("status: %+v", rep)
 	}
-	delete(e.rt.Workloads, "db-postgres")
+	delete(e.rt.Workloads, e.rt.Name("db-postgres"))
 	rep = must[*StatusReport](t)(e.svc.Reads.Status(ctx, "db"))
 	for _, r := range rep.Resources {
 		if r.Kind == resource.KindWorkload && r.Actual != "missing" {
@@ -354,6 +354,7 @@ func TestReplaceUpgradeAndNonDisruptiveFailure(t *testing.T) {
 	if _, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "site", Package: webPkg}, nil); err != nil {
 		t.Fatal(err)
 	}
+	webBefore := e.rt.Name("site-web")
 	res := must[*Result](t)(up("content=v2"))
 	var w deploymentChange
 	for _, c := range res.Plan {
@@ -361,8 +362,8 @@ func TestReplaceUpgradeAndNonDisruptiveFailure(t *testing.T) {
 			w = deploymentChange{c.Action, c.Strategy}
 		}
 	}
-	if w != (deploymentChange{"update", "replace"}) || !slices.Contains(e.rt.Calls, "RenameWorkload:site-web-next->site-web") {
-		t.Fatalf("replace upgrade: %+v %v", w, e.rt.Calls)
+	if names := e.rt.Containers("site", "web"); w != (deploymentChange{"update", "replace"}) || len(names) != 1 || names[0] == webBefore {
+		t.Fatalf("replace upgrade: %+v %v (before %s)", w, names, webBefore)
 	}
 
 	// A failed replace changes nothing that runs: the release stays deployed at revision 2.
@@ -378,7 +379,7 @@ func TestReplaceUpgradeAndNonDisruptiveFailure(t *testing.T) {
 	if rev := must[release.Revision](t)(e.svc.c.store.GetRevision(ctx, "site", 3)); rev.Status != release.RevisionFailed {
 		t.Fatalf("revision 3: %+v", rev)
 	}
-	if e.rt.Workloads["site-web"].State != ports.StateRunning {
+	if e.rt.Workload("site-web").State != ports.StateRunning {
 		t.Fatal("old container must keep running")
 	}
 
@@ -401,19 +402,29 @@ func TestReconcileBeforePlan(t *testing.T) {
 	if _, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "site", Package: webPkg}, nil); err != nil {
 		t.Fatal(err)
 	}
-	// Simulate a crash after the old container was removed but before the rename.
-	if err := e.rt.RenameWorkload(ctx, "site-web", "site-web-next"); err != nil {
-		t.Fatal(err)
-	}
+	// Simulate a replace interrupted after the old container was removed: the state still names
+	// it, and only the new one, of the same spec, runs under another name.
+	old := e.rt.Name("site-web")
+	w := e.rt.Workloads[old]
+	delete(e.rt.Workloads, old)
+	w.Request.Name = "site-web-0f0f0f"
+	e.rt.Workloads[w.Request.Name] = w
 	res, err := e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "site", Package: webPkg}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := e.rt.Workloads["site-web"]; !ok || e.rt.Workloads["site-web-next"] != nil {
-		t.Fatalf("not repaired: %v", e.rt.Workloads)
+	// The record follows the container that runs; its spec is the desired one, so nothing changes.
+	if names := e.rt.Containers("site", "web"); !slices.Equal(names, []string{"site-web-0f0f0f"}) {
+		t.Fatalf("containers: %v", names)
 	}
-	if !changed(res.Plan) {
-		t.Fatal("repaired workload should be applied again")
+	if changed(res.Plan) {
+		t.Fatalf("the adopted container should need nothing: %+v", res.Plan)
+	}
+	rep := must[*StatusReport](t)(e.svc.Reads.Status(ctx, "site"))
+	for _, r := range rep.Resources {
+		if r.Kind == resource.KindWorkload && r.RuntimeName != "site-web-0f0f0f" {
+			t.Fatalf("status names %s", r.RuntimeName)
+		}
 	}
 }
 
@@ -534,7 +545,7 @@ func TestFailedInstallLeavesNothing(t *testing.T) {
 func TestUpgradeRecreatesWhatWasRemoved(t *testing.T) {
 	e := newEnv(t)
 	must[*Result](t)(e.install())
-	if err := e.rt.DeleteWorkload(context.Background(), "cache-redis"); err != nil {
+	if err := e.rt.DeleteWorkload(context.Background(), e.rt.Name("cache-redis")); err != nil {
 		t.Fatal(err)
 	}
 	res := must[*Result](t)(e.upgrade())
@@ -544,8 +555,8 @@ func TestUpgradeRecreatesWhatWasRemoved(t *testing.T) {
 			created = append(created, c.Kind+"/"+c.Name)
 		}
 	}
-	if !slices.Equal(created, []string{"Workload/redis"}) || e.rt.Workloads["cache-redis"] == nil {
-		t.Fatalf("plan created %v, workload %v", created, e.rt.Workloads["cache-redis"])
+	if !slices.Equal(created, []string{"Workload/redis"}) || e.rt.Workload("cache-redis") == nil {
+		t.Fatalf("plan created %v, workload %v", created, e.rt.Workload("cache-redis"))
 	}
 }
 
@@ -557,7 +568,7 @@ func TestAnonymousVolumesSurviveUpgrades(t *testing.T) {
 		t.Fatalf("warnings: %v", res.Warnings)
 	}
 	anon := func() string {
-		for _, m := range e.rt.Workloads["cache-redis"].Request.Mounts {
+		for _, m := range e.rt.Workload("cache-redis").Request.Mounts {
 			if m.Target == "/cache" {
 				return m.Source
 			}
@@ -860,28 +871,62 @@ func TestRollbackOfUninstalledRelease(t *testing.T) {
 	}
 }
 
-// Runtime names are <release>-<name>: release a-b's workload app and release a's workload b-app
-// would share a container. The second install is refused before it changes anything.
+// A container name the plan would create that another release holds is refused before anything
+// changes. Names end with the workload's digest, so this takes a container made to clash.
 func TestRuntimeNameClashRefusedEarly(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	first := scratchPkg(t)
-	if _, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "a-b", Package: first}, nil); err != nil {
+	pkg := scratchPkg(t)
+	install := func() error {
+		_, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "b", Package: pkg}, nil)
+		return err
+	}
+	if err := install(); err != nil {
 		t.Fatal(err)
 	}
-	second := scratchPkg(t)
-	tpl, _ := os.ReadFile(filepath.Join(second, "templates", "r.yaml"))
-	if err := os.WriteFile(filepath.Join(second, "templates", "r.yaml"), []byte(strings.Replace(string(tpl), "metadata: {name: app}", "metadata: {name: b-app}", 1)), 0o644); err != nil {
+	name := e.rt.Name("b-app") // the same spec gets the same name again
+	image := e.rt.Workloads[name].Request.Image
+	if _, err := e.svc.Lifecycle.Uninstall(ctx, UninstallRequest{Name: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.rt.CreateWorkload(ctx, ports.WorkloadRequest{Name: name, Image: image, Labels: map[string]string{ports.LabelRelease: "z"}}); err != nil {
 		t.Fatal(err)
 	}
 	e.rt.Calls = nil
-	_, err := e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "a", Package: second}, nil)
-	if !errors.Is(err, ports.ErrConflict) || !strings.Contains(err.Error(), `release "a-b"`) {
-		t.Fatalf("want a conflict naming release a-b, got %v", err)
+	if err := install(); !errors.Is(err, ports.ErrConflict) || !strings.Contains(err.Error(), `release "z"`) {
+		t.Fatalf("want a conflict naming release z, got %v", err)
 	}
 	for _, c := range e.rt.Calls {
 		if strings.HasPrefix(c, "Create") || strings.HasPrefix(c, "Delete") || strings.HasPrefix(c, "Stop") {
 			t.Fatalf("the refused install changed the runtime: %v", e.rt.Calls)
 		}
+	}
+}
+
+// A workload's container is named after its digest: the same spec keeps its name (an upgrade that
+// changes nothing, a repair), a changed one gets a new name.
+func TestContainerNamesFollowTheDigest(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	must[*Result](t)(e.install())
+	first := e.rt.Name("cache-redis")
+	if !strings.HasPrefix(first, "cache-redis-") || len(first) != len("cache-redis-")+6 {
+		t.Fatalf("name %q", first)
+	}
+	must[*Result](t)(e.upgrade())
+	if got := e.rt.Containers("cache", "redis"); !slices.Equal(got, []string{first}) {
+		t.Fatalf("an unchanged upgrade renamed it: %v", got)
+	}
+	must[*Result](t)(e.upgrade("image.tag=7.2"))
+	second := e.rt.Containers("cache", "redis")
+	if len(second) != 1 || second[0] == first {
+		t.Fatalf("a changed spec kept the name: %v", second)
+	}
+	if err := e.rt.DeleteWorkload(ctx, second[0]); err != nil {
+		t.Fatal(err)
+	}
+	must[*ReconcileResult](t)(e.svc.Lifecycle.Repair(ctx, "cache", true))
+	if got := e.rt.Containers("cache", "redis"); !slices.Equal(got, second) {
+		t.Fatalf("the repair named it %v, want %v", got, second)
 	}
 }

@@ -24,7 +24,7 @@ func TestAnonymousVolumeKeptAcrossUpgrade(t *testing.T) {
 	redis := func(args ...string) string {
 		t.Helper()
 		var out bytes.Buffer
-		code, err := rt.Exec(ctx, name+"-redis", ports.ExecOptions{Cmd: append([]string{"redis-cli"}, args...), Stdout: &out, Stderr: &out})
+		code, err := rt.Exec(ctx, containerName(t, rt, name, "redis"), ports.ExecOptions{Cmd: append([]string{"redis-cli"}, args...), Stdout: &out, Stderr: &out})
 		if err != nil || code != 0 {
 			t.Fatalf("redis-cli %v: %d %v %s", args, code, err, out.String())
 		}
@@ -40,7 +40,7 @@ func TestAnonymousVolumeKeptAcrossUpgrade(t *testing.T) {
 	}
 	redis("SET", "k", "kept")
 	redis("SAVE")
-	vol := workload(t, rt, name+"-redis").AnonymousVolumes[0].Source
+	vol := workload(t, rt, containerName(t, rt, name, "redis")).AnonymousVolumes[0].Source
 
 	res, err = s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: "testdata/anon",
 		Values: releases.Values{Sets: packages.Sets([]string{"rev=2"}...)}}, nil)
@@ -53,7 +53,7 @@ func TestAnonymousVolumeKeptAcrossUpgrade(t *testing.T) {
 	if got := redis("GET", "k"); got != "kept" {
 		t.Fatalf("after upgrade GET k = %q", got)
 	}
-	if st := workload(t, rt, name+"-redis"); len(st.AnonymousVolumes) != 1 || st.AnonymousVolumes[0].Source != vol {
+	if st := workload(t, rt, containerName(t, rt, name, "redis")); len(st.AnonymousVolumes) != 1 || st.AnonymousVolumes[0].Source != vol {
 		t.Fatalf("volume %s not moved: %+v", vol, st.AnonymousVolumes)
 	}
 

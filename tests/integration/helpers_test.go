@@ -218,6 +218,43 @@ func opts() releases.CommonOptions {
 	return releases.CommonOptions{Timeout: 2 * time.Minute}
 }
 
+// containerName returns the container of release's workload: its name ends with the workload's
+// digest, so it is found by label.
+func containerName(t *testing.T, rt ports.Runtime, release, workload string) string {
+	t.Helper()
+	objs, err := rt.ListManaged(context.Background(), release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, o := range objs {
+		if o.Kind == ports.ObjectWorkload && o.Labels[ports.LabelKind] == "Workload" && o.Labels[ports.LabelName] == workload {
+			names = append(names, o.Name)
+		}
+	}
+	if len(names) != 1 {
+		t.Fatalf("containers of %s/%s: %v", release, workload, names)
+	}
+	return names[0]
+}
+
+// recordedContainer returns the container the state records for release's workload: after a failed
+// replace its new container is kept, stopped, next to it.
+func recordedContainer(t *testing.T, s *releases.Service, release, workload string) string {
+	t.Helper()
+	rep, err := s.Reads.Status(context.Background(), release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rep.Resources {
+		if r.Kind == "Workload" && r.Name == workload {
+			return r.RuntimeName
+		}
+	}
+	t.Fatalf("no workload %s in %s", workload, release)
+	return ""
+}
+
 func workload(t *testing.T, rt ports.Runtime, name string) ports.WorkloadStatus {
 	t.Helper()
 	st, err := rt.GetWorkload(context.Background(), name)
