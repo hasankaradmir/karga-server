@@ -254,7 +254,12 @@ Services is refused.
   listeners, hosts and paths or certificates another release holds, and listeners a host process holds.
   HTTP routes have no overall deadline (uploads, server-sent events and long polls run until done)
   and pass WebSocket upgrades through; a stream idle for 5 minutes is closed. Only connect
-  failures are retried.
+  failures are retried. A listener's options (the administrator's, in `gateway.yaml`) change that:
+  a route timeout, the idle timeout (HTTP stream or `tcp_proxy`), a body limit (the `buffer`
+  filter, at most 16Mi as it holds the body in memory), a rate limit (`local_ratelimit`, one token
+  bucket per HTTP connection manager: per listener, per host on https) and, on tcp listeners, a
+  PROXY protocol header (`upstream_proxy_protocol` on a cluster of its own; the release proxy passes
+  the bytes through). They only rewrite the gateway's files.
 
 A replace switches only the release proxy: the gateway forwards to the proxy, which stays. A workload
 no Service targets receives no traffic and is replaced without a switch. Configuration is built from

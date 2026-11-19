@@ -60,6 +60,12 @@ func buildConfig(settings Settings, targets []Target, mountPath string) ports.Pr
 			case l.Protocol == ProtocolTCP:
 				if u.tcp == "" {
 					u.tcp = cluster
+					if l.ProxyProtocol != "" {
+						// Its own cluster: the service port may be exposed elsewhere without the header.
+						u.tcp = cluster + "_pp" + l.ProxyProtocol
+						up, _ := t.upstream(r.Service, r.Port)
+						cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: u.tcp, Host: "127.0.0.1", Port: up, ProxyProtocol: l.ProxyProtocol})
+					}
 				}
 			case !u.seen[r.Host+r.Path]:
 				u.seen[r.Host+r.Path] = true
@@ -81,11 +87,12 @@ func buildConfig(settings Settings, targets []Target, mountPath string) ports.Pr
 		if u == nil && len(redirects) == 0 {
 			continue
 		}
+		lim, _ := l.limits() // validated when the settings were written
 		for _, ip := range settings.Listen {
 			if l.Protocol == ProtocolTCP {
-				cfg.TCP = append(cfg.TCP, ports.ProxyTCPListener{Address: ip, Port: l.Port, Cluster: u.tcp})
+				cfg.TCP = append(cfg.TCP, ports.ProxyTCPListener{Address: ip, Port: l.Port, Cluster: u.tcp, IdleTimeout: lim.IdleTimeout})
 			} else {
-				hl := ports.ProxyHTTPListener{Address: ip, Port: l.Port, Redirects: redirects, RedirectPort: redirectPort}
+				hl := ports.ProxyHTTPListener{Address: ip, Port: l.Port, Redirects: redirects, RedirectPort: redirectPort, Limits: lim}
 				if u != nil {
 					hl.Routes = u.routes
 					if l.Protocol == ProtocolHTTPS {
@@ -131,15 +138,29 @@ func healthPath(routes []Route, p Port) string {
 	return ""
 }
 
-// Want is what the gateway must route to for the given targets to be served: cluster -> endpoint.
-func Want(targets []Target, keep func(Target) bool) map[string]string {
-	want := map[string]string{}
+// Want is what the gateway must route to for the given targets to be served: cluster -> endpoint,
+// for the clusters its listeners use (a tcp listener with a PROXY header has a cluster of its own).
+func Want(settings Settings, targets []Target, keep func(Target) bool) map[string]string {
+	var kept []Target
 	for _, t := range targets {
-		if !keep(t) {
-			continue
+		if keep(t) {
+			kept = append(kept, t)
 		}
-		for _, p := range t.Ports {
-			want[Cluster(t.Release, p.Service, p.Port)] = net.JoinHostPort("127.0.0.1", strconv.Itoa(p.Upstream))
+	}
+	cfg := buildConfig(settings, kept, "")
+	used := map[string]bool{}
+	for _, l := range cfg.TCP {
+		used[l.Cluster] = true
+	}
+	for _, l := range cfg.HTTP {
+		for _, r := range l.Routes {
+			used[r.Cluster] = true
+		}
+	}
+	want := map[string]string{}
+	for _, c := range cfg.Clusters {
+		if used[c.Name] {
+			want[c.Name] = net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 		}
 	}
 	return want

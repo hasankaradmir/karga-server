@@ -18,10 +18,14 @@ import (
 	streamv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/stream/v3"
 	dnscommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/common/dns/v3"
 	dnsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/clusters/dns/v3"
+	bufferv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/buffer/v3"
+	localratelimitv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/local_ratelimit/v3"
 	routerv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	tlsinspectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tcpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
+	proxyprotocolv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/proxy_protocol/v3"
+	rawbufferv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/raw_buffer/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
@@ -87,12 +91,16 @@ func Listeners(c Config) ([]byte, error) {
 	})
 	for _, l := range tcp {
 		name := tcpName(l.Address, l.Port)
-		lis, err := filterListener(name, l.Address, l.Port, "envoy.filters.network.tcp_proxy", &tcpv3.TcpProxy{
+		tp := &tcpv3.TcpProxy{
 			StatPrefix:         name,
 			ClusterSpecifier:   &tcpv3.TcpProxy_Cluster{Cluster: l.Cluster},
 			MaxConnectAttempts: wrapperspb.UInt32(3),
 			AccessLog:          logs,
-		})
+		}
+		if l.IdleTimeout > 0 {
+			tp.IdleTimeout = durationpb.New(l.IdleTimeout)
+		}
+		lis, err := filterListener(name, l.Address, l.Port, "envoy.filters.network.tcp_proxy", tp)
 		if err != nil {
 			return nil, err
 		}
@@ -102,12 +110,8 @@ func Listeners(c Config) ([]byte, error) {
 	slices.SortFunc(httpls, func(a, b HTTPListener) int {
 		return strings.Compare(httpName(a.Address, a.Port), httpName(b.Address, b.Port))
 	})
-	router, err := pack(&routerv3.Router{})
-	if err != nil {
-		return nil, err
-	}
 	for _, l := range httpls {
-		lis, err := httpListener(l, router, logs)
+		lis, err := httpListener(l, logs)
 		if err != nil {
 			return nil, err
 		}
@@ -119,7 +123,46 @@ func Listeners(c Config) ([]byte, error) {
 // StreamIdleTimeout closes an HTTP stream (a request, a WebSocket) that sends nothing either way.
 const StreamIdleTimeout = 5 * time.Minute
 
-func hcm(name string, router *anypb.Any, hosts []*routev3.VirtualHost, logs []*accesslogv3.AccessLog) *hcmv3.HttpConnectionManager {
+// httpFilters are the listener's limits (a body limit, a rate limit) followed by the router.
+func httpFilters(name string, lim HTTPLimits) ([]*hcmv3.HttpFilter, error) {
+	var items []struct {
+		name string
+		cfg  validated
+	}
+	add := func(n string, c validated) {
+		items = append(items, struct {
+			name string
+			cfg  validated
+		}{n, c})
+	}
+	if lim.MaxBodyBytes > 0 {
+		add("envoy.filters.http.buffer", &bufferv3.Buffer{MaxRequestBytes: wrapperspb.UInt32(lim.MaxBodyBytes)})
+	}
+	if lim.RateRequests > 0 {
+		all := &corev3.RuntimeFractionalPercent{DefaultValue: &typev3.FractionalPercent{Numerator: 100, Denominator: typev3.FractionalPercent_HUNDRED}}
+		add("envoy.filters.http.local_ratelimit", &localratelimitv3.LocalRateLimit{
+			StatPrefix: name,
+			TokenBucket: &typev3.TokenBucket{MaxTokens: lim.RateRequests, TokensPerFill: wrapperspb.UInt32(lim.RateRequests),
+				FillInterval: durationpb.New(lim.RatePer)},
+			FilterEnabled: all, FilterEnforced: all,
+		})
+	}
+	add("envoy.filters.http.router", &routerv3.Router{})
+	var out []*hcmv3.HttpFilter
+	for _, it := range items {
+		tc, err := pack(it.cfg)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, &hcmv3.HttpFilter{Name: it.name, ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: tc}})
+	}
+	return out, nil
+}
+
+func hcm(name string, filters []*hcmv3.HttpFilter, idle time.Duration, hosts []*routev3.VirtualHost, logs []*accesslogv3.AccessLog) *hcmv3.HttpConnectionManager {
+	if idle == 0 {
+		idle = StreamIdleTimeout
+	}
 	return &hcmv3.HttpConnectionManager{
 		StatPrefix: name,
 		AccessLog:  logs,
@@ -131,12 +174,10 @@ func hcm(name string, router *anypb.Any, hosts []*routev3.VirtualHost, logs []*a
 		MergeSlashes:  true,
 		// WebSocket (and other HTTP/1.1 upgrades) pass through to the backend.
 		UpgradeConfigs: []*hcmv3.HttpConnectionManager_UpgradeConfig{{UpgradeType: "websocket"}},
-		// Requests may take as long as they need (routes have no timeout); a stream that sends
+		// Requests take as long as they need unless the listener sets a timeout; a stream that sends
 		// nothing for this long is closed.
-		StreamIdleTimeout: durationpb.New(StreamIdleTimeout),
-		HttpFilters: []*hcmv3.HttpFilter{{
-			Name: "envoy.filters.http.router", ConfigType: &hcmv3.HttpFilter_TypedConfig{TypedConfig: router},
-		}},
+		StreamIdleTimeout: durationpb.New(idle),
+		HttpFilters:       filters,
 		RouteSpecifier: &hcmv3.HttpConnectionManager_RouteConfig{RouteConfig: &routev3.RouteConfiguration{
 			Name: name, VirtualHosts: hosts,
 		}},
@@ -145,14 +186,18 @@ func hcm(name string, router *anypb.Any, hosts []*routev3.VirtualHost, logs []*a
 
 // httpListener renders a plain listener (one filter chain) or a TLS one (a chain per host,
 // selected by SNI, each with its certificate and its routes).
-func httpListener(l HTTPListener, router *anypb.Any, logs []*accesslogv3.AccessLog) (*listenerv3.Listener, error) {
+func httpListener(l HTTPListener, logs []*accesslogv3.AccessLog) (*listenerv3.Listener, error) {
 	name := httpName(l.Address, l.Port)
+	filters, err := httpFilters(name, l.Limits)
+	if err != nil {
+		return nil, err
+	}
 	if len(l.Certs) == 0 {
-		hosts := virtualHosts(l.Routes)
+		hosts := virtualHosts(l.Routes, l.Limits.Timeout)
 		for _, h := range slices.Sorted(slices.Values(l.Redirects)) {
 			hosts = append(hosts, redirectHost(h, l.RedirectPort))
 		}
-		return filterListener(name, l.Address, l.Port, "envoy.filters.network.http_connection_manager", hcm(name, router, hosts, logs))
+		return filterListener(name, l.Address, l.Port, "envoy.filters.network.http_connection_manager", hcm(name, filters, l.Limits.IdleTimeout, hosts, logs))
 	}
 	inspector, err := pack(&tlsinspectorv3.TlsInspector{})
 	if err != nil {
@@ -182,7 +227,7 @@ func httpListener(l HTTPListener, router *anypb.Any, logs []*accesslogv3.AccessL
 		if err != nil {
 			return nil, err
 		}
-		manager, err := pack(hcm(name, router, virtualHosts(routes), logs))
+		manager, err := pack(hcm(name, filters, l.Limits.IdleTimeout, virtualHosts(routes, l.Limits.Timeout), logs))
 		if err != nil {
 			return nil, err
 		}
@@ -215,7 +260,8 @@ func redirectHost(host string, port int) *routev3.VirtualHost {
 }
 
 // virtualHosts groups routes by host; within a host longer path prefixes match first.
-func virtualHosts(routes []HTTPRoute) []*routev3.VirtualHost {
+// timeout bounds each request (0: none).
+func virtualHosts(routes []HTTPRoute, timeout time.Duration) []*routev3.VirtualHost {
 	byHost := map[string][]HTTPRoute{}
 	for _, r := range routes {
 		byHost[r.Host] = append(byHost[r.Host], r)
@@ -237,9 +283,10 @@ func virtualHosts(routes []HTTPRoute) []*routev3.VirtualHost {
 					ClusterSpecifier: &routev3.RouteAction_Cluster{Cluster: r.Cluster},
 					// Only connect failures are retried: the request has not reached a backend yet.
 					RetryPolicy: &routev3.RetryPolicy{RetryOn: "connect-failure", NumRetries: wrapperspb.UInt32(2)},
-					// No overall deadline (Envoy's default is 15s): uploads, reports, server-sent
-					// events and long polls run until done; StreamIdleTimeout ends idle ones.
-					Timeout: durationpb.New(0),
+					// No overall deadline unless the listener sets one (Envoy's default is 15s):
+					// uploads, reports, server-sent events and long polls run until done; the idle
+					// timeout ends idle ones.
+					Timeout: durationpb.New(timeout),
 				}},
 			})
 		}
@@ -283,6 +330,13 @@ func Clusters(c Config) ([]byte, error) {
 				ExpectedStatuses: []*typev3.Int64Range{{Start: 200, End: 400}},
 			}}
 		}
+		if cl.ProxyProtocol != "" {
+			ts, err := proxyProtocolSocket(cl.ProxyProtocol)
+			if err != nil {
+				return nil, err
+			}
+			item.TransportSocket = ts
+		}
 		if cl.DNS {
 			// The DnsCluster extension replaces the deprecated type/dns_refresh_rate fields.
 			dns, err := pack(&dnsv3.DnsCluster{
@@ -301,6 +355,28 @@ func Clusters(c Config) ([]byte, error) {
 		items = append(items, item)
 	}
 	return resources(items)
+}
+
+// proxyProtocolSocket sends a PROXY protocol header first on each upstream connection. Health
+// checks have no client: they send a LOCAL header, which backends accept.
+func proxyProtocolSocket(version string) (*corev3.TransportSocket, error) {
+	v := corev3.ProxyProtocolConfig_V1
+	if version == "v2" {
+		v = corev3.ProxyProtocolConfig_V2
+	}
+	raw, err := pack(&rawbufferv3.RawBuffer{})
+	if err != nil {
+		return nil, err
+	}
+	tc, err := pack(&proxyprotocolv3.ProxyProtocolUpstreamTransport{
+		Config:                  &corev3.ProxyProtocolConfig{Version: v},
+		AllowUnspecifiedAddress: true,
+		TransportSocket:         &corev3.TransportSocket{Name: "envoy.transport_sockets.raw_buffer", ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: raw}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &corev3.TransportSocket{Name: "envoy.transport_sockets.upstream_proxy_protocol", ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: tc}}, nil
 }
 
 // resources validates items and writes them as a discovery response, the file format of

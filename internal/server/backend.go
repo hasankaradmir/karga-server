@@ -223,7 +223,8 @@ func (b Backend) GatewaySettings(ctx context.Context) (api.Settings, map[string]
 	g, users, err := b.gateway.Settings(ctx)
 	out := api.Settings{Listen: g.Listen, AccessLog: g.AccessLog, Listeners: []api.Listener{}}
 	for _, l := range g.Listeners {
-		out.Listeners = append(out.Listeners, api.Listener{Name: l.Name, Port: l.Port, Protocol: l.Protocol})
+		out.Listeners = append(out.Listeners, api.Listener{Name: l.Name, Port: l.Port, Protocol: l.Protocol,
+			ListenerOptions: api.ListenerOptions(l.ListenerOptions)})
 	}
 	return out, users, err
 }
@@ -240,7 +241,13 @@ func (b Backend) SetGatewayListen(ctx context.Context, req api.GatewayListenRequ
 
 // AddGatewayListener implements api.Backend.
 func (b Backend) AddGatewayListener(ctx context.Context, l api.Listener) error {
-	return b.gateway.AddListener(ctx, gateway.Listener{Name: l.Name, Port: l.Port, Protocol: l.Protocol})
+	return b.gateway.AddListener(ctx, gateway.Listener{Name: l.Name, Port: l.Port, Protocol: l.Protocol,
+		ListenerOptions: gateway.ListenerOptions(l.ListenerOptions)})
+}
+
+// SetGatewayListener implements api.Backend.
+func (b Backend) SetGatewayListener(ctx context.Context, req api.GatewayListenerSetRequest) error {
+	return b.gateway.SetListenerOptions(ctx, req.Name, gateway.ListenerOptions(req.ListenerOptions))
 }
 
 // RemoveGatewayListener implements api.Backend.

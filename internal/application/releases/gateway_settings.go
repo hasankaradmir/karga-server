@@ -56,6 +56,18 @@ func (s *Gateway) AddListener(ctx context.Context, l gateway.Listener) error {
 	})
 }
 
+// SetListenerOptions replaces the options of a listener; its port and protocol stay.
+func (s *Gateway) SetListenerOptions(ctx context.Context, name string, opts gateway.ListenerOptions) error {
+	return s.updateGateway(ctx, func(g *gateway.Settings, _ map[string][]string) error {
+		i := slices.IndexFunc(g.Listeners, func(l gateway.Listener) bool { return l.Name == name })
+		if i < 0 {
+			return fmt.Errorf("gateway listener %q: %w", name, ports.ErrNotFound)
+		}
+		g.Listeners[i].ListenerOptions = opts
+		return nil
+	})
+}
+
 // RemoveListener removes a listener no service uses.
 func (s *Gateway) RemoveListener(ctx context.Context, name string) error {
 	return s.updateGateway(ctx, func(g *gateway.Settings, users map[string][]string) error {
@@ -104,7 +116,11 @@ func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settin
 	if err != nil {
 		return err
 	}
-	want := gateway.Want(targets, func(t gateway.Target) bool { return len(t.Routes) > 0 })
+	settings, err := gateway.ReadSettings(s.c.home)
+	if err != nil {
+		return err
+	}
+	want := gateway.Want(settings, targets, func(t gateway.Target) bool { return len(t.Routes) > 0 })
 	if len(want) == 0 {
 		return nil
 	}

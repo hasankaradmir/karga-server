@@ -17,6 +17,8 @@ type ProxyCluster struct {
 	DNS  bool
 	// HealthPath makes the health check an HTTP GET of that path (2xx/3xx); empty: a TCP connect.
 	HealthPath string
+	// ProxyProtocol ("v1", "v2") sends the client's address first on every upstream connection.
+	ProxyProtocol string
 }
 
 // ProxyTCPListener proxies every connection on Address:Port to Cluster.
@@ -24,6 +26,8 @@ type ProxyTCPListener struct {
 	Address string
 	Port    int
 	Cluster string
+	// IdleTimeout closes a connection idle that long (0: the proxy's default).
+	IdleTimeout time.Duration
 }
 
 // ProxyHTTPListener serves HTTP on Address:Port and routes requests by Host header and path prefix.
@@ -36,6 +40,19 @@ type ProxyHTTPListener struct {
 	Certs        map[string]ProxyCert // host -> certificate files, inside the container
 	Redirects    []string
 	RedirectPort int
+	Limits       ProxyHTTPLimits
+}
+
+// ProxyHTTPLimits bound the requests of an HTTP listener; zero values mean no limit (IdleTimeout:
+// the proxy's default).
+type ProxyHTTPLimits struct {
+	// Timeout bounds a whole request; IdleTimeout a request that sends nothing either way.
+	Timeout, IdleTimeout time.Duration
+	// MaxBodyBytes refuses larger request bodies.
+	MaxBodyBytes uint32
+	// RateRequests requests are allowed every RatePer.
+	RateRequests uint32
+	RatePer      time.Duration
 }
 
 // ProxyCert is a certificate chain and private key, as file paths the proxy reads.
