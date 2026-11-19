@@ -209,7 +209,11 @@ func syncLocked(ctx context.Context, rt Runtime, h *proxyops.Host, home string) 
 // Wait waits until the gateway routes to every exposed port of release rel.
 func (g *Gateway) Wait(ctx context.Context, rel string, targets []Target) error {
 	h, home := g.host, g.home
-	want := Want(targets, func(t Target) bool { return t.Release == rel && len(t.Routes) > 0 })
+	settings, err := ReadSettings(home)
+	if err != nil {
+		return err
+	}
+	want := Want(settings, targets, func(t Target) bool { return t.Release == rel && len(t.Routes) > 0 })
 	if len(want) == 0 {
 		return nil
 	}

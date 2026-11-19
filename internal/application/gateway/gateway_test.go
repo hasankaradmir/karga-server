@@ -282,3 +282,50 @@ func TestSyncRefusesAnotherHomesGateway(t *testing.T) {
 		t.Fatalf("the other home's gateway was removed: %v", rt.Calls)
 	}
 }
+
+func TestListenerOptions(t *testing.T) {
+	web := Listener{Name: "web", Port: 80, Protocol: ProtocolHTTP, ListenerOptions: ListenerOptions{
+		Timeout: "30s", IdleTimeout: "10m", MaxBody: "1Mi", RateLimit: "60/m"}}
+	pg := Listener{Name: "pg", Port: 5432, Protocol: ProtocolTCP, ListenerOptions: ListenerOptions{IdleTimeout: "1h", ProxyProtocol: "v2"}}
+	settings := Settings{Listen: []string{"127.0.0.1"}, Listeners: []Listener{web, pg}}
+	if err := validateSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	targets := []Target{{Release: "a", Ports: []Port{{Service: "shop", Port: 80, Upstream: 4001}, {Service: "db", Port: 5432, Upstream: 4002}},
+		Routes: []Route{{Service: "shop", Port: 80, Listener: "web", Host: "shop.example", Path: "/"}, {Service: "db", Port: 5432, Listener: "pg"}}}}
+	cfg := buildConfig(settings, targets, "/etc/karga-proxy")
+	want := ports.ProxyHTTPLimits{Timeout: 30 * time.Second, IdleTimeout: 10 * time.Minute, MaxBodyBytes: 1 << 20, RateRequests: 60, RatePer: time.Minute}
+	if len(cfg.HTTP) != 1 || cfg.HTTP[0].Limits != want {
+		t.Fatalf("http limits: %+v", cfg.HTTP)
+	}
+	// The PROXY header goes on a cluster of its own, to the same upstream.
+	if len(cfg.TCP) != 1 || cfg.TCP[0].Cluster != "a_db_p5432_ppv2" || cfg.TCP[0].IdleTimeout != time.Hour {
+		t.Fatalf("tcp: %+v", cfg.TCP)
+	}
+	i := slices.IndexFunc(cfg.Clusters, func(c ports.ProxyCluster) bool { return c.Name == "a_db_p5432_ppv2" })
+	if i < 0 || cfg.Clusters[i].Port != 4002 || cfg.Clusters[i].ProxyProtocol != "v2" {
+		t.Fatalf("clusters: %+v", cfg.Clusters)
+	}
+	// Readiness waits for the clusters the listeners use.
+	if want := Want(settings, targets, func(Target) bool { return true }); len(want) != 2 || want["a_db_p5432_ppv2"] != "127.0.0.1:4002" || want["a_shop_p80"] != "127.0.0.1:4001" {
+		t.Fatalf("want: %v", want)
+	}
+
+	for opts, msg := range map[ListenerOptions]string{
+		{Timeout: "soon"}:     `timeout: "soon" is not a duration`,
+		{MaxBody: "17Mi"}:     "between 1 and 16Mi",
+		{RateLimit: "100/h"}:  "requests per second or minute",
+		{ProxyProtocol: "v2"}: "proxyProtocol cannot be set on a http listener",
+		{IdleTimeout: "-1s"}:  "is not a duration",
+	} {
+		l := web
+		l.ListenerOptions = opts
+		if err := validateSettings(Settings{Listeners: []Listener{l}}); err == nil || !strings.Contains(err.Error(), msg) || !errors.Is(err, ports.ErrInvalid) {
+			t.Errorf("%+v: %v", opts, err)
+		}
+	}
+	pg.Timeout, pg.RateLimit = "1s", "1/s"
+	if err := validateSettings(Settings{Listeners: []Listener{pg}}); err == nil || !strings.Contains(err.Error(), "rateLimit, timeout cannot be set on a tcp listener") {
+		t.Errorf("tcp: %v", err)
+	}
+}

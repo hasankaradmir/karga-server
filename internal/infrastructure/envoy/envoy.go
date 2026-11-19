@@ -73,6 +73,7 @@ type (
 	HTTPListener = ports.ProxyHTTPListener
 	Cert         = ports.ProxyCert
 	HTTPRoute    = ports.ProxyRoute
+	HTTPLimits   = ports.ProxyHTTPLimits
 	Config       = ports.ProxyConfig
 )
 

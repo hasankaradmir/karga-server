@@ -5,6 +5,11 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 
 ## [Unreleased]
 
+### Added
+- Gateway listener options (D35): `timeout`, `idleTimeout`, `maxBody` (at most 16Mi), `rateLimit`
+  and, on tcp listeners, `proxyProtocol`, stored in `gateway.yaml` and applied without restarting
+  the gateway. `SetGatewayListener` changes them on an existing listener.
+
 ### Changed
 - A workload's container is named `<release>-<workload>-<8 hex of its digest>`, like a Kubernetes
   pod-template-hash: the same spec keeps its name, a changed one gets a new name (D34). A replace

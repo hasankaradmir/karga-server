@@ -14,13 +14,13 @@ What karga does not do yet, what it does with known limits, and the open questio
 | Certificate expiry warning | `karga status` and `gateway status` show when each certificate expires and warn 14 days before; today renewal is an upgrade with the new Secret, and nothing reminds you. |
 | Repair notifications | Tell someone (a webhook) when the reconciler gives up on a resource; today `karga status` exits 6 and can be polled by a monitor. |
 | Scheduled tasks | Periodic jobs and volume backups run by karga; today a systemd timer on the host runs `karga volume backup`. |
-| Gateway options | Per exposure: request timeout, body size limit, rate limit, HSTS, compression. Today routes have no deadline and close after 5 idle minutes. |
+| Gateway options | HSTS, compression, bodies over 16Mi without buffering; listeners already take a timeout, idle timeout, body limit, rate limit and PROXY protocol (D35). |
 | Log shipping | A Docker log driver per workload (journald, syslog, fluentd); today logs rotate in json-file and are read with `karga logs`. |
 | `karga doctor` | One command checking the Docker version, gateway support, `KARGA_HOME` permissions, ports 80/443 and the Envoy image. |
 | Remote management | The API is on a local unix socket only; managing another host means logging in to it. |
 | Private registries | Image pulls are anonymous today. Credentials would come from the server user's Docker login (`sudo -u karga docker login <host>`) and be passed with each pull. |
 | Encrypted secret store | Values that are not `writeOnly` are stored as written. |
-| UDP and client IP for TCP | Services carry TCP only; TCP backends do not see the client address (HTTP and HTTPS listeners pass `x-forwarded-for`). |
+| UDP | Services carry TCP only. TCP backends see the client address only with a listener's `--proxy-protocol` (HTTP and HTTPS listeners pass `x-forwarded-for`). |
 | Network policy | Workloads of a release on the same network can reach each other by IP; only Service names are resolved. |
 | Services across releases | A Service is reachable only inside its release; other releases go through the gateway. |
 | Podman adapter | REST API or Quadlet; the runtime contract suite defines what it must do. It also needs the gateway and release proxy to work with it. |

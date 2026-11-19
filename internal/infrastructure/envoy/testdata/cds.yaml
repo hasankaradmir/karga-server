@@ -19,6 +19,17 @@ resources:
                     address: 127.0.0.1
                     port_value: 41001
     name: db_pg_p5432
+    transport_socket:
+      name: envoy.transport_sockets.upstream_proxy_protocol
+      typed_config:
+        '@type': type.googleapis.com/envoy.extensions.transport_sockets.proxy_protocol.v3.ProxyProtocolUpstreamTransport
+        allow_unspecified_address: true
+        config:
+          version: V2
+        transport_socket:
+          name: envoy.transport_sockets.raw_buffer
+          typed_config:
+            '@type': type.googleapis.com/envoy.extensions.transport_sockets.raw_buffer.v3.RawBuffer
     type: STATIC
   - '@type': type.googleapis.com/envoy.config.cluster.v3.Cluster
     cluster_type:

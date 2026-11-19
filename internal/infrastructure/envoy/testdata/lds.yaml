@@ -10,6 +10,7 @@ resources:
             typed_config:
               '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
               cluster: db_pg_p5432
+              idle_timeout: 3600s
               max_connect_attempts: 3
               stat_prefix: tcp_127.0.0.1_5432
     name: tcp_127.0.0.1_5432
@@ -27,6 +28,24 @@ resources:
             typed_config:
               '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
               http_filters:
+                - name: envoy.filters.http.buffer
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+                    max_request_bytes: 1048576
+                - name: envoy.filters.http.local_ratelimit
+                  typed_config:
+                    '@type': type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                    filter_enabled:
+                      default_value:
+                        numerator: 100
+                    filter_enforced:
+                      default_value:
+                        numerator: 100
+                    stat_prefix: http_0.0.0.0_443
+                    token_bucket:
+                      fill_interval: 1s
+                      max_tokens: 100
+                      tokens_per_fill: 100
                 - name: envoy.filters.http.router
                   typed_config:
                     '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -47,9 +66,9 @@ resources:
                           retry_policy:
                             num_retries: 2
                             retry_on: connect-failure
-                          timeout: 0s
+                          timeout: 30s
               stat_prefix: http_0.0.0.0_443
-              stream_idle_timeout: 300s
+              stream_idle_timeout: 600s
               upgrade_configs:
                 - upgrade_type: websocket
               use_remote_address: true

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,4 +139,85 @@ func TestGatewayLongRequestsAndUpgrades(t *testing.T) {
 	if line, err := r.ReadString('\n'); err != nil || line != "ping\n" {
 		t.Fatalf("echo after upgrade: %q %v", line, err)
 	}
+}
+
+// TestGatewayListenerLimits: the administrator's listener options reach the gateway without
+// recreating it: a request timeout (504), a body limit (413), a rate limit (429) and, on a tcp
+// listener, a PROXY protocol header the backend receives first.
+func TestGatewayListenerLimits(t *testing.T) {
+	ctx := context.Background()
+	name := releaseName("it-limits")
+	s, rt := service(t, name)
+	l, port := listener(t, gateway.ProtocolHTTP)
+	tl, tport := listener(t, gateway.ProtocolTCP)
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+		Values: releases.Values{Sets: packages.Sets([]string{"raw=true", "route=limits.local", "routeListener=" + l, "echo=true", "echoListener=" + tl}...)}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	before, err := rt.GetWorkload(ctx, gateway.ContainerName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Gateway.SetListenerOptions(ctx, l, gateway.ListenerOptions{Timeout: "2s", MaxBody: "1Ki", RateLimit: "5/s"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Gateway.SetListenerOptions(ctx, tl, gateway.ListenerOptions{ProxyProtocol: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	addr := "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	do := func(method, path string, body io.Reader) int {
+		t.Helper()
+		req, _ := http.NewRequest(method, addr+path, body)
+		req.Host = "limits.local"
+		resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	// Settings apply within moments (hot reload); the slow request is the sign they are in.
+	deadline := time.Now().Add(15 * time.Second)
+	for do(http.MethodGet, "/x/slow", nil) != http.StatusGatewayTimeout {
+		if time.Now().After(deadline) {
+			t.Fatal("timeout not applied")
+		}
+		time.Sleep(time.Second)
+	}
+	if code := do(http.MethodPost, "/", strings.NewReader(strings.Repeat("x", 2048))); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("large body: %d", code)
+	}
+	limited := 0
+	for range 20 {
+		if do(http.MethodGet, "/", nil) == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited == 0 {
+		t.Fatal("20 requests at once passed a 5/s rate limit")
+	}
+
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(tport)), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(conn, "hi\n"); err != nil {
+		t.Fatal(err)
+	}
+	// The echo server sends back what it received: the PROXY header first.
+	if line, err := bufio.NewReader(conn).ReadString('\n'); err != nil || !strings.HasPrefix(line, "PROXY TCP4 127.0.0.1 ") {
+		t.Fatalf("proxy protocol: %q %v", line, err)
+	}
+
+	after, err := rt.GetWorkload(ctx, gateway.ContainerName)
+	if err != nil || after.Labels["io.karga.gateway-source"] != before.Labels["io.karga.gateway-source"] || after.RestartCount != before.RestartCount {
+		t.Fatalf("the gateway was recreated or restarted: %+v %v", after, err)
+	}
+	t.Cleanup(func() {
+		_ = s.Gateway.SetListenerOptions(context.Background(), l, gateway.ListenerOptions{})
+		_ = s.Gateway.SetListenerOptions(context.Background(), tl, gateway.ListenerOptions{})
+	})
 }

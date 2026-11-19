@@ -17,16 +17,17 @@ import (
 var update = flag.Bool("update", false, "rewrite golden files")
 
 var sample = Config{
-	TCP: []TCPListener{{Address: "127.0.0.1", Port: 5432, Cluster: "db_pg_p5432"}},
+	TCP: []TCPListener{{Address: "127.0.0.1", Port: 5432, Cluster: "db_pg_p5432", IdleTimeout: time.Hour}},
 	HTTP: []HTTPListener{{Address: "0.0.0.0", Port: 80, Routes: []HTTPRoute{
 		{Host: "app.local", Path: "/", Cluster: "app_web_p3000"},
 		{Host: "app.local", Path: "/api", Cluster: "app_api_p8080"},
 		{Host: "b.local", Path: "/", Cluster: "b_web_p3000"},
 	}, Redirects: []string{"secure.example"}, RedirectPort: 443}, {Address: "0.0.0.0", Port: 443, Routes: []HTTPRoute{
 		{Host: "secure.example", Path: "/", Cluster: "app_web_p3000"},
-	}, Certs: map[string]Cert{"secure.example": {Chain: "/etc/karga-proxy/certs/app_443_secure.example.crt", Key: "/etc/karga-proxy/certs/app_443_secure.example.key"}}}},
+	}, Certs: map[string]Cert{"secure.example": {Chain: "/etc/karga-proxy/certs/app_443_secure.example.crt", Key: "/etc/karga-proxy/certs/app_443_secure.example.key"}},
+		Limits: HTTPLimits{Timeout: 30 * time.Second, IdleTimeout: 10 * time.Minute, MaxBodyBytes: 1 << 20, RateRequests: 100, RatePer: time.Second}}},
 	Clusters: []Cluster{
-		{Name: "db_pg_p5432", Host: "127.0.0.1", Port: 41001},
+		{Name: "db_pg_p5432", Host: "127.0.0.1", Port: 41001, ProxyProtocol: "v2"},
 		{Name: "web-p8080", Host: "karga-web-r2", Port: 8080, DNS: true, HealthPath: "/healthz"},
 	},
 }
