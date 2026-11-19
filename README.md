@@ -76,7 +76,7 @@ thread, about 15MB RAM each, limited to 128Mi, 0.5 CPU and 256 processes). Envoy
 karga releases; a new image recreates the gateway and the release proxies on the next apply, a short
 interruption. `KARGA_PROXY_IMAGE` overrides the image.
 
-- **Release proxy** (`<release>-karga-proxy`, one per release with Services): answers to the release's
+- **Release proxy** (`<release>-karga-proxy-<hash>`, one per release with Services): answers to the release's
   Service names on its networks and forwards each Service port to the current container of its
   workload. Workloads carry only a per-revision alias meant for the proxy. It publishes the
   exposed Service ports on loopback upstream ports (`127.0.0.1:<random>`) for the gateway.

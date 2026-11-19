@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -196,19 +197,23 @@ func serviceIn(t *testing.T, home, name string) (*releases.Service, ports.Runtim
 // host's administrator would, and returns its name and port. Listeners outlive the test.
 func listener(t *testing.T, protocol string) (string, int) {
 	t.Helper()
-	port := runtimetest.FreePort(t)
-	name := fmt.Sprintf("l%d", port)
 	unlock, err := gateway.Lock(context.Background(), sharedHome)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unlock()
 	settings, err := gateway.ReadSettings(sharedHome)
-	if err == nil {
-		settings.Listeners = append(settings.Listeners, gateway.Listener{Name: name, Port: port, Protocol: protocol})
-		err = gateway.WriteSettings(sharedHome, settings)
-	}
 	if err != nil {
+		t.Fatal(err)
+	}
+	// A free port may already be another test's listener: nothing binds it until it is used.
+	port := runtimetest.FreePort(t)
+	for slices.ContainsFunc(settings.Listeners, func(l gateway.Listener) bool { return l.Port == port }) {
+		port = runtimetest.FreePort(t)
+	}
+	name := fmt.Sprintf("l%d", port)
+	settings.Listeners = append(settings.Listeners, gateway.Listener{Name: name, Port: port, Protocol: protocol})
+	if err := gateway.WriteSettings(sharedHome, settings); err != nil {
 		t.Fatal(err)
 	}
 	return name, port
@@ -222,13 +227,25 @@ func opts() releases.CommonOptions {
 // digest, so it is found by label.
 func containerName(t *testing.T, rt ports.Runtime, release, workload string) string {
 	t.Helper()
+	return labeledContainer(t, rt, release, "Workload", workload)
+}
+
+// proxyName returns the container of release's proxy, found by its labels: its name ends with
+// its spec's digest.
+func proxyName(t *testing.T, rt ports.Runtime, release string) string {
+	t.Helper()
+	return labeledContainer(t, rt, release, deployment.KindProxy, deployment.ProxyResource)
+}
+
+func labeledContainer(t *testing.T, rt ports.Runtime, release, kind, workload string) string {
+	t.Helper()
 	objs, err := rt.ListManaged(context.Background(), release)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var names []string
 	for _, o := range objs {
-		if o.Kind == ports.ObjectWorkload && o.Labels[ports.LabelKind] == "Workload" && o.Labels[ports.LabelName] == workload {
+		if o.Kind == ports.ObjectWorkload && o.Labels[ports.LabelKind] == kind && o.Labels[ports.LabelName] == workload {
 			names = append(names, o.Name)
 		}
 	}

@@ -48,9 +48,10 @@ What karga does not do yet, what it does with known limits, and the open questio
 - **Gateway.** One container serves every release's outside traffic; it restarts automatically but
   is a single point. Local users can reach the loopback upstream ports directly. Image or limit
   changes recreate it (a short interruption).
-- **Release proxy.** One per release with Services (about 15 MB). A service port number belongs to
-  one Service of the release. Adding or removing a Service reconnects it to its networks, and
-  exposing a new port recreates it, briefly interrupting its connections.
+- **Release proxy.** One per release with Services (about 15 MB; two for a moment while one
+  replaces the other). A service port number belongs to one Service of the release. A client in
+  the release's networks that caches the proxy's address beyond the 30s drain of a replaced proxy
+  loses its connection.
 - **Replace** needs a health check and read-only volumes; stateful workloads are recreated.
 - **Volume backups** go through a workload that mounts the volume; a live backup is not consistent
   for databases (use `--stop` or the database's own dump). Restore overwrites files with the same

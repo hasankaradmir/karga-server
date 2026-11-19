@@ -57,7 +57,7 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range pub {
-		if p.Release == name && (p.HostIP != "127.0.0.1" || p.Workload != deployment.ProxyName(name)) {
+		if p.Release == name && (p.HostIP != "127.0.0.1" || p.Workload != proxyName(t, rt, name)) {
 			t.Fatalf("only the release proxy publishes, and only loopback upstreams: %+v", p)
 		}
 		if p.Port == port {
@@ -115,7 +115,7 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 	}
 
 	// Restarting the gateway, the proxy or the backend (which may change its IP) keeps routing.
-	for _, c := range []string{gateway.ContainerName, deployment.ProxyName(name), recordedContainer(t, s, name, "web")} {
+	for _, c := range []string{gateway.ContainerName, proxyName(t, rt, name), recordedContainer(t, s, name, "web")} {
 		if err := rt.StopWorkload(ctx, c, 2*time.Second); err != nil {
 			t.Fatal(err)
 		}
@@ -406,5 +406,56 @@ func TestGatewaySurvivesDockerRestart(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	if res := p.result(); res.Bodies["v1"] == 0 {
 		t.Fatalf("release proxy not serving after the restart: %s", res)
+	}
+}
+
+// TestProxyReplaceWithoutDowntime: a Service added (new aliases) and a port newly exposed (new
+// published port) each need a new release proxy container. It starts next to the old one, the
+// gateway switches to it, and the old one drains: neither the gateway nor the release's network
+// sees an outage.
+func TestProxyReplaceWithoutDowntime(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	name := releaseName("it-pxr")
+	s, rt := service(t, name)
+	l, port := listener(t, gateway.ProtocolHTTP)
+	tl, _ := listener(t, gateway.ProtocolTCP)
+	common := opts()
+	common.Timeout = 30 * time.Second
+	sets := []string{"route=pxr.local", "routeListener=" + l}
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: common, Name: name, Package: webPkg,
+		Values: releases.Values{Sets: packages.Sets(sets...)}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	host := startHostPingerFor(port, "pxr.local")
+	net := startNetPinger(t, rt, name, "http://web:8080/")
+	time.Sleep(time.Second)
+
+	for _, more := range [][]string{{"second=true"}, {"second=true", "echo=true", "echoListener=" + tl}} {
+		before := proxyName(t, rt, name)
+		sets = append(sets, more...)
+		res, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg,
+			Values: releases.Values{Sets: packages.Sets(sets...)}}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range res.Plan {
+			if c.Kind == deployment.KindProxy && c.Strategy != "replace" {
+				t.Fatalf("%v: proxy %+v", more, c)
+			}
+		}
+		if after := proxyName(t, rt, name); after == before {
+			t.Fatalf("%v: the proxy %s was not replaced", more, after)
+		}
+		time.Sleep(time.Second)
+	}
+	host.halt()
+	got := net.result()
+	t.Logf("gateway: %d ok, %d failed; network: %s", host.ok.Load(), host.failed.Load(), got)
+	if f := host.failed.Load(); f > maxRaceFailures || host.ok.Load() == 0 {
+		t.Fatalf("%d requests through the gateway failed while the proxy was replaced (max %d)", f, maxRaceFailures)
+	}
+	if got.Failed > maxRaceFailures || got.OK == 0 {
+		t.Fatalf("%d requests in the release's network failed while the proxy was replaced (max %d): %s", got.Failed, maxRaceFailures, got)
 	}
 }

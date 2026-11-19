@@ -123,7 +123,7 @@ func withAnonymous(st ports.WorkloadStatus, mounts []ports.Mount) []ports.Mount 
 //
 // touched reports whether anything that was serving traffic has been changed.
 func (e *Env) replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecRequest, c Change, owned map[string]bool,
-	s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string, svcs services) (touched bool, err error) {
+	s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string, svcs services, proxy string) (touched bool, err error) {
 	next := c.RuntimeName
 	behind := svcs.wl[c.Name] != nil
 	if owned[ports.ObjectWorkload+"/"+next] {
@@ -159,14 +159,14 @@ func (e *Env) replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecReq
 		if err := e.writeProxy(ctx, rt, req, svcs, map[string]string{c.Name: alias}); err != nil {
 			return false, stopNext(err)
 		}
-		if err := envoyErr(ctx, rt, ProxyName(req.Release), e.host.Proxies.WaitReady(ctx, ProxyDir(e.home, req.Release), proxyWant(svcs, c.Name, alias), proxyops.ProxyReadyTimeout)); err != nil {
+		if err := envoyErr(ctx, rt, proxy, e.host.Proxies.WaitReady(ctx, ProxyAdminDir(e.home, req.Release, proxy), proxyWant(svcs, c.Name, alias), proxyops.ProxyReadyTimeout)); err != nil {
 			// The proxy may have routed to the new backend for a moment: count it as touched. The new
 			// container stops first, so the proxy goes back to the old one, which still runs.
 			err = stopNext(err)
 			return true, errors.Join(err, e.writeProxy(ctx, rt, req, svcs, nil))
 		}
 		progress(ctx, c.Kind, c.Name, PhaseDrain, "waiting up to %s for connections to %s to finish", drain, c.Applied.RuntimeName)
-		if _, err := e.host.Proxies.WaitDrained(ctx, ProxyDir(e.home, req.Release), proxyClusters(svcs, c.Name), drain); err != nil {
+		if _, err := e.host.Proxies.WaitDrained(ctx, ProxyAdminDir(e.home, req.Release, proxy), proxyClusters(svcs, c.Name), drain); err != nil {
 			return true, err
 		}
 	}
@@ -212,6 +212,38 @@ func (e *Env) RepairReplace(ctx context.Context, rt ports.Runtime, rel string, a
 			}
 			if recorded {
 				if err := proxyops.RemoveWorkload(ctx, rt, a.RuntimeName); err != nil { // the proxy had switched
+					return nil, err
+				}
+			}
+			a.RuntimeName, a.Digest, recorded = o.Name, o.Labels[ports.LabelDigest], true
+			repaired = append(repaired, a)
+		}
+	}
+	// An interrupted proxy replace leaves two proxies: the one the gateway routes to is kept.
+	for _, a := range applied {
+		if a.Kind != KindProxy {
+			continue
+		}
+		recorded := false
+		var others []ports.Object
+		for _, o := range objs {
+			switch {
+			case o.Kind != ports.ObjectWorkload || o.Labels[ports.LabelKind] != KindProxy:
+			case o.Name == a.RuntimeName:
+				recorded = true
+			default:
+				others = append(others, o)
+			}
+		}
+		for _, o := range others {
+			if recorded && !e.gatewayRoutesTo(o) {
+				if err := removeProxyContainer(ctx, rt, e.home, rel, o.Name); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if recorded {
+				if err := removeProxyContainer(ctx, rt, e.home, rel, a.RuntimeName); err != nil {
 					return nil, err
 				}
 			}

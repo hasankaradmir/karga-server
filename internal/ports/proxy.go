@@ -94,6 +94,14 @@ type ProxyContainer struct {
 type ProxyControl interface {
 	Container() ProxyContainer
 	Write(dir, node string, socketMode int, cfg ProxyConfig) error
+	// WriteInstance prepares a second Envoy of dir, in dir/instance: it serves dir's configuration
+	// with its own admin socket, whose directory (dir/instance) the other methods then take. Command
+	// runs it ("" runs dir's own).
+	WriteInstance(dir, instance, node string, socketMode int) error
+	Command(instance string) []string
+	// Drain makes the proxy stop taking new work and waits until its connections are gone, or
+	// timeout; it reports whether they all finished.
+	Drain(ctx context.Context, dir string, timeout time.Duration) (bool, error)
 	// Endpoints returns each cluster's endpoint as written in dir ("host:port").
 	Endpoints(dir string) (map[string]string, error)
 	// WaitReady waits until each cluster routes to a healthy endpoint (cluster -> DNS name or ip:port).

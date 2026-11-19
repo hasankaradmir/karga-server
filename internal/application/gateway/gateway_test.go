@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -104,7 +105,7 @@ func proxyOf(t *testing.T, rt *fakeruntime.Runtime, home, rel string, ps []Port,
 		ports.LabelManaged: "true", ports.LabelRelease: rel, ports.LabelName: "proxy", LabelPorts: string(label)}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeExpose(home, rel, routes); err != nil {
+	if err := writeExpose(home, rel, "", routes); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -236,12 +237,12 @@ func TestExposeChecksUnderTheLock(t *testing.T) {
 	svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
 		Workload: "w", Ports: []resource.ServicePort{{Name: "p", Port: 80, TargetPort: "p"}},
 		Expose: []resource.Exposure{{Port: "p", Listener: "web", Host: "a.example", Path: "/"}}}}
-	_, err := New(rt, h, home).Expose(ctx, "mine", []resource.Resource{svc},
+	_, err := New(rt, h, home).Expose(ctx, "mine", "", []resource.Resource{svc},
 		[]Route{{Service: "s", Port: 80, Listener: "web", Host: "a.example", Path: "/"}})
 	if err == nil || !strings.Contains(err.Error(), "already routed to other/web") {
 		t.Fatalf("Expose: %v", err)
 	}
-	if routes, _ := readExpose(home, "mine"); routes != nil {
+	if _, routes, _ := readExpose(home, "mine"); routes != nil {
 		t.Fatalf("a refused exposure was written: %+v", routes)
 	}
 }
@@ -327,5 +328,30 @@ func TestListenerOptions(t *testing.T) {
 	pg.Timeout, pg.RateLimit = "1s", "1/s"
 	if err := validateSettings(Settings{Listeners: []Listener{pg}}); err == nil || !strings.Contains(err.Error(), "rateLimit, timeout cannot be set on a tcp listener") {
 		t.Errorf("tcp: %v", err)
+	}
+}
+
+// While a proxy replaces another both are labeled: the gateway routes to the one the expose file
+// names, or else to the newer one.
+func TestTargetsPickOneProxyPerRelease(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	rt := fakeruntime.New("img")
+	for i, name := range []string{"a-karga-proxy-1111aaaa", "a-karga-proxy-2222bbbb"} {
+		label, _ := json.Marshal([]Port{{Service: "web", Port: 80, Upstream: 4001 + i}})
+		if err := rt.CreateWorkload(ctx, ports.WorkloadRequest{Name: name, Image: "img", Labels: map[string]string{ports.LabelManaged: "true",
+			ports.LabelRelease: "a", ports.LabelRevision: strconv.Itoa(9 + i), LabelPorts: string(label)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	routes := []Route{{Service: "web", Port: 80, Listener: "web", Host: "a.example", Path: "/"}}
+	for proxy, want := range map[string]string{"a-karga-proxy-1111aaaa": "a-karga-proxy-1111aaaa", "": "a-karga-proxy-2222bbbb"} {
+		if err := writeExpose(home, "a", proxy, routes); err != nil {
+			t.Fatal(err)
+		}
+		targets, err := findTargets(ctx, rt, home)
+		if err != nil || len(targets) != 1 || targets[0].Container != want {
+			t.Fatalf("expose names %q: %+v %v", proxy, targets, err)
+		}
 	}
 }

@@ -97,13 +97,25 @@ func findTargets(ctx context.Context, rt Runtime, home string) ([]Target, error)
 		return nil, err
 	}
 	var out []Target
+	revisions := map[string]int{}
+	revision := func(o ports.Object) int { n, _ := strconv.Atoi(o.Labels[ports.LabelRevision]); return n }
 	for _, o := range objs {
 		rel := o.Labels[ports.LabelRelease]
-		routes, err := readExpose(home, rel)
+		proxy, routes, err := readExpose(home, rel)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, Target{Release: rel, Container: o.Name, Ports: ParseLabel(o.Labels), Routes: routes})
+		t := Target{Release: rel, Container: o.Name, Ports: ParseLabel(o.Labels), Routes: routes}
+		// While a proxy replaces another, both are labeled: the gateway uses the one Expose named,
+		// or else the newer one.
+		i := slices.IndexFunc(out, func(x Target) bool { return x.Release == rel })
+		switch {
+		case i < 0:
+			out = append(out, t)
+		case proxy == o.Name || proxy != out[i].Container && revision(o) > revisions[out[i].Container]:
+			out[i] = t
+		}
+		revisions[o.Name] = revision(o)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Release < out[j].Release })
 	return out, nil
@@ -123,7 +135,8 @@ func (g *Gateway) Sync(ctx context.Context) ([]Target, error) {
 
 // Expose records what release rel exposes and syncs the gateway, checking again under the gateway
 // lock that no other release took the same listeners, hosts or paths since the pre-flight.
-func (g *Gateway) Expose(ctx context.Context, rel string, rs []resource.Resource, routes []Route) ([]Target, error) {
+// proxy is the release proxy container the gateway sends the release's traffic to.
+func (g *Gateway) Expose(ctx context.Context, rel, proxy string, rs []resource.Resource, routes []Route) ([]Target, error) {
 	rt, h, home := g.rt, g.host, g.home
 	unlock, err := Lock(ctx, home)
 	if err != nil {
@@ -134,7 +147,7 @@ func (g *Gateway) Expose(ctx context.Context, rel string, rs []resource.Resource
 	if _, err := g.Check(ctx, rel, rs); err != nil {
 		return nil, err
 	}
-	if err := writeExpose(home, rel, routes); err != nil {
+	if err := writeExpose(home, rel, proxy, routes); err != nil {
 		return nil, err
 	}
 	return syncLocked(ctx, rt, h, home)

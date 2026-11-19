@@ -52,7 +52,7 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 	r := &run{e: e, rt: rt, req: req}
 	defer func() { *disrupted = r.disrupted }()
 	for _, phase := range []func(context.Context) error{
-		r.prepare, r.removeWorkloads, r.removeProxies, r.apply, r.waitPending, r.proxyUp, r.routeProxy, r.expose, r.deleteRemoved,
+		r.prepare, r.removeWorkloads, r.removeProxies, r.apply, r.waitPending, r.proxyUp, r.routeProxy, r.expose, r.retireProxy, r.deleteRemoved,
 	} {
 		if err := phase(ctx); err != nil {
 			return err

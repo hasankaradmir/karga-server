@@ -33,7 +33,7 @@ var sample = Config{
 }
 
 func TestConfigGolden(t *testing.T) {
-	boot, err := bootstrap("web", 0o600)
+	boot, err := bootstrap("web", 0o600, "")
 	if err != nil {
 		t.Fatal(err)
 	}
