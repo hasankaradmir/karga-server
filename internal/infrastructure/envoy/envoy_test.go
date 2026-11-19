@@ -265,3 +265,18 @@ func TestAccessLogAndHealth(t *testing.T) {
 		t.Fatalf("version: %q %v", v, err)
 	}
 }
+
+func TestValidationBootstrap(t *testing.T) {
+	data, err := ValidationBootstrap(sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"static_resources:", "name: tcp_127.0.0.1_5432", "name: http_0.0.0.0_443", "name: db_pg_p5432", "upstream_proxy_protocol"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("missing %q in:\n%s", want, data)
+		}
+	}
+	if strings.Contains(string(data), "admin:") || strings.Contains(string(data), "dynamic_resources") {
+		t.Errorf("a validation bootstrap serves nothing:\n%s", data)
+	}
+}

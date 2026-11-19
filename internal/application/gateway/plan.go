@@ -90,6 +90,16 @@ func (g *Gateway) PlanSettings(ctx context.Context, edited Settings) (SettingsPl
 		risks = append(risks, fmt.Sprintf("every exposed service becomes reachable on %s, from other machines too", strings.Join(open, ", ")))
 	}
 	plan.Risk = strings.Join(risks, "; ")
+	// Envoy checks what karga's own checks passed (a certificate it cannot load, a limit it refuses).
+	if len(plan.Problems) == 0 && len(plan.Changes) > 0 && g.host.Supported() {
+		why, err := g.validateEnvoy(ctx, edited)
+		if err != nil {
+			return plan, err
+		}
+		if why != "" {
+			plan.Problems = append(plan.Problems, why)
+		}
+	}
 	return plan, nil
 }
 

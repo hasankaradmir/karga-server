@@ -31,6 +31,9 @@ type Runtime struct {
 	Networks  map[string]ports.NetworkRequest
 	Volumes   map[string]ports.VolumeRequest
 	Workloads map[string]*Workload
+	// ValidateExit and ValidateOutput are the exit code and log of an Envoy run with --mode validate.
+	ValidateExit   int
+	ValidateOutput string
 	// Fail injects errors, e.g. Fail["StartWorkload:web-redis"] = errors.New("boom").
 	Fail map[string]error
 	// Calls records every operation as "<Op>:<name>" in order, container names without their digest
@@ -65,6 +68,7 @@ type Workload struct {
 	// OOMKilled and Restarts are reported by GetWorkload; tests set them.
 	OOMKilled bool
 	Restarts  int
+	ExitCode  int
 }
 
 // New returns an empty runtime. Images listed in pulled are present locally.
@@ -184,6 +188,14 @@ func (Proxies) WaitDrained(context.Context, string, []string, time.Duration) (bo
 func (Proxies) WriteInstance(dir, instance, node string, mode int) error {
 	return envoy.WriteInstance(dir, instance, node, mode)
 }
+
+// ValidationBootstrap is Envoy's.
+func (Proxies) ValidationBootstrap(cfg ports.ProxyConfig) ([]byte, error) {
+	return envoy.ValidationBootstrap(cfg)
+}
+
+// ValidateCommand is Envoy's.
+func (Proxies) ValidateCommand(path string) []string { return envoy.Proxies{}.ValidateCommand(path) }
 
 // Command is Envoy's.
 func (Proxies) Command(instance string) []string { return envoy.CommandFor(instance) }
@@ -363,6 +375,15 @@ func (r *Runtime) StartWorkload(_ context.Context, name string) error {
 			}
 		}
 	}
+	if slices.Contains(w.Request.Command, "--mode") && slices.Contains(w.Request.Command, "validate") {
+		// Envoy's configuration check runs to its end at once, with ValidateExit and ValidateOutput.
+		w.State, w.ExitCode = ports.StateExited, r.ValidateExit
+		if r.Output == nil {
+			r.Output = map[string]string{}
+		}
+		r.Output[name] = r.ValidateOutput
+		return nil
+	}
 	w.State = ports.StateRunning
 	return nil
 }
@@ -427,7 +448,7 @@ func (r *Runtime) GetWorkload(_ context.Context, name string) (ports.WorkloadSta
 		}
 	}
 	return ports.WorkloadStatus{Name: name, State: w.State, Health: health, Labels: maps.Clone(w.Request.Labels), Limits: lim,
-		OOMKilled: w.OOMKilled, RestartCount: w.Restarts, AnonymousVolumes: anon, IPs: maps.Clone(r.IPs[name])}, nil
+		ExitCode: w.ExitCode, OOMKilled: w.OOMKilled, RestartCount: w.Restarts, AnonymousVolumes: anon, IPs: maps.Clone(r.IPs[name])}, nil
 }
 
 // ListManaged implements ports.Runtime.

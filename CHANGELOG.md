@@ -6,6 +6,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- Before a gateway settings revision is applied, Envoy checks its configuration with `--mode
+  validate` in a container of its own (`ProxyControl.ValidationBootstrap`); what it refuses is a
+  problem of the plan, and the gateway is not touched.
 - Gateway settings as documents (D40): a document of kind `Gateway` the user keeps is compared
   (`DiffGateway`) and applied (`ApplyGateway`) as a revision in `$KARGA_HOME/gateway-settings/`
   (the last 10, with time, actor and source; `ExportGateway`, `GatewayHistory`); gateway commands

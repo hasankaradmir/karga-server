@@ -98,6 +98,10 @@ type ProxyControl interface {
 	// runs it ("" runs dir's own).
 	WriteInstance(dir, instance, node string, socketMode int) error
 	Command(instance string) []string
+	// ValidationBootstrap is cfg as a configuration the proxy checks without serving it
+	// (ValidateCommand runs that check on the file mounted at path).
+	ValidationBootstrap(cfg ProxyConfig) ([]byte, error)
+	ValidateCommand(path string) []string
 	// Drain makes the proxy stop taking new work and waits until its connections are gone, or
 	// timeout; it reports whether they all finished. Graceful keeps the listeners open meanwhile
 	// and asks clients to go (for a proxy found by DNS); otherwise they close at once (for one

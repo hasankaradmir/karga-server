@@ -10,6 +10,7 @@ import (
 	"time"
 
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
+	bootstrapv3 "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
@@ -78,6 +79,14 @@ func filterListener(name, address string, port int, filter string, cfg validated
 
 // Listeners renders lds.yaml. Output is sorted so equal configs give equal files.
 func Listeners(c Config) ([]byte, error) {
+	items, err := listenerItems(c)
+	if err != nil {
+		return nil, err
+	}
+	return resources(items)
+}
+
+func listenerItems(c Config) ([]validated, error) {
 	var items []validated
 	var logs []*accesslogv3.AccessLog
 	if c.AccessLog {
@@ -119,7 +128,7 @@ func Listeners(c Config) ([]byte, error) {
 		}
 		items = append(items, lis)
 	}
-	return resources(items)
+	return items, nil
 }
 
 // StreamIdleTimeout closes an HTTP stream (a request, a WebSocket) that sends nothing either way.
@@ -300,6 +309,14 @@ func virtualHosts(routes []HTTPRoute, timeout time.Duration) []*routev3.VirtualH
 
 // Clusters renders cds.yaml.
 func Clusters(c Config) ([]byte, error) {
+	items, err := clusterItems(c)
+	if err != nil {
+		return nil, err
+	}
+	return resources(items)
+}
+
+func clusterItems(c Config) ([]validated, error) {
 	cs := slices.Clone(c.Clusters)
 	slices.SortFunc(cs, func(a, b Cluster) int { return strings.Compare(a.Name, b.Name) })
 	var items []validated
@@ -357,7 +374,7 @@ func Clusters(c Config) ([]byte, error) {
 		}
 		items = append(items, item)
 	}
-	return resources(items)
+	return items, nil
 }
 
 // proxyProtocolSocket sends a PROXY protocol header first on each upstream connection. Health
@@ -380,6 +397,42 @@ func proxyProtocolSocket(version string) (*corev3.TransportSocket, error) {
 		return nil, err
 	}
 	return &corev3.TransportSocket{Name: "envoy.transport_sockets.upstream_proxy_protocol", ConfigType: &corev3.TransportSocket_TypedConfig{TypedConfig: tc}}, nil
+}
+
+// ValidationBootstrap is a bootstrap with cfg's listeners and clusters as static resources, for
+// `envoy --mode validate`, which checks static configuration only (not file-based LDS/CDS). It
+// does not bind anything: an address or port that cannot be bound passes.
+func ValidationBootstrap(c Config) ([]byte, error) {
+	ls, err := listenerItems(c)
+	if err != nil {
+		return nil, err
+	}
+	cs, err := clusterItems(c)
+	if err != nil {
+		return nil, err
+	}
+	static := &bootstrapv3.Bootstrap_StaticResources{}
+	for _, l := range ls {
+		static.Listeners = append(static.Listeners, l.(*listenerv3.Listener))
+	}
+	for _, cl := range cs {
+		static.Clusters = append(static.Clusters, cl.(*clusterv3.Cluster))
+	}
+	b := &bootstrapv3.Bootstrap{Node: &corev3.Node{Id: "validate", Cluster: "karga"}, StaticResources: static}
+	if err := b.ValidateAll(); err != nil {
+		return nil, fmt.Errorf("envoy config: %w", err)
+	}
+	raw, err := protojson.MarshalOptions{UseProtoNames: true}.Marshal(b)
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var doc any
+	if err := dec.Decode(&doc); err != nil {
+		return nil, err
+	}
+	return toYAML(numbers(doc))
 }
 
 // resources validates items and writes them as a discovery response, the file format of
