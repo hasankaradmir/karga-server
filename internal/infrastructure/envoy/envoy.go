@@ -46,11 +46,9 @@ func Image() string {
 	return DefaultImage
 }
 
-// Command runs Envoy on the mounted bootstrap file with one worker thread (ADR-0010: low resources).
-// It starts with a flag, so both the distroless entrypoint (envoy) and the debian one accept it.
-func Command() []string { return CommandFor("") }
-
-// CommandFor runs the Envoy of one instance (see WriteInstance); "" is the directory's own.
+// CommandFor runs the Envoy of one instance (see WriteInstance) on its mounted bootstrap file with
+// one worker thread (ADR-0010: low resources). It starts with a flag, so both the distroless
+// entrypoint (envoy) and the debian one accept it.
 func CommandFor(instance string) []string {
 	// No hot restart: karga replaces an Envoy by starting another, and two gateways in the host
 	// network would claim the same hot-restart socket.
@@ -91,7 +89,7 @@ var _ ports.ProxyControl = Proxies{}
 
 // Container implements ports.ProxyControl.
 func (Proxies) Container() ports.ProxyContainer {
-	return ports.ProxyContainer{Image: Image(), Command: Command(), MountPath: MountPath,
+	return ports.ProxyContainer{Image: Image(), MountPath: MountPath,
 		MemoryBytes: Memory, MilliCPU: MilliCPU, Pids: Pids,
 		Source: fmt.Sprintf("mem=%d,cpu=%dm,pids=%d,log=%sx%d %s", Memory, MilliCPU, Pids, resource.DefaultLogMaxSize, resource.DefaultLogMaxFiles, Image())}
 }
@@ -104,9 +102,7 @@ const (
 )
 
 // Write implements ports.ProxyControl.
-func (Proxies) Write(dir, node string, socketMode int, cfg Config) error {
-	return Write(dir, node, socketMode, cfg)
-}
+func (Proxies) Write(dir string, cfg Config) error { return Write(dir, cfg) }
 
 // WriteInstance implements ports.ProxyControl.
 func (Proxies) WriteInstance(dir, instance, node string, socketMode int) error {
@@ -198,17 +194,14 @@ func writeAtomic(dir, name string, data []byte) error {
 	return fsutil.WriteFile(filepath.Join(dir, name), data, 0o600)
 }
 
-// Write creates the proxy directory (0700) and writes bootstrap, clusters and listeners. Clusters
-// go first so a new listener never points at a cluster Envoy does not know yet.
-func Write(dir, node string, socketMode int, cfg Config) error {
+// Write creates the proxy directory (0700) and writes its clusters and listeners, which every
+// instance of it serves (WriteInstance). Clusters go first so a new listener never points at a
+// cluster Envoy does not know yet.
+func Write(dir string, cfg Config) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
-		return err
-	}
-	boot, err := bootstrap(node, socketMode, "")
-	if err != nil {
 		return err
 	}
 	cds, err := Clusters(cfg)
@@ -217,9 +210,6 @@ func Write(dir, node string, socketMode int, cfg Config) error {
 	}
 	lds, err := Listeners(cfg)
 	if err != nil {
-		return err
-	}
-	if err := writeAtomic(dir, bootstrapFile, boot); err != nil {
 		return err
 	}
 	if err := writeAtomic(dir, clustersFile, cds); err != nil {
@@ -252,10 +242,9 @@ func WriteInstance(dir, instance, node string, socketMode int) error {
 // clusterWait bounds how long Write waits for a running Envoy to take new clusters.
 var clusterWait = 15 * time.Second
 
-// waitClusters waits until every running Envoy of dir (its own and its instances') knows clusters.
+// waitClusters waits until every running Envoy of dir (each instance's) knows clusters.
 func waitClusters(dir string, clusters []Cluster, timeout time.Duration) {
 	socks, _ := filepath.Glob(filepath.Join(dir, "*", adminSocket))
-	socks = append(socks, filepath.Join(dir, adminSocket))
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	for _, s := range socks {

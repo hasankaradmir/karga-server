@@ -2,7 +2,7 @@ admin:
   address:
     pipe:
       mode: 384
-      path: /etc/karga-proxy/admin.sock
+      path: /etc/karga-proxy/3f9a2c1b/admin.sock
 dynamic_resources:
   cds_config:
     path_config_source:

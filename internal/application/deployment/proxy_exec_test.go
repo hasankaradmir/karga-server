@@ -53,8 +53,8 @@ func endpoints(m map[string]string) string {
 	return strings.Join(out, ",")
 }
 
-func (f *fakeProxies) Write(dir, node string, mode int, cfg ports.ProxyConfig) error {
-	if err := envoy.Write(dir, node, mode, cfg); err != nil {
+func (f *fakeProxies) Write(dir string, cfg ports.ProxyConfig) error {
+	if err := envoy.Write(dir, cfg); err != nil {
 		return err
 	}
 	eps, _ := testHost.Proxies.Endpoints(dir)
@@ -322,7 +322,7 @@ func TestReconcileKeepsWhatTheProxyRoutesTo(t *testing.T) {
 	create("web-app-aaaaaa", "1")
 	create("web-app-bbbbbb", "2")
 	cfg := ports.ProxyConfig{Clusters: []ports.ProxyCluster{{Name: "app-p8080", Host: BackendAlias("app", 2), Port: 8080, DNS: true}}}
-	if err := envoy.Write(ProxyDir(home, "web"), "web", 0o600, cfg); err != nil {
+	if err := envoy.Write(ProxyDir(home, "web"), cfg); err != nil {
 		t.Fatal(err)
 	}
 	repaired, err := envAt(home).RepairReplace(ctx, rt, "web", applied)

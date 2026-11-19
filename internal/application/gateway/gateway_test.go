@@ -101,7 +101,7 @@ func TestSyncCertsCopiesAndPrunes(t *testing.T) {
 func proxyOf(t *testing.T, rt *fakeruntime.Runtime, home, rel string, ps []Port, routes []Route) {
 	t.Helper()
 	label, _ := json.Marshal(ps)
-	if err := rt.CreateWorkload(context.Background(), ports.WorkloadRequest{Name: rel + "-karga-proxy", Image: "img", Labels: map[string]string{
+	if err := rt.CreateWorkload(context.Background(), ports.WorkloadRequest{Name: rel + "-karga-proxy-0a1b2c3d", Image: "img", Labels: map[string]string{
 		ports.LabelManaged: "true", ports.LabelRelease: rel, ports.LabelName: "proxy", LabelPorts: string(label)}}); err != nil {
 		t.Fatal(err)
 	}
@@ -212,8 +212,8 @@ func testHost(supported bool) *proxyops.Host {
 // fakeProxies writes real configuration files and reports every proxy ready and drained.
 type fakeProxies struct{ fakeruntime.Proxies }
 
-func (f *fakeProxies) Write(dir, node string, mode int, cfg ports.ProxyConfig) error {
-	return envoy.Write(dir, node, mode, cfg)
+func (f *fakeProxies) Write(dir string, cfg ports.ProxyConfig) error {
+	return envoy.Write(dir, cfg)
 }
 
 func (f *fakeProxies) WaitReady(context.Context, string, map[string]string, time.Duration) error {
@@ -356,18 +356,20 @@ func TestTargetsPickOneProxyPerRelease(t *testing.T) {
 	}
 }
 
-// A gateway made from other settings (an image, limits, a container from before D38) is handed
-// over: the new one starts and routes before the old one is removed.
+// A gateway made from another image or limits is handed over: the new one starts and routes
+// before the old one is removed.
 func TestSyncHandsOverToANewGateway(t *testing.T) {
 	h := testHost(true)
 	ctx := context.Background()
 	home := t.TempDir()
 	rt := fakeruntime.New("img", envoy.Image())
-	if err := rt.CreateWorkload(ctx, ports.WorkloadRequest{Name: ContainerName, Image: "img", Labels: map[string]string{
-		ports.LabelManaged: "true", LabelComponent: "gateway", labelSource: source(ports.ProxyContainer{Source: "old"}, Dir(home))}}); err != nil {
+	oldSource := source(ports.ProxyContainer{Source: "old"}, Dir(home))
+	old := containerName(oldSource)
+	if err := rt.CreateWorkload(ctx, ports.WorkloadRequest{Name: old, Image: "img", Labels: map[string]string{
+		ports.LabelManaged: "true", LabelComponent: "gateway", labelSource: oldSource}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.StartWorkload(ctx, ContainerName); err != nil {
+	if err := rt.StartWorkload(ctx, old); err != nil {
 		t.Fatal(err)
 	}
 	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "web", Host: "b.example", Path: "/"}})
@@ -376,11 +378,11 @@ func TestSyncHandsOverToANewGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	gws, _ := gateways(ctx, rt)
-	if len(gws) != 1 || gws[0].Name == ContainerName || !strings.HasPrefix(gws[0].Name, ContainerName+"-") {
+	if len(gws) != 1 || gws[0].Name == old || !strings.HasPrefix(gws[0].Name, ContainerName+"-") {
 		t.Fatalf("gateways after the hand-over: %+v", gws)
 	}
 	next := gws[0].Name
-	if a, b := slices.Index(rt.Raw, "StartWorkload:"+next), slices.Index(rt.Raw, "DeleteWorkload:"+ContainerName); a < 0 || b < 0 || a > b {
+	if a, b := slices.Index(rt.Raw, "StartWorkload:"+next), slices.Index(rt.Raw, "DeleteWorkload:"+old); a < 0 || b < 0 || a > b {
 		t.Fatalf("the new gateway must start before the old one goes: %v", rt.Raw)
 	}
 	if cmd := rt.Workloads[next].Request.Command; !slices.Contains(cmd, "/etc/karga-proxy/"+instance(next)+"/envoy.yaml") {

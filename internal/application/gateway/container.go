@@ -49,15 +49,8 @@ func containerName(source string) string {
 	return ContainerName + "-" + hex.EncodeToString(sum[:4])
 }
 
-// instance is the Envoy instance of gateway container name (its directory below Dir), "" for a
-// container named ContainerName (before D38), which uses Dir itself.
-func instance(name string) string {
-	inst, _ := strings.CutPrefix(name, ContainerName+"-")
-	if inst == name {
-		return ""
-	}
-	return inst
-}
+// instance is the Envoy instance of gateway container name (its directory below Dir).
+func instance(name string) string { return strings.TrimPrefix(name, ContainerName+"-") }
 
 // adminDir is the directory with the admin socket of gateway container name.
 func adminDir(home, name string) string { return filepath.Join(Dir(home), instance(name)) }

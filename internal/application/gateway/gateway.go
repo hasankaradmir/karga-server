@@ -226,7 +226,7 @@ func syncLocked(ctx context.Context, rt Runtime, h *proxyops.Host, home string) 
 	cfg := buildConfig(settings, targets, c.MountPath)
 	cfg.AccessLog = settings.AccessLog
 	// The socket is created by root in the 0700 directory, which keeps other users out.
-	if err := h.Proxies.Write(dir, "gateway", 0o666, cfg); err != nil {
+	if err := h.Proxies.Write(dir, cfg); err != nil {
 		return nil, err
 	}
 	if err := syncCerts(dir, targets, true); err != nil {
@@ -246,10 +246,8 @@ func syncLocked(ctx context.Context, rt Runtime, h *proxyops.Host, home string) 
 		if err := rt.EnsureImage(ctx, c.Image, "if-not-present"); err != nil {
 			return nil, err
 		}
-		if inst := instance(want.Name); inst != "" {
-			if err := h.Proxies.WriteInstance(dir, inst, "gateway", 0o666); err != nil {
-				return nil, err
-			}
+		if err := h.Proxies.WriteInstance(dir, instance(want.Name), "gateway", 0o666); err != nil {
+			return nil, err
 		}
 		if err := rt.CreateWorkload(ctx, want); err != nil {
 			return nil, err
@@ -286,10 +284,7 @@ func removeGateway(ctx context.Context, rt Runtime, home, name string) error {
 	if err := proxyops.RemoveWorkload(ctx, rt, name); err != nil && !errors.Is(err, ports.ErrNotFound) {
 		return err
 	}
-	if inst := instance(name); inst != "" {
-		return os.RemoveAll(filepath.Join(Dir(home), inst))
-	}
-	return nil
+	return os.RemoveAll(filepath.Join(Dir(home), instance(name)))
 }
 
 // Wait waits until the gateway routes to every exposed port of release rel ("": of every release).

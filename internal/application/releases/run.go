@@ -273,8 +273,8 @@ func existing(ctx context.Context, rt ports.Runtime, name string, applied []rele
 		if ok && !present {
 			continue
 		}
-		// Containers of an earlier karga have no digest label: they are not drift.
-		if d := lbl[ports.LabelDigest]; a.Kind == resource.KindWorkload && d != "" && a.Digest != "" && d != a.Digest {
+		// A container made from another spec than the one recorded (or without a digest label) drifted.
+		if d := lbl[ports.LabelDigest]; a.Kind == resource.KindWorkload && a.Digest != "" && d != a.Digest {
 			continue
 		}
 		out = append(out, a)

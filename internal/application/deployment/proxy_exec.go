@@ -103,7 +103,7 @@ func proxyConfig(ctx context.Context, rt ports.Runtime, plan Plan, svcs services
 }
 
 func (e *Env) writeProxy(ctx context.Context, rt ports.Runtime, req ExecRequest, svcs services, override map[string]string) error {
-	return e.host.Proxies.Write(ProxyDir(e.home, req.Release), req.Release, 0o600, proxyConfig(ctx, rt, req.Plan, svcs, override))
+	return e.host.Proxies.Write(ProxyDir(e.home, req.Release), proxyConfig(ctx, rt, req.Plan, svcs, override))
 }
 
 // exposeRoutes is what the release exposes on the gateway, written next to the proxy's
@@ -172,10 +172,8 @@ func (e *Env) createProxy(ctx context.Context, rt ports.Runtime, req ExecRequest
 		return err
 	}
 	dir := ProxyDir(e.home, req.Release)
-	if inst := proxyInstance(req.Release, c.RuntimeName); inst != "" {
-		if err := e.host.Proxies.WriteInstance(dir, inst, req.Release, 0o600); err != nil {
-			return err
-		}
+	if err := e.host.Proxies.WriteInstance(dir, proxyInstance(req.Release, c.RuntimeName), req.Release, 0o600); err != nil {
+		return err
 	}
 	if owned[ports.ObjectWorkload+"/"+c.RuntimeName] && (c.Applied == nil || c.Applied.RuntimeName != c.RuntimeName) {
 		if err := proxyops.RemoveWorkload(ctx, rt, c.RuntimeName); err != nil {
@@ -198,8 +196,7 @@ func (e *Env) createProxy(ctx context.Context, rt ports.Runtime, req ExecRequest
 	return rt.StartWorkload(ctx, wr.Name)
 }
 
-// removeProxy deletes a proxy container; with dropConfig its directory goes too. A per-workload
-// proxy of an earlier karga version had its own directory below the release's.
+// removeProxy deletes a proxy container; with dropConfig the release's proxy files go too.
 func removeProxy(ctx context.Context, rt ports.Runtime, home, rel string, c Change, dropConfig bool) error {
 	if err := removeProxyContainer(ctx, rt, home, rel, c.Applied.RuntimeName); err != nil {
 		return err
@@ -207,10 +204,7 @@ func removeProxy(ctx context.Context, rt ports.Runtime, home, rel string, c Chan
 	if !dropConfig {
 		return nil
 	}
-	if c.Name != ProxyResource {
-		return os.RemoveAll(filepath.Join(ProxyDir(home, rel), c.Name))
-	}
-	for _, f := range []string{"envoy.yaml", "lds.yaml", "cds.yaml", "admin.sock", "expose.yaml"} {
+	for _, f := range []string{"lds.yaml", "cds.yaml", "expose.yaml"} {
 		if err := os.Remove(filepath.Join(ProxyDir(home, rel), f)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -223,10 +217,7 @@ func removeProxyContainer(ctx context.Context, rt ports.Runtime, home, rel, name
 	if err := proxyops.RemoveWorkload(ctx, rt, name); err != nil {
 		return err
 	}
-	if inst := proxyInstance(rel, name); inst != "" {
-		return os.RemoveAll(filepath.Join(ProxyDir(home, rel), inst))
-	}
-	return nil
+	return os.RemoveAll(filepath.Join(ProxyDir(home, rel), proxyInstance(rel, name)))
 }
 
 // gatewayRoutesTo reports whether the host gateway sends traffic to proxy container o (to one of
