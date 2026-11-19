@@ -910,7 +910,7 @@ func TestContainerNamesFollowTheDigest(t *testing.T) {
 	ctx := context.Background()
 	must[*Result](t)(e.install())
 	first := e.rt.Name("cache-redis")
-	if !strings.HasPrefix(first, "cache-redis-") || len(first) != len("cache-redis-")+6 {
+	if !strings.HasPrefix(first, "cache-redis-") || len(first) != len("cache-redis-")+8 {
 		t.Fatalf("name %q", first)
 	}
 	must[*Result](t)(e.upgrade())
