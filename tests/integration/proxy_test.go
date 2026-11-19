@@ -57,8 +57,8 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range pub {
-		if p.Release == name && (p.HostIP != "127.0.0.1" || p.Workload != proxyName(t, rt, name)) {
-			t.Fatalf("only the release proxy publishes, and only loopback upstreams: %+v", p)
+		if p.Release == name {
+			t.Fatalf("a release publishes no port, its proxy included (the gateway uses the edge network): %+v", p)
 		}
 		if p.Port == port {
 			t.Fatalf("the host port must be held by the gateway, not a container: %+v", p)
@@ -409,10 +409,10 @@ func TestGatewaySurvivesDockerRestart(t *testing.T) {
 	}
 }
 
-// TestProxyReplaceWithoutDowntime: a Service added (new aliases) and a port newly exposed (new
-// published port) each need a new release proxy container. It starts next to the old one, the
-// gateway switches to it, and the old one drains: neither the gateway nor the release's network
-// sees an outage.
+// TestProxyReplaceWithoutDowntime: a Service added (new aliases) needs a new release proxy
+// container: it starts next to the old one, the gateway switches to it, and the old one drains. A
+// port newly exposed changes nothing of the proxy (D42). Neither the gateway nor the release's
+// network sees an outage.
 func TestProxyReplaceWithoutDowntime(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -431,7 +431,8 @@ func TestProxyReplaceWithoutDowntime(t *testing.T) {
 	net := startNetPinger(t, rt, name, "http://web:8080/")
 	time.Sleep(time.Second)
 
-	for _, more := range [][]string{{"second=true"}, {"second=true", "echo=true", "echoListener=" + tl}} {
+	for i, more := range [][]string{{"second=true"}, {"second=true", "echo=true", "echoListener=" + tl}} {
+		replace := i == 0
 		before := proxyName(t, rt, name)
 		sets = append(sets, more...)
 		res, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: common, Name: name, Package: webPkg,
@@ -440,12 +441,12 @@ func TestProxyReplaceWithoutDowntime(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, c := range res.Plan {
-			if c.Kind == deployment.KindProxy && c.Strategy != "replace" {
+			if c.Kind == deployment.KindProxy && (c.Strategy == "replace") != replace {
 				t.Fatalf("%v: proxy %+v", more, c)
 			}
 		}
-		if after := proxyName(t, rt, name); after == before {
-			t.Fatalf("%v: the proxy %s was not replaced", more, after)
+		if after := proxyName(t, rt, name); (after != before) != replace {
+			t.Fatalf("%v: proxy %s -> %s, replace %v", more, before, after, replace)
 		}
 		time.Sleep(time.Second)
 	}
@@ -456,8 +457,8 @@ func TestProxyReplaceWithoutDowntime(t *testing.T) {
 		t.Fatalf("%d requests through the gateway failed while the proxy was replaced (max %d)", f, maxRaceFailures)
 	}
 	// In the network a client that resolved the old proxy just before it went loses its request
-	// (the DNS race of any container change): the bound holds per replace.
-	if limit := 2 * maxRaceFailures; got.Failed > limit || got.OK == 0 {
-		t.Fatalf("%d requests in the release's network failed while the proxy was replaced twice (max %d): %s", got.Failed, limit, got)
+	// (the DNS race of any container change).
+	if got.Failed > maxRaceFailures || got.OK == 0 {
+		t.Fatalf("%d requests in the release's network failed while the proxy was replaced (max %d): %s", got.Failed, maxRaceFailures, got)
 	}
 }

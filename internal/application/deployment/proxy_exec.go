@@ -4,11 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
-	"net"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -133,7 +130,7 @@ func exposeRoutes(svcs services, paths map[Key]string) []gateway.Route {
 // proxyRequest is the release's Envoy container. It runs as the karga user so it can read its 0700
 // directory and karga can reach its admin socket. It joins its first network at creation; the
 // others are connected with their own aliases (connectProxy).
-func (e *Env) proxyRequest(rel, name string, revision int, spec ProxySpec, dir, user string) (ports.WorkloadRequest, error) {
+func (e *Env) proxyRequest(rel, name string, revision int, spec ProxySpec, dir, user, edgeIP string) (ports.WorkloadRequest, error) {
 	wr := ports.WorkloadRequest{
 		Name:          name,
 		Labels:        labels(rel, revision, KindProxy, ProxyResource),
@@ -152,7 +149,9 @@ func (e *Env) proxyRequest(rel, name string, revision int, spec ProxySpec, dir, 
 	if nets := sortedNetworks(spec); len(nets) > 0 {
 		wr.Networks, wr.Aliases = []string{proxyops.RuntimeName(rel, nets[0])}, spec.Networks[nets[0]]
 	}
-	return wr, gateway.Publish(&wr, spec.Published)
+	// It publishes nothing: the gateway reaches it at its edge address (D42).
+	wr.Labels[gateway.LabelEdgeIP] = edgeIP
+	return wr, nil
 }
 
 func sortedNetworks(spec ProxySpec) []string {
@@ -180,7 +179,20 @@ func (e *Env) createProxy(ctx context.Context, rt ports.Runtime, req ExecRequest
 			return err
 		}
 	}
-	wr, err := e.proxyRequest(req.Release, c.RuntimeName, req.Revision, *c.Proxy, dir, req.ProxyUser)
+	if err := gateway.EnsureEdge(ctx, rt, e.host.Edge()); err != nil {
+		return err
+	}
+	avoid := "" // a proxy this one replaces keeps its address until it goes
+	if c.Applied != nil {
+		if st, err := rt.GetWorkload(ctx, c.Applied.RuntimeName); err == nil {
+			avoid = st.Labels[gateway.LabelEdgeIP]
+		}
+	}
+	ip, err := gateway.EdgeIP(ctx, rt, e.home, e.host.Edge(), req.Release, avoid)
+	if err != nil {
+		return err
+	}
+	wr, err := e.proxyRequest(req.Release, c.RuntimeName, req.Revision, *c.Proxy, dir, req.ProxyUser, ip)
 	if err != nil {
 		return err
 	}
@@ -189,9 +201,12 @@ func (e *Env) createProxy(ctx context.Context, rt ports.Runtime, req ExecRequest
 		return err
 	}
 	for _, n := range sortedNetworks(*c.Proxy)[1:] {
-		if err := rt.ConnectNetwork(ctx, wr.Name, proxyops.RuntimeName(req.Release, n), c.Proxy.Networks[n]); err != nil {
+		if err := rt.ConnectNetwork(ctx, wr.Name, proxyops.RuntimeName(req.Release, n), c.Proxy.Networks[n], ""); err != nil {
 			return err
 		}
+	}
+	if err := rt.ConnectNetwork(ctx, wr.Name, gateway.EdgeNetwork, nil, ip); err != nil {
+		return err
 	}
 	return rt.StartWorkload(ctx, wr.Name)
 }
@@ -203,6 +218,9 @@ func removeProxy(ctx context.Context, rt ports.Runtime, home, rel string, c Chan
 	}
 	if !dropConfig {
 		return nil
+	}
+	if err := gateway.ReleaseEdge(ctx, home, rel); err != nil { // the release's last proxy went
+		return err
 	}
 	for _, f := range []string{"lds.yaml", "cds.yaml", "expose.yaml"} {
 		if err := os.Remove(filepath.Join(ProxyDir(home, rel), f)); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -220,12 +238,16 @@ func removeProxyContainer(ctx context.Context, rt ports.Runtime, home, rel, name
 	return os.RemoveAll(filepath.Join(ProxyDir(home, rel), proxyInstance(rel, name)))
 }
 
-// gatewayRoutesTo reports whether the host gateway sends traffic to proxy container o (to one of
-// the upstream ports it publishes): then an interrupted proxy replace switched over to it.
+// gatewayRoutesTo reports whether the host gateway sends traffic to proxy container o (to its
+// edge address): then an interrupted proxy replace switched over to it.
 func (e *Env) gatewayRoutesTo(o ports.Object) bool {
+	ip := o.Labels[gateway.LabelEdgeIP]
+	if ip == "" {
+		return false
+	}
 	eps, _ := e.host.Proxies.Endpoints(gateway.Dir(e.home))
-	for _, p := range gateway.ParseLabel(o.Labels) {
-		if slices.Contains(slices.Collect(maps.Values(eps)), net.JoinHostPort("127.0.0.1", strconv.Itoa(p.Upstream))) {
+	for _, ep := range eps {
+		if strings.HasPrefix(ep, ip+":") {
 			return true
 		}
 	}

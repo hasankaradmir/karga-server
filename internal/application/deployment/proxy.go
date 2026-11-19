@@ -64,9 +64,6 @@ type ProxySpec struct {
 	Limits string `json:"limits"`
 	// Networks maps each network to the service names the proxy answers to on it.
 	Networks map[string][]string `json:"networks"`
-	// Published lists, per service, the ports published for the gateway (container ports cannot
-	// change on a running container).
-	Published map[string][]int `json:"published,omitempty"`
 }
 
 // proxyCluster names the cluster of one service port.
@@ -140,7 +137,7 @@ func (s services) published() map[string][]int {
 }
 
 func (e *Env) proxySpecFor(s services) ProxySpec {
-	spec := ProxySpec{Image: e.host.Proxies.Container().Image, Limits: e.host.Proxies.Container().Source, Networks: map[string][]string{}, Published: s.published()}
+	spec := ProxySpec{Image: e.host.Proxies.Container().Image, Limits: e.host.Proxies.Container().Source, Networks: map[string][]string{}}
 	for _, n := range s.names() {
 		if w := s.wl[s.svc[n].Workload]; w != nil {
 			for _, net := range w.Networks {

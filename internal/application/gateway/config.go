@@ -42,7 +42,7 @@ func buildConfig(settings Settings, targets []Target, mountPath string) ports.Pr
 	uses := map[string]*use{}
 	for _, t := range targets {
 		for _, p := range t.Ports {
-			cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: Cluster(t.Release, p.Service, p.Port), Host: "127.0.0.1", Port: p.Upstream,
+			cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: Cluster(t.Release, p.Service, p.Port), Host: t.IP, Port: p.Port,
 				HealthPath: healthPath(t.Routes, p)})
 		}
 		for _, r := range t.Routes {
@@ -63,8 +63,7 @@ func buildConfig(settings Settings, targets []Target, mountPath string) ports.Pr
 					if l.ProxyProtocol != "" {
 						// Its own cluster: the service port may be exposed elsewhere without the header.
 						u.tcp = cluster + "_pp" + l.ProxyProtocol
-						up, _ := t.upstream(r.Service, r.Port)
-						cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: u.tcp, Host: "127.0.0.1", Port: up, ProxyProtocol: l.ProxyProtocol})
+						cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: u.tcp, Host: t.IP, Port: r.Port, ProxyProtocol: l.ProxyProtocol})
 					}
 				}
 			case !u.seen[r.Host+r.Path]:

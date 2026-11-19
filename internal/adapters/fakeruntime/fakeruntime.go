@@ -621,7 +621,7 @@ func (r *Runtime) PublishedPorts(context.Context) ([]ports.PublishedPort, error)
 }
 
 // ConnectNetwork implements ports.Runtime.
-func (r *Runtime) ConnectNetwork(_ context.Context, workload, network string, aliases []string) error {
+func (r *Runtime) ConnectNetwork(_ context.Context, workload, network string, aliases []string, ip string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.call("ConnectNetwork", workload+"@"+network+"="+strings.Join(aliases, ",")); err != nil {
@@ -638,6 +638,15 @@ func (r *Runtime) ConnectNetwork(_ context.Context, workload, network string, al
 		return fmt.Errorf("workload %s already on network %s: %w", workload, network, ports.ErrConflict)
 	}
 	w.Aliases[network] = slices.Clone(aliases)
+	if ip != "" {
+		if r.IPs == nil {
+			r.IPs = map[string]map[string]string{}
+		}
+		if r.IPs[workload] == nil {
+			r.IPs[workload] = map[string]string{}
+		}
+		r.IPs[workload][network] = ip
+	}
 	return nil
 }
 

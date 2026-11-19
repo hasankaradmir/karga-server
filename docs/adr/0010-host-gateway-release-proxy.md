@@ -25,6 +25,6 @@ listeners added without restarts, 0 failed requests over 20 switches (4574 reque
 gateway restart and about 15 MB of memory per Envoy.
 
 **Constraints:** The gateway is a single point for host traffic (restarted automatically). Local
-users can reach the loopback upstream ports directly. A remote Docker host is not supported (bind
+users can reach the proxies directly: the loopback upstream ports, the edge addresses since D42. A remote Docker host is not supported (bind
 mounts, unix sockets and the host network must be local). Replace workloads of one release cannot
 share a container port behind the release proxy.

@@ -50,7 +50,10 @@ $ karga version                          # the CLI's and the server's version an
   `/var/lib/karga` for the service), `--socket` (or `KARGA_SOCKET`; default
   `/run/karga/karga.sock`), `--reconcile-interval` (default 30s; `0` repairs only on container
   events), `--allow-capabilities` (see below), `--shutdown-grace` (default 5m: how long running
-  operations may take to finish on stop; keep the unit's `TimeoutStopSec` above it), `--version`. It logs text to stderr (the journal),
+  operations may take to finish on stop; keep the unit's `TimeoutStopSec` above it), `--edge-subnet`
+  (or `KARGA_EDGE_SUBNET`; default `10.213.0.0/16`: the range of the `karga-edge` network the
+  gateway reaches release proxies on; pick one no other network of the host uses; it cannot change
+  while proxies use it), `--version`. It logs text to stderr (the journal),
   with every secret value it knows masked. One server owns a `KARGA_HOME`.
 - **Compatibility:** the CLI and the server work together when they speak the same major API
   version (`2.x`), whatever their release versions; otherwise every command says which one to
@@ -78,8 +81,9 @@ interruption. `KARGA_PROXY_IMAGE` overrides the image.
 
 - **Release proxy** (`<release>-karga-proxy-<hash>`, one per release with Services): answers to the release's
   Service names on its networks and forwards each Service port to the current container of its
-  workload. Workloads carry only a per-revision alias meant for the proxy. It publishes the
-  exposed Service ports on loopback upstream ports (`127.0.0.1:<random>`) for the gateway.
+  workload. Workloads carry only a per-revision alias meant for the proxy. It publishes
+  nothing: the gateway reaches it on the edge network (`karga-edge`, D42) at its release's
+  address, on the Service ports themselves.
 - **Gateway** (`karga-gateway-<hash>`, one per host, host network): the host's only entry point. Its
   settings belong to the host's administrator, not to packages: the addresses it listens on
   (`karga gateway set listen`, default `127.0.0.1`) and its **listeners** (`karga gateway listener
@@ -106,13 +110,13 @@ outside or from other workloads. Notes:
 - The gateway runs as root with only `NET_BIND_SERVICE` and `DAC_OVERRIDE` (to bind low ports in the
   host namespace) and `no-new-privileges`. It is a single point for outside traffic; it restarts
   automatically.
-- Local users can reach the loopback upstream ports directly, bypassing the gateway.
+- Local users can reach the proxies' edge addresses (`10.213.x.y`) directly, bypassing the
+  gateway. Containers on the edge network cannot reach each other.
 - A connection open during a replace stays on the old container until it closes or `drainTimeout`
   passes. Configuration is validated before it is written; if Envoy still rejects it (for example a
   port it cannot bind), the error shows Envoy's reason.
-- After a reboot or Docker restart the gateway, proxies and workloads come back on their own. If
-  another process took a proxy's loopback upstream port meanwhile, the proxy does not start until the
-  next upgrade.
+- After a reboot or Docker restart the gateway, proxies and workloads come back on their own; a
+  proxy keeps its edge address.
 
 ## State
 

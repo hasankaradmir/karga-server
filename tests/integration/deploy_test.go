@@ -95,8 +95,8 @@ func TestRedis(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range pub {
-		if p.Release == release && (p.HostIP != "127.0.0.1" || p.Workload != proxyName(t, rt, release)) {
-			t.Fatalf("only the release proxy publishes, on 127.0.0.1 only: %+v", pub)
+		if p.Release == release {
+			t.Fatalf("a release publishes no port, its proxy included (the gateway uses the edge network): %+v", pub)
 		}
 	}
 

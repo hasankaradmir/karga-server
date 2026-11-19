@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -117,13 +118,15 @@ func before(t *testing.T, calls []string, first, second string) {
 	}
 }
 
-func upstream(t *testing.T, w *fakeruntime.Workload) string {
+// upstream is where the gateway reaches the exposed port (the manifests' service port) of proxy
+// container w: its edge address.
+func upstream(t *testing.T, w *fakeruntime.Workload, port int) string {
 	t.Helper()
-	gp := gateway.ParseLabel(w.Request.Labels)
-	if len(gp) != 1 {
-		t.Fatalf("gateway label: %v", w.Request.Labels)
+	ip := w.Request.Labels[gateway.LabelEdgeIP]
+	if ip == "" {
+		t.Fatalf("edge label: %v", w.Request.Labels)
 	}
-	return "127.0.0.1:" + strconv.Itoa(gp[0].Upstream)
+	return net.JoinHostPort(ip, strconv.Itoa(port))
 }
 
 func TestProxyAndGatewayInstall(t *testing.T) {
@@ -143,10 +146,12 @@ func TestProxyAndGatewayInstall(t *testing.T) {
 		pr.Sysctls["net.ipv4.ip_unprivileged_port_start"] != "0" || pr.Mounts[0].Target != testHost.Proxies.Container().MountPath {
 		t.Fatalf("proxy request: %+v", pr)
 	}
-	gp := gateway.ParseLabel(pr.Labels)
-	if len(pr.Ports) != 1 || pr.Ports[0].HostIP != "127.0.0.1" || pr.Ports[0].ContainerPort != port ||
-		len(gp) != 1 || gp[0] != (gateway.Port{Service: "redis", Port: port, Upstream: pr.Ports[0].HostPort}) {
-		t.Fatalf("the proxy publishes the exposed port on a loopback upstream: %+v %+v", pr.Ports, gp)
+	// It publishes nothing: it is on the edge network at the release's first address.
+	if len(pr.Ports) != 0 || pr.Labels[gateway.LabelEdgeIP] != "10.213.0.2" || r.rt.IPs[proxy.Request.Name][gateway.EdgeNetwork] != "10.213.0.2" {
+		t.Fatalf("the proxy's edge address: %+v %v %v", pr.Ports, pr.Labels, r.rt.IPs)
+	}
+	if n := r.rt.Networks[gateway.EdgeNetwork]; !n.Internal || n.Subnet != "10.213.0.0/16" {
+		t.Fatalf("edge network: %+v", n)
 	}
 	for _, req := range []ports.WorkloadRequest{pr, r.rt.Workload(gateway.ContainerName).Request} {
 		if req.MemoryBytes != 128<<20 || req.MilliCPU != 500 || req.PidsLimit != 256 {
@@ -166,11 +171,11 @@ func TestProxyAndGatewayInstall(t *testing.T) {
 	before(t, c, "StartWorkload:cache-redis", "Write:proxy:"+backend)
 	before(t, c, "Write:proxy:"+backend, "CreateWorkload:cache-karga-proxy")
 	before(t, c, "StartWorkload:cache-karga-proxy", "WaitReady:proxy:karga-redis-r1")
-	before(t, c, "WaitReady:proxy:karga-redis-r1", "Write:gateway:"+upstream(t, proxy))
+	before(t, c, "WaitReady:proxy:karga-redis-r1", "Write:gateway:"+upstream(t, proxy, port))
 	before(t, c, "Write:gateway:", "CreateWorkload:"+gateway.ContainerName)
-	before(t, c, "StartWorkload:"+gateway.ContainerName, "WaitReady:gateway:"+upstream(t, proxy))
+	before(t, c, "StartWorkload:"+gateway.ContainerName, "WaitReady:gateway:"+upstream(t, proxy, port))
 	cfgEps, _ := testHost.Proxies.Endpoints(gateway.Dir(r.home))
-	if cfgEps[gateway.Cluster("cache", "redis", port)] != upstream(t, proxy) {
+	if cfgEps[gateway.Cluster("cache", "redis", port)] != upstream(t, proxy, port) {
 		t.Fatalf("gateway endpoints: %v", cfgEps)
 	}
 }
@@ -204,11 +209,10 @@ func TestProxyReplace(t *testing.T) {
 	}
 }
 
-// A changed proxy (here: a port newly exposed) starts next to the old one; the gateway switches to
-// it before the old one drains and goes.
+// A changed proxy (here: another Service, so new aliases) starts next to the old one, at the other
+// address of the release's pair; the gateway switches to it before the old one drains and goes.
 func TestProxyReplacedNextToOld(t *testing.T) {
 	r, _ := newProxyRequest(t)
-	r.req.Resources = replaceManifest(r.port())
 	if err := r.run(); err != nil {
 		t.Fatal(err)
 	}
@@ -224,11 +228,14 @@ func TestProxyReplacedNextToOld(t *testing.T) {
 	old := proxies()
 	r.rt.Calls, r.rt.Raw = nil, nil
 	r.req.Revision = 2
-	r.req.Resources = exposedManifest(r.port())
+	r.req.Resources = withWorkload(exposedManifest(r.port()), "web", r.port()+1)
 	if err := r.run(); err != nil {
 		t.Fatal(err)
 	}
 	now := proxies()
+	if b := r.rt.Workloads[now[0]].Request.Labels[gateway.LabelEdgeIP]; b != "10.213.0.3" {
+		t.Fatalf("the replacing proxy's address: %q", b)
+	}
 	if len(old) != 1 || len(now) != 1 || now[0] == old[0] {
 		t.Fatalf("proxies before %v, after %v", old, now)
 	}
@@ -237,8 +244,8 @@ func TestProxyReplacedNextToOld(t *testing.T) {
 	c := r.rt.Calls
 	for _, step := range [][2]string{
 		{"StartWorkload:cache-karga-proxy", "WaitReady:proxy:karga-redis-r1"},
-		{"WaitReady:proxy:karga-redis-r1", "Write:gateway:" + upstream(t, r.rt.Workloads[now[0]])},
-		{"Write:gateway:" + upstream(t, r.rt.Workloads[now[0]]), "Drain:proxy"},
+		{"WaitReady:proxy:karga-redis-r1", "Write:gateway:" + upstream(t, r.rt.Workloads[now[0]], r.port())},
+		{"Write:gateway:" + upstream(t, r.rt.Workloads[now[0]], r.port()), "Drain:proxy"},
 		{"Drain:proxy", "DeleteWorkload:cache-karga-proxy"},
 	} {
 		before(t, c, step[0], step[1])

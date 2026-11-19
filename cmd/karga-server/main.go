@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/logging"
 
 	"github.com/hasankaradmir/karga-sdk/api"
@@ -37,6 +38,7 @@ func run() error {
 	interval := flag.Duration("reconcile-interval", server.DefaultReconcileInterval, "time between reconciliations of every release (0: only on container events)")
 	allowCaps := flag.String("allow-capabilities", "", "comma-separated Linux capabilities packages may add beyond Docker's default set, e.g. NET_ADMIN (ALL: any; each one gives containers power over the host)")
 	grace := flag.Duration("shutdown-grace", 5*time.Minute, "how long running operations may take to finish when the server stops (keep the systemd unit's TimeoutStopSec above it)")
+	edge := flag.String("edge-subnet", envOr("KARGA_EDGE_SUBNET", proxyops.DefaultEdgeSubnet), "address range of the network the gateway reaches release proxies on (IPv4, /16 to /28; it cannot change once proxies use it)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -46,6 +48,9 @@ func run() error {
 	}
 	cfg, err := config.Resolve(*home, os.Getenv)
 	if err != nil {
+		return err
+	}
+	if err := proxyops.ValidateEdgeSubnet(*edge); err != nil {
 		return err
 	}
 	redactor := logging.NewRedactor()
@@ -65,7 +70,7 @@ func run() error {
 	if slices.ContainsFunc(caps, func(c string) bool { return strings.EqualFold(c, "ALL") }) {
 		log.Warn("--allow-capabilities ALL: packages may give their containers any capability, power over the host included")
 	}
-	srv, err := server.New(ctx, server.Config{Home: cfg.Home, Socket: *socket, Log: log, Redactor: redactor, AllowedCaps: caps, ReconcileInterval: *interval}, rt)
+	srv, err := server.New(ctx, server.Config{Home: cfg.Home, Socket: *socket, Log: log, Redactor: redactor, AllowedCaps: caps, ReconcileInterval: *interval, EdgeSubnet: *edge}, rt)
 	if err != nil {
 		return err
 	}

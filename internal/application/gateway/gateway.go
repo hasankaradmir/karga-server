@@ -25,18 +25,15 @@ import (
 // The gateway is the host's single Envoy: it belongs to no release; karga creates it when a Service
 // is exposed and removes it when none is.
 const (
-	ContainerName = "karga-gateway"
-	// LabelPorts on a release proxy container lists the loopback upstream ports it publishes its
-	// exposed service ports on, as JSON ([]Port).
-	LabelPorts     = "io.karga.gateway"
+	ContainerName  = "karga-gateway"
 	LabelComponent = "io.karga.component"
 )
 
-// Port is a service port a release proxy publishes on a loopback upstream port for the gateway.
+// Port is a service port of a release proxy the gateway forwards to, at the proxy's edge address
+// (D42).
 type Port struct {
-	Service  string `json:"service"`
-	Port     int    `json:"port"`
-	Upstream int    `json:"upstream"`
+	Service string
+	Port    int
 }
 
 // Route attaches a service port to a gateway listener: by Host and Path (a prefix) on an http or
@@ -57,16 +54,19 @@ type Route struct {
 // Target is one release proxy the gateway forwards to, with what its release exposes.
 type Target struct {
 	Release, Container string
-	Ports              []Port
-	Routes             []Route
+	// IP is the proxy's address on the edge network.
+	IP     string
+	Ports  []Port
+	Routes []Route
 }
 
-func (t Target) upstream(service string, port int) (int, bool) {
-	i := slices.IndexFunc(t.Ports, func(p Port) bool { return p.Service == service && p.Port == port })
-	if i < 0 {
-		return 0, false
+// upstream is where the gateway reaches a service port of the target: its proxy's edge address
+// and the service port itself.
+func (t Target) upstream(service string, port int) (string, bool) {
+	if !slices.ContainsFunc(t.Ports, func(p Port) bool { return p.Service == service && p.Port == port }) {
+		return "", false
 	}
-	return t.Ports[i].Upstream, true
+	return net.JoinHostPort(t.IP, strconv.Itoa(port)), true
 }
 
 // Gateway is the host gateway as karga-server runs it: a container on rt, configured through the
@@ -94,7 +94,7 @@ type Runtime interface {
 
 // findTargets lists every release proxy that publishes upstream ports, with its release's routes.
 func findTargets(ctx context.Context, rt Runtime, home string) ([]Target, error) {
-	objs, err := rt.ListLabeled(ctx, LabelPorts)
+	objs, err := rt.ListLabeled(ctx, LabelEdgeIP)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,12 @@ func findTargets(ctx context.Context, rt Runtime, home string) ([]Target, error)
 		if err != nil {
 			return nil, err
 		}
-		t := Target{Release: rel, Container: o.Name, Ports: ParseLabel(o.Labels), Routes: routes}
+		t := Target{Release: rel, Container: o.Name, IP: o.Labels[LabelEdgeIP], Routes: routes}
+		for _, r := range routes {
+			if _, seen := t.upstream(r.Service, r.Port); !seen {
+				t.Ports = append(t.Ports, Port{Service: r.Service, Port: r.Port})
+			}
+		}
 		// While a proxy replaces another, both are labeled: the gateway uses the one Expose named,
 		// or else the newer one.
 		i := slices.IndexFunc(out, func(x Target) bool { return x.Release == rel })
@@ -394,7 +399,7 @@ func (g *Gateway) Routes(ctx context.Context) ([]Exposed, error) {
 				route = r.Host + r.Path
 			}
 			out = append(out, Exposed{Listener: fmt.Sprintf("%s:%d", l.Name, l.Port), Route: route, Release: t.Release,
-				Service: fmt.Sprintf("%s:%d", r.Service, r.Port), Upstream: net.JoinHostPort("127.0.0.1", strconv.Itoa(up))})
+				Service: fmt.Sprintf("%s:%d", r.Service, r.Port), Upstream: up})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

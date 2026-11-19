@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -85,9 +86,37 @@ func IPOverlap(a, b string) bool {
 type Host struct {
 	Proxies ports.ProxyControl
 	Net     ports.HostNet
+	// EdgeSubnet is the address range of the network the gateway reaches the release proxies on
+	// (D42; empty: DefaultEdgeSubnet).
+	EdgeSubnet string
 	// supported says whether the runtime can run karga's proxies: they rely on bind-mounted unix
 	// sockets, inotify and (the gateway) the host network namespace (a local, rootful Docker on Linux).
 	supported atomic.Bool
+}
+
+// DefaultEdgeSubnet is the edge network's range unless karga-server is told another one.
+const DefaultEdgeSubnet = "10.213.0.0/16"
+
+// Edge returns the edge network's range.
+func (h *Host) Edge() string {
+	if h.EdgeSubnet == "" {
+		return DefaultEdgeSubnet
+	}
+	return h.EdgeSubnet
+}
+
+// ValidateEdgeSubnet checks an edge network range: IPv4, from /16 to /28.
+func ValidateEdgeSubnet(s string) error {
+	p, err := netip.ParsePrefix(s)
+	switch {
+	case err != nil:
+		return fmt.Errorf("edge subnet %q: %w", s, err)
+	case !p.Addr().Is4() || p.Bits() < 16 || p.Bits() > 28:
+		return fmt.Errorf("edge subnet %q: want an IPv4 range from /16 to /28", s)
+	case p.Masked() != p:
+		return fmt.Errorf("edge subnet %q: want the range's first address, %s", s, p.Masked())
+	}
+	return nil
 }
 
 // UseRuntime records whether the runtime described by info can run karga's proxies.
