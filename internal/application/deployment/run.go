@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"strings"
-	"time"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
@@ -168,9 +167,6 @@ func (r *run) proxy() string {
 	return ""
 }
 
-// proxyDrain bounds how long a replaced release proxy waits for its connections to finish.
-const proxyDrain = 30 * time.Second
-
 // retireProxy drains and removes the proxy a replaced one took over from, once the gateway routes
 // to the new one: in the release's networks both answer to the Services' names until then.
 func (r *run) retireProxy(ctx context.Context) error {
@@ -179,8 +175,8 @@ func (r *run) retireProxy(ctx context.Context) error {
 			continue
 		}
 		old := c.Applied.RuntimeName
-		progress(ctx, c.Kind, c.Name, PhaseDrain, "waiting up to %s for connections to %s to finish", proxyDrain, old)
-		if done, err := r.e.host.Proxies.Drain(ctx, ProxyAdminDir(r.e.home, r.req.Release, old), proxyDrain); err != nil || !done {
+		progress(ctx, c.Kind, c.Name, PhaseDrain, "waiting up to %s for connections to %s to finish", proxyops.ProxyDrainTimeout, old)
+		if done, err := r.e.host.Proxies.Drain(ctx, ProxyAdminDir(r.e.home, r.req.Release, old), true, proxyops.ProxyDrainTimeout); err != nil || !done {
 			progress(ctx, c.Kind, c.Name, PhaseDrain, "%s still had connections (%v); they are closed", old, err)
 		}
 		progress(ctx, c.Kind, c.Name, PhaseStop, "stopping %s", old)
@@ -308,7 +304,11 @@ func (r *run) expose(ctx context.Context) error {
 	progress(ctx, "Gateway", gateway.ContainerName, PhaseSwitch, "updating the host gateway")
 	targets, err := gateway.New(r.rt, r.e.host, r.e.home).Expose(ctx, r.req.Release, r.proxy(), r.req.Resources, exposeRoutes(r.svcs, r.paths))
 	if err == nil {
-		err = envoyErr(ctx, r.rt, gateway.ContainerName, gateway.New(r.rt, r.e.host, r.e.home).Wait(ctx, r.req.Release, targets))
+		gw := gateway.New(r.rt, r.e.host, r.e.home)
+		err = gw.Wait(ctx, r.req.Release, targets)
+		if name, nerr := gw.Current(ctx); nerr == nil {
+			err = envoyErr(ctx, r.rt, name, err)
+		}
 	}
 	if err != nil {
 		r.disrupted = true

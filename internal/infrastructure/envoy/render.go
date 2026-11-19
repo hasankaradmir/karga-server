@@ -68,6 +68,8 @@ func filterListener(name, address string, port int, filter string, cfg validated
 	return &listenerv3.Listener{
 		Name:    name,
 		Address: socketAddress(address, port),
+		// A gateway replacing another binds the same ports while both run (D38).
+		EnableReusePort: wrapperspb.Bool(true),
 		FilterChains: []*listenerv3.FilterChain{{Filters: []*listenerv3.Filter{{
 			Name: filter, ConfigType: &listenerv3.Filter_TypedConfig{TypedConfig: tc},
 		}}}},
@@ -204,8 +206,9 @@ func httpListener(l HTTPListener, logs []*accesslogv3.AccessLog) (*listenerv3.Li
 		return nil, err
 	}
 	lis := &listenerv3.Listener{
-		Name:    name,
-		Address: socketAddress(l.Address, l.Port),
+		Name:            name,
+		Address:         socketAddress(l.Address, l.Port),
+		EnableReusePort: wrapperspb.Bool(true),
 		ListenerFilters: []*listenerv3.ListenerFilter{{
 			Name: "envoy.filters.listener.tls_inspector", ConfigType: &listenerv3.ListenerFilter_TypedConfig{TypedConfig: inspector},
 		}},

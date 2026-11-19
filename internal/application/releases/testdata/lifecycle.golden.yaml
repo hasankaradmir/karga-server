@@ -20,7 +20,6 @@
     - CreateVolume:cache-redis-data
     - CreateWorkload:cache-redis
     - StartWorkload:cache-redis
-    - StopWorkload:karga-gateway
 - step: install again (same package and values)
   result:
     from: 1
@@ -56,7 +55,6 @@
     - StopWorkload:cache-redis
     - StartWorkload:cache-redis
     - DeleteWorkload:cache-redis
-    - StopWorkload:karga-gateway
 - step: upgrade config
   result:
     from: 2
@@ -82,7 +80,6 @@
     - StopWorkload:cache-redis
     - StartWorkload:cache-redis
     - DeleteWorkload:cache-redis
-    - StopWorkload:karga-gateway
 - step: upgrade that fails to start
   error: 'Workload "redis": boom'
   result:
@@ -112,7 +109,6 @@
     - StopWorkload:cache-redis
     - StartWorkload:cache-redis
     - DeleteWorkload:cache-redis
-    - StopWorkload:karga-gateway
 - step: rollback to 2
   result:
     from: 3
@@ -142,7 +138,6 @@
     - StopWorkload:cache-redis
     - StartWorkload:cache-redis
     - DeleteWorkload:cache-redis
-    - StopWorkload:karga-gateway
 - step: repair a removed container
   result:
     actions:
@@ -166,7 +161,6 @@
     - EnsureImage:redis:7.4.1
     - CreateWorkload:cache-redis
     - StartWorkload:cache-redis
-    - StopWorkload:karga-gateway
 - step: dry-run upgrade
   result:
     dryRun: true
@@ -211,7 +205,6 @@
   runtimeCalls:
     - 'Info:'
     - 'Info:'
-    - StopWorkload:karga-gateway
 - step: uninstall
   result:
     from: 5
@@ -231,4 +224,3 @@
   runtimeCalls:
     - StopWorkload:cache-redis
     - DeleteWorkload:cache-redis
-    - StopWorkload:karga-gateway

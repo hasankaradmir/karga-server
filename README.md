@@ -80,7 +80,7 @@ interruption. `KARGA_PROXY_IMAGE` overrides the image.
   Service names on its networks and forwards each Service port to the current container of its
   workload. Workloads carry only a per-revision alias meant for the proxy. It publishes the
   exposed Service ports on loopback upstream ports (`127.0.0.1:<random>`) for the gateway.
-- **Gateway** (`karga-gateway`, one per host, host network): the host's only entry point. Its
+- **Gateway** (`karga-gateway-<hash>`, one per host, host network): the host's only entry point. Its
   settings belong to the host's administrator, not to packages: the addresses it listens on
   (`karga gateway set listen`, default `127.0.0.1`) and its **listeners** (`karga gateway listener
   add`): a name, a port and a protocol. A new host has `web` (80, http) and `websecure` (443,

@@ -189,7 +189,7 @@ func (Proxies) WriteInstance(dir, instance, node string, mode int) error {
 func (Proxies) Command(instance string) []string { return envoy.CommandFor(instance) }
 
 // Drain returns at once.
-func (Proxies) Drain(context.Context, string, time.Duration) (bool, error) { return true, nil }
+func (Proxies) Drain(context.Context, string, bool, time.Duration) (bool, error) { return true, nil }
 
 // Container is Envoy's.
 func (Proxies) Container() ports.ProxyContainer { return envoy.Proxies{}.Container() }
@@ -453,10 +453,14 @@ func (r *Runtime) ListManaged(_ context.Context, release string) ([]ports.Object
 	return out, nil
 }
 
-// Logs implements ports.Runtime: it writes the last tail lines of Output[name] (follow ends at once).
+// Logs implements ports.Runtime: it writes the last tail lines of Output[name], or of Output under
+// the name without its digest suffix (follow ends at once).
 func (r *Runtime) Logs(_ context.Context, name string, tail int, _ bool, w io.Writer) error {
 	r.mu.Lock()
-	out := r.Output[name]
+	out, ok := r.Output[name]
+	if !ok {
+		out = r.Output[unhashed("GetWorkload", name)]
+	}
 	_, exists := r.Workloads[name]
 	r.mu.Unlock()
 	if !exists {

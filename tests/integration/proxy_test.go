@@ -115,7 +115,7 @@ func TestGatewayReplaceWithoutLoss(t *testing.T) {
 	}
 
 	// Restarting the gateway, the proxy or the backend (which may change its IP) keeps routing.
-	for _, c := range []string{gateway.ContainerName, proxyName(t, rt, name), recordedContainer(t, s, name, "web")} {
+	for _, c := range []string{gatewayName(t, rt), proxyName(t, rt, name), recordedContainer(t, s, name, "web")} {
 		if err := rt.StopWorkload(ctx, c, 2*time.Second); err != nil {
 			t.Fatal(err)
 		}
@@ -165,7 +165,7 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 		t.Fatalf("gateway health: %+v %v", health, err)
 	}
 	// The access log is off by default; turning it on logs requests without recreating the gateway.
-	before, _ := rt.GetWorkload(ctx, gateway.ContainerName)
+	before, _ := rt.GetWorkload(ctx, gatewayName(t, rt))
 	if err := s.Gateway.SetAccessLog(ctx, true); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 	if !strings.Contains(logged.String(), `"GET /logged HTTP/1.1"`) {
 		t.Fatalf("request not in the gateway access log:\n%s", logged.String())
 	}
-	if after, _ := rt.GetWorkload(ctx, gateway.ContainerName); after.Labels[ports.LabelManaged] == "" || before.Name != after.Name {
+	if after, _ := rt.GetWorkload(ctx, gatewayName(t, rt)); after.Labels[ports.LabelManaged] == "" || before.Name != after.Name {
 		t.Fatalf("gateway changed: %+v", after)
 	}
 	// The same host and path in a third release is refused before anything is created.
@@ -200,8 +200,8 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := rt.GetWorkload(ctx, gateway.ContainerName); err == nil {
-		t.Fatal("gateway still exists after the last release went")
+	if name := gatewayName(t, rt); name != "" {
+		t.Fatalf("gateway %s still exists after the last release went", name)
 	}
 }
 

@@ -11,6 +11,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- The gateway hands over without an outage when its image or limits change (D38): it is named
+  `karga-gateway-<8 hex>` and found by its label; the new one binds the same ports
+  (`SO_REUSEPORT`, Envoy without hot restart) and takes over once it routes, then the old one
+  closes its listeners, drains for up to 30s and goes.
 - The release proxy is replaced like a workload (D37): it is named
   `<release>-karga-proxy-<8 hex>`, and a changed one (a newly exposed port, a Service added or
   removed, a new image) starts next to the old one; the gateway switches to it and the old one

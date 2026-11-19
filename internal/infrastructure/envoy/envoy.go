@@ -52,7 +52,9 @@ func Command() []string { return CommandFor("") }
 
 // CommandFor runs the Envoy of one instance (see WriteInstance); "" is the directory's own.
 func CommandFor(instance string) []string {
-	return []string{"-c", path.Join(MountPath, instance, bootstrapFile), "--concurrency", "1", "--log-level", "warn"}
+	// No hot restart: karga replaces an Envoy by starting another, and two gateways in the host
+	// network would claim the same hot-restart socket.
+	return []string{"-c", path.Join(MountPath, instance, bootstrapFile), "--concurrency", "1", "--log-level", "warn", "--disable-hot-restart"}
 }
 
 const (
@@ -115,8 +117,8 @@ func (Proxies) WriteInstance(dir, instance, node string, socketMode int) error {
 func (Proxies) Command(instance string) []string { return CommandFor(instance) }
 
 // Drain implements ports.ProxyControl.
-func (Proxies) Drain(ctx context.Context, dir string, timeout time.Duration) (bool, error) {
-	return newAdmin(dir).Drain(ctx, timeout)
+func (Proxies) Drain(ctx context.Context, dir string, graceful bool, timeout time.Duration) (bool, error) {
+	return newAdmin(dir).Drain(ctx, graceful, timeout)
 }
 
 // Endpoints implements ports.ProxyControl.
@@ -560,11 +562,16 @@ func (a *Admin) OldConnections(ctx context.Context, clusters []string) (int, err
 	return total, nil
 }
 
-// Drain stops the Envoy taking new work: its listeners drain gracefully (HTTP responses ask clients
-// to close, HTTP/2 gets GOAWAY), then it waits until no client connection is left, or timeout. It
-// reports whether every connection finished. An Envoy that is gone counts as drained.
-func (a *Admin) Drain(ctx context.Context, timeout time.Duration) (bool, error) {
-	if _, err := a.do(ctx, http.MethodPost, "/drain_listeners?graceful"); err != nil {
+// Drain stops the Envoy taking new work, then waits until no client connection is left, or
+// timeout; it reports whether every connection finished. Graceful drains keep the listeners open
+// while HTTP responses ask clients to close (HTTP/2 gets GOAWAY); otherwise the listeners close
+// at once. An Envoy that is gone counts as drained.
+func (a *Admin) Drain(ctx context.Context, graceful bool, timeout time.Duration) (bool, error) {
+	path := "/drain_listeners"
+	if graceful {
+		path += "?graceful"
+	}
+	if _, err := a.do(ctx, http.MethodPost, path); err != nil {
 		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
 			return true, nil
 		}
@@ -587,22 +594,15 @@ func (a *Admin) Drain(ctx context.Context, timeout time.Duration) (bool, error) 
 	}
 }
 
-// clientConnections counts the connections open on the Envoy's listeners, its admin API's aside.
+// clientConnections counts the client connections the Envoy holds (its admin API's aside), on
+// listeners still open or already closed.
 func (a *Admin) clientConnections(ctx context.Context) (int, error) {
-	body, err := a.get(ctx, "/stats?filter=^listener\\..*\\.downstream_cx_active$")
+	body, err := a.get(ctx, "/stats?filter=^server\\.total_connections$")
 	if err != nil {
 		return 0, err
 	}
-	total := 0
-	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
-		name, v, ok := strings.Cut(line, ": ")
-		if !ok || strings.HasPrefix(name, "listener.admin.") {
-			continue
-		}
-		n, _ := strconv.Atoi(v)
-		total += n
-	}
-	return total, nil
+	_, v, _ := strings.Cut(strings.TrimSpace(string(body)), ": ")
+	return strconv.Atoi(v)
 }
 
 // WaitReady polls Ready until it is true or timeout passes.

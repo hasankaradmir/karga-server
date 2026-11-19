@@ -70,7 +70,35 @@ func TestMain(m *testing.M) {
 }
 
 // removeGateway removes the host gateway container, whichever home it serves.
-func removeGateway() { _ = exec.Command("docker", "rm", "-f", gateway.ContainerName).Run() }
+func removeGateway() {
+	out, _ := exec.Command("docker", "ps", "-aq", "--filter", "label="+gateway.LabelComponent+"=gateway").Output()
+	if ids := strings.Fields(string(out)); len(ids) > 0 {
+		_ = exec.Command("docker", append([]string{"rm", "-f"}, ids...)...).Run()
+	}
+}
+
+// gatewayName returns the host gateway's container ("" if none): its name ends with a digest of
+// what it is made from.
+func gatewayName(t *testing.T, rt ports.Runtime) string {
+	t.Helper()
+	objs, err := rt.ListLabeled(context.Background(), gateway.LabelComponent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, o := range objs {
+		if o.Labels[gateway.LabelComponent] == "gateway" {
+			names = append(names, o.Name)
+		}
+	}
+	if len(names) > 1 {
+		t.Fatalf("gateways: %v", names)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
+}
 
 func requireLinux(t *testing.T) {
 	t.Helper()

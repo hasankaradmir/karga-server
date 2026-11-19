@@ -255,7 +255,8 @@ Services is refused.
   networks both answer to the Service names meanwhile; a client that cached the old address past
   that fails, as after any container change. An interrupted switch is repaired before the next
   plan: of the two proxies the one the gateway routes to is kept.
-- **Gateway** (`karga-gateway`, one per host, host network) is configured by the host's
+- **Gateway** (`karga-gateway-<hash>`, one per host, host network, found by its label
+  `io.karga.component=gateway`) is configured by the host's
   administrator in `$KARGA_HOME/gateway.yaml`: the addresses it listens on (default `127.0.0.1`) and
   its listeners (name, port, protocol `tcp`, `http` or `https`). Packages only name listeners. The
   configuration is rebuilt under `$KARGA_HOME/gateway.lock` from the settings, the proxies' labels and
@@ -272,6 +273,16 @@ Services is refused.
   bucket per HTTP connection manager: per listener, per host on https) and, on tcp listeners, a
   PROXY protocol header (`upstream_proxy_protocol` on a cluster of its own; the release proxy passes
   the bytes through). They only rewrite the gateway's files.
+
+The gateway container is named after what it is made from (`karga-gateway-<8 hex>` of its
+`KARGA_HOME`, image and limits). When that changes (a karga version with a new Envoy, another
+`KARGA_PROXY_IMAGE`) the gateway is handed over without an outage (D38): the new one starts with
+its own bootstrap and admin socket in `gateway/<hash>/` and binds the same ports, which every
+listener opens with `SO_REUSEPORT` (Envoy runs with `--disable-hot-restart`, whose socket two
+Envoys in the host network would share). Once it routes every exposed port, the old one closes its
+listeners (`/drain_listeners`: the kernel sends new connections to the new one), its connections
+finish (up to 30s), and it is removed. If the new one does not become ready it is removed and the
+old one keeps serving. A crash is not covered: the restarted container serves again.
 
 A replace switches only the release proxy: the gateway forwards to the proxy, which stays. A workload
 no Service targets receives no traffic and is replaced without a switch. Configuration is built from

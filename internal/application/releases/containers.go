@@ -13,7 +13,6 @@ import (
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
-	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -56,7 +55,8 @@ type logTarget struct{ label, runtime string }
 
 func (s *Containers) logTargets(ctx context.Context, req LogsRequest) ([]logTarget, error) {
 	if req.Gateway {
-		return []logTarget{{"gateway", gateway.ContainerName}}, nil
+		name, err := s.c.gw.Current(ctx)
+		return []logTarget{{"gateway", name}}, err
 	}
 	if _, err := s.c.store.GetRelease(ctx, req.Release); err != nil {
 		return nil, err
