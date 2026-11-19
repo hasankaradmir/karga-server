@@ -6,7 +6,7 @@ healthy: true
 listener: ""
 # route=<host> exposes the web port for that host on gateway listener routeListener.
 route: ""
-routeListener: web
+routeListener: http
 # startDelay seconds before the server listens, like a real application starting up.
 startDelay: 0
 # strategy is the update strategy.

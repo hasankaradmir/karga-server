@@ -44,5 +44,6 @@ directory.
 | D38 | Gateway hand-over | The gateway is `karga-gateway-<8 hex of its source>`, found by label; a new source starts a second gateway on the same ports (`SO_REUSEPORT`, no hot restart), which takes over once it routes; the old one closes its listeners, drains up to 30s and goes. Measured: no failed connection in 9 hand-overs under load. |
 | D39 | Gateway settings file | `gateway.yaml` edited by hand, checked and applied with `karga gateway validate|apply`; replaced by D40. |
 | D40 | Gateway settings as documents | The settings are a document (`apiVersion: karga.io/v1alpha1`, `kind: Gateway`, `spec`) the user keeps; karga never writes it. `diff -f` and `apply -f` (the whole desired state) check it; each apply and each gateway command is a revision (last 10, with time, actor and source); `rollback` applies an earlier one; a revision the gateway does not route with is dropped. |
+| D41 | Listener names and HTTPS redirects | The default listeners are `http` (80, `redirectHTTPS`) and `https` (443). An http listener redirects plain requests for the hosts an https listener serves only with `redirectHTTPS`, each to the port of the https listener serving the host; the port-80 rule is gone. |
 
 D23 was not used.

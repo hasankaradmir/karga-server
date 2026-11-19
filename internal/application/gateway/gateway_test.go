@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -31,14 +32,14 @@ func TestGatewayConfigListenersAndRedirects(t *testing.T) {
 	targets := []Target{
 		{Release: "a", Ports: []Port{{Service: "shop", Port: 80, Upstream: 4001}, {Service: "db", Port: 5432, Upstream: 4002}},
 			Routes: []Route{
-				{Service: "shop", Port: 80, Listener: "websecure", Host: "secure.example", Path: "/", TLSSecret: "cert", CertDir: "/c"},
-				{Service: "shop", Port: 80, Listener: "web", Host: "plain.example", Path: "/"},
+				{Service: "shop", Port: 80, Listener: "https", Host: "secure.example", Path: "/", TLSSecret: "cert", CertDir: "/c"},
+				{Service: "shop", Port: 80, Listener: "http", Host: "plain.example", Path: "/"},
 				{Service: "db", Port: 5432, Listener: "pg"},
 			}},
 		{Release: "b", Ports: []Port{{Service: "web", Port: 80, Upstream: 4003}},
 			Routes: []Route{
-				{Service: "web", Port: 80, Listener: "websecure", Host: "both.example", Path: "/", TLSSecret: "cert", CertDir: "/d"},
-				{Service: "web", Port: 80, Listener: "web", Host: "both.example", Path: "/"},
+				{Service: "web", Port: 80, Listener: "https", Host: "both.example", Path: "/", TLSSecret: "cert", CertDir: "/d"},
+				{Service: "web", Port: 80, Listener: "http", Host: "both.example", Path: "/"},
 			}},
 	}
 	cfg := buildConfig(testSettings(), targets, "/etc/karga-proxy")
@@ -62,12 +63,12 @@ func TestGatewayConfigListenersAndRedirects(t *testing.T) {
 	if len(tls) != 2 || len(plain) != 2 {
 		t.Fatalf("http listeners: %+v", cfg.HTTP)
 	}
-	if c := tls[0].Certs; len(c) != 2 || !strings.HasPrefix(c["secure.example"].Chain, "/etc/karga-proxy/certs/a_websecure_secure.example_") {
+	if c := tls[0].Certs; len(c) != 2 || !strings.HasPrefix(c["secure.example"].Chain, "/etc/karga-proxy/certs/a_https_secure.example_") {
 		t.Fatalf("certs: %+v", c)
 	}
 	// secure.example gets a redirect; both.example is served plainly on 80, so it does not.
-	if r := plain[0].Redirects; !slices.Equal(r, []string{"secure.example"}) || plain[0].RedirectPort != 443 {
-		t.Fatalf("redirects: %v %d", r, plain[0].RedirectPort)
+	if r := plain[0].Redirects; !maps.Equal(r, map[string]int{"secure.example": 443}) {
+		t.Fatalf("redirects: %v", r)
 	}
 }
 
@@ -79,11 +80,11 @@ func TestSyncCertsCopiesAndPrunes(t *testing.T) {
 		}
 	}
 	dir := t.TempDir()
-	targets := []Target{{Release: "a", Routes: []Route{{Service: "web", Port: 80, Listener: "websecure", Host: "secure.example", Path: "/", TLSSecret: "cert", CertDir: src}}}}
+	targets := []Target{{Release: "a", Routes: []Route{{Service: "web", Port: 80, Listener: "https", Host: "secure.example", Path: "/", TLSSecret: "cert", CertDir: src}}}}
 	if err := syncCerts(dir, targets, true); err != nil {
 		t.Fatal(err)
 	}
-	key := filepath.Join(dir, "certs", certName("a", "websecure", "secure.example", src)+".key")
+	key := filepath.Join(dir, "certs", certName("a", "https", "secure.example", src)+".key")
 	if b, err := os.ReadFile(key); err != nil || string(b) != "KEY" {
 		t.Fatalf("key: %q %v", b, err)
 	}
@@ -120,7 +121,7 @@ func TestCheckExposures(t *testing.T) {
 	}
 	rt := fakeruntime.New("img")
 	proxyOf(t, rt, home, "other", []Port{{Service: "web", Port: 80, Upstream: 4001}, {Service: "db", Port: 5432, Upstream: 4002}}, []Route{
-		{Service: "web", Port: 80, Listener: "websecure", Host: "secure.example", Path: "/", TLSSecret: "cert"},
+		{Service: "web", Port: 80, Listener: "https", Host: "secure.example", Path: "/", TLSSecret: "cert"},
 		{Service: "db", Port: 5432, Listener: "pg"},
 	})
 	check := func(e resource.Exposure) string {
@@ -139,13 +140,13 @@ func TestCheckExposures(t *testing.T) {
 	}{
 		{resource.Exposure{Port: "p", Listener: "nope", Host: "a.example", Path: "/"}, "no such gateway listener"},
 		{resource.Exposure{Port: "p", Listener: "pg", Host: "a.example", Path: "/"}, "tcp listener and takes no host"},
-		{resource.Exposure{Port: "p", Listener: "web"}, "needs a host"},
-		{resource.Exposure{Port: "p", Listener: "websecure", Host: "a.example", Path: "/"}, "needs tls.secret"},
-		{resource.Exposure{Port: "p", Listener: "web", Host: "a.example", Path: "/", TLS: tls}, "plain http listener"},
+		{resource.Exposure{Port: "p", Listener: "http"}, "needs a host"},
+		{resource.Exposure{Port: "p", Listener: "https", Host: "a.example", Path: "/"}, "needs tls.secret"},
+		{resource.Exposure{Port: "p", Listener: "http", Host: "a.example", Path: "/", TLS: tls}, "plain http listener"},
 		{resource.Exposure{Port: "p", Listener: "pg"}, "used by other/db"},
-		{resource.Exposure{Port: "p", Listener: "websecure", Host: "secure.example", Path: "/", TLS: &resource.ExposureTLS{Secret: "cert"}}, "already routed to other/web"},
-		{resource.Exposure{Port: "p", Listener: "websecure", Host: "secure.example", Path: "/api", TLS: tls}, "another certificate"},
-		{resource.Exposure{Port: "p", Listener: "websecure", Host: "mine.example", Path: "/", TLS: tls}, ""},
+		{resource.Exposure{Port: "p", Listener: "https", Host: "secure.example", Path: "/", TLS: &resource.ExposureTLS{Secret: "cert"}}, "already routed to other/web"},
+		{resource.Exposure{Port: "p", Listener: "https", Host: "secure.example", Path: "/api", TLS: tls}, "another certificate"},
+		{resource.Exposure{Port: "p", Listener: "https", Host: "mine.example", Path: "/", TLS: tls}, ""},
 	} {
 		if got := check(tt.e); tt.want == "" && got != "" || !strings.Contains(got, tt.want) {
 			t.Errorf("%+v: want %q, got %q", tt.e, tt.want, got)
@@ -160,7 +161,7 @@ func TestSettings(t *testing.T) {
 		t.Fatalf("defaults: %+v %v", s, err)
 	}
 	s.Listeners = append(s.Listeners, Listener{Name: "alt", Port: 80, Protocol: ProtocolHTTP})
-	if err := WriteSettings(home, s); err == nil || !strings.Contains(err.Error(), "port 80 is used by listener \"web\"") {
+	if err := WriteSettings(home, s); err == nil || !strings.Contains(err.Error(), "port 80 is used by listener \"http\"") {
 		t.Fatalf("duplicate port: %v", err)
 	}
 	if err := WriteSettings(home, Settings{Listen: []string{"localhost"}}); err == nil || !strings.Contains(err.Error(), "not an IP address") {
@@ -187,7 +188,7 @@ func TestSyncFollowsExposures(t *testing.T) {
 	if _, ok := rt.Lookup(ContainerName); ok {
 		t.Fatal("gateway started with nothing exposed")
 	}
-	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "web", Host: "b.example", Path: "/"}})
+	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "http", Host: "b.example", Path: "/"}})
 	targets, err := New(rt, h, home).Sync(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +197,7 @@ func TestSyncFollowsExposures(t *testing.T) {
 		t.Fatalf("gateway missing, targets %+v", targets)
 	}
 	routes, err := New(rt, nil, home).Routes(ctx)
-	if err != nil || len(routes) != 1 || routes[0] != (Exposed{Listener: "web:80", Route: "b.example/", Release: "b", Service: "web:80", Upstream: "127.0.0.1:4001"}) {
+	if err != nil || len(routes) != 1 || routes[0] != (Exposed{Listener: "http:80", Route: "b.example/", Release: "b", Service: "web:80", Upstream: "127.0.0.1:4001"}) {
 		t.Fatalf("routes: %+v %v", routes, err)
 	}
 }
@@ -233,13 +234,13 @@ func TestExposeChecksUnderTheLock(t *testing.T) {
 	home := t.TempDir()
 	rt := fakeruntime.New("img")
 	proxyOf(t, rt, home, "other", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{
-		{Service: "web", Port: 80, Listener: "web", Host: "a.example", Path: "/"},
+		{Service: "web", Port: 80, Listener: "http", Host: "a.example", Path: "/"},
 	})
 	svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
 		Workload: "w", Ports: []resource.ServicePort{{Name: "p", Port: 80, TargetPort: "p"}},
-		Expose: []resource.Exposure{{Port: "p", Listener: "web", Host: "a.example", Path: "/"}}}}
+		Expose: []resource.Exposure{{Port: "p", Listener: "http", Host: "a.example", Path: "/"}}}}
 	_, err := New(rt, h, home).Expose(ctx, "mine", "", []resource.Resource{svc},
-		[]Route{{Service: "s", Port: 80, Listener: "web", Host: "a.example", Path: "/"}})
+		[]Route{{Service: "s", Port: 80, Listener: "http", Host: "a.example", Path: "/"}})
 	if err == nil || !strings.Contains(err.Error(), "already routed to other/web") {
 		t.Fatalf("Expose: %v", err)
 	}
@@ -269,7 +270,7 @@ func TestSyncRefusesAnotherHomesGateway(t *testing.T) {
 	h := testHost(true)
 	ctx := context.Background()
 	rt := fakeruntime.New("img", envoy.Image())
-	route := []Route{{Service: "web", Port: 80, Listener: "web", Host: "b.example", Path: "/"}}
+	route := []Route{{Service: "web", Port: 80, Listener: "http", Host: "b.example", Path: "/"}}
 	first, second := t.TempDir(), t.TempDir()
 	proxyOf(t, rt, first, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, route)
 	if _, err := New(rt, h, first).Sync(ctx); err != nil {
@@ -286,7 +287,7 @@ func TestSyncRefusesAnotherHomesGateway(t *testing.T) {
 }
 
 func TestListenerOptions(t *testing.T) {
-	web := Listener{Name: "web", Port: 80, Protocol: ProtocolHTTP, ListenerOptions: ListenerOptions{
+	web := Listener{Name: "http", Port: 80, Protocol: ProtocolHTTP, ListenerOptions: ListenerOptions{
 		Timeout: "30s", IdleTimeout: "10m", MaxBody: "1Mi", RateLimit: "60/m"}}
 	pg := Listener{Name: "pg", Port: 5432, Protocol: ProtocolTCP, ListenerOptions: ListenerOptions{IdleTimeout: "1h", ProxyProtocol: "v2"}}
 	settings := Settings{Listen: []string{"127.0.0.1"}, Listeners: []Listener{web, pg}}
@@ -294,7 +295,7 @@ func TestListenerOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	targets := []Target{{Release: "a", Ports: []Port{{Service: "shop", Port: 80, Upstream: 4001}, {Service: "db", Port: 5432, Upstream: 4002}},
-		Routes: []Route{{Service: "shop", Port: 80, Listener: "web", Host: "shop.example", Path: "/"}, {Service: "db", Port: 5432, Listener: "pg"}}}}
+		Routes: []Route{{Service: "shop", Port: 80, Listener: "http", Host: "shop.example", Path: "/"}, {Service: "db", Port: 5432, Listener: "pg"}}}}
 	cfg := buildConfig(settings, targets, "/etc/karga-proxy")
 	want := ports.ProxyHTTPLimits{Timeout: 30 * time.Second, IdleTimeout: 10 * time.Minute, MaxBodyBytes: 1 << 20, RateRequests: 60, RatePer: time.Minute}
 	if len(cfg.HTTP) != 1 || cfg.HTTP[0].Limits != want {
@@ -345,7 +346,7 @@ func TestTargetsPickOneProxyPerRelease(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	routes := []Route{{Service: "web", Port: 80, Listener: "web", Host: "a.example", Path: "/"}}
+	routes := []Route{{Service: "web", Port: 80, Listener: "http", Host: "a.example", Path: "/"}}
 	for proxy, want := range map[string]string{"a-karga-proxy-1111aaaa": "a-karga-proxy-1111aaaa", "": "a-karga-proxy-2222bbbb"} {
 		if err := writeExpose(home, "a", proxy, routes); err != nil {
 			t.Fatal(err)
@@ -373,7 +374,7 @@ func TestSyncHandsOverToANewGateway(t *testing.T) {
 	if err := rt.StartWorkload(ctx, old); err != nil {
 		t.Fatal(err)
 	}
-	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "web", Host: "b.example", Path: "/"}})
+	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "http", Host: "b.example", Path: "/"}})
 	rt.Raw = nil
 	if _, err := New(rt, h, home).Sync(ctx); err != nil {
 		t.Fatal(err)
@@ -462,5 +463,39 @@ func TestDocumentsAndRevisions(t *testing.T) {
 	}
 	if n, err := WriteRevision(home, in, "", "x"); err != nil || n != 12 {
 		t.Fatalf("after a drop the number is reused: %d %v", n, err)
+	}
+}
+
+// An http listener redirects to HTTPS only when it says so, on any port; each host goes to the
+// https listener serving it.
+func TestRedirectHTTPS(t *testing.T) {
+	tls := func(l, host string) Route {
+		return Route{Service: "web", Port: 80, Listener: l, Host: host, Path: "/", TLSSecret: "c", CertDir: "/c"}
+	}
+	targets := []Target{{Release: "a", Ports: []Port{{Service: "web", Port: 80, Upstream: 4001}},
+		Routes: []Route{tls("https", "a.example"), tls("alt", "b.example"), {Service: "web", Port: 80, Listener: "plain", Host: "p.example", Path: "/"}}}}
+	settings := Settings{Listen: []string{"127.0.0.1"}, Listeners: []Listener{
+		{Name: "plain", Port: 8080, Protocol: ProtocolHTTP},
+		{Name: "https", Port: 443, Protocol: ProtocolHTTPS},
+		{Name: "alt", Port: 8443, Protocol: ProtocolHTTPS},
+	}}
+	redirects := func(s Settings) map[string]int {
+		for _, l := range buildConfig(s, targets, "/etc/karga-proxy").HTTP {
+			if l.Port == 8080 {
+				return l.Redirects
+			}
+		}
+		return nil
+	}
+	if r := redirects(settings); r != nil {
+		t.Fatalf("no redirectHTTPS, no redirects: %v", r)
+	}
+	settings.Listeners[0].RedirectHTTPS = true
+	if r := redirects(settings); !maps.Equal(r, map[string]int{"a.example": 443, "b.example": 8443}) {
+		t.Fatalf("redirects: %v", r)
+	}
+	bad := Settings{Listeners: []Listener{{Name: "s", Port: 443, Protocol: ProtocolHTTPS, ListenerOptions: ListenerOptions{RedirectHTTPS: true}}}}
+	if err := validateSettings(bad); err == nil || !strings.Contains(err.Error(), "redirectHTTPS cannot be set on a https listener") {
+		t.Fatalf("redirectHTTPS on https: %v", err)
 	}
 }

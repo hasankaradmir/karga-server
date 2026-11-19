@@ -155,6 +155,12 @@ var listenerFields = []struct {
 	{"maxBody", func(l Listener) string { return l.MaxBody }},
 	{"rateLimit", func(l Listener) string { return l.RateLimit }},
 	{"proxyProtocol", func(l Listener) string { return l.ProxyProtocol }},
+	{"redirectHTTPS", func(l Listener) string {
+		if l.RedirectHTTPS {
+			return "on"
+		}
+		return ""
+	}},
 }
 
 func dash(s string) string {

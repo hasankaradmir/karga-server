@@ -83,8 +83,8 @@ interruption. `KARGA_PROXY_IMAGE` overrides the image.
 - **Gateway** (`karga-gateway-<hash>`, one per host, host network): the host's only entry point. Its
   settings belong to the host's administrator, not to packages: the addresses it listens on
   (`karga gateway set listen`, default `127.0.0.1`) and its **listeners** (`karga gateway listener
-  add`): a name, a port and a protocol. A new host has `web` (80, http) and `websecure` (443,
-  https). A Service exposes a port on a listener by name; exposing on a listener that does not exist,
+  add`): a name, a port and a protocol. A new host has `http` (80, with `redirectHTTPS`) and
+  `https` (443). A Service exposes a port on a listener by name; exposing on a listener that does not exist,
   of another protocol, or that another release holds is refused before anything changes. HTTP and
   HTTPS listeners select a Service by `Host` header and path prefix, so several releases share them;
   the backend receives the client address in `x-forwarded-for`. A tcp listener belongs to one Service.
@@ -99,8 +99,8 @@ outside or from other workloads. Notes:
   recreates it; both briefly interrupt proxied connections. The plan says so.
 - **TLS:** an exposure on an https listener names a Secret with the PEM certificate chain as
   `tls.crt` and the key as `tls.key`. The certificate is chosen by SNI, so several hosts and releases
-  share the listener. Plain HTTP on the port-80 http listener redirects to HTTPS, unless it serves that
-  host itself. A new certificate is a new Secret value; the gateway serves it after the upgrade. One
+  share the listener. Plain HTTP on an http listener with `redirectHTTPS` (the default `http` has it)
+  redirects to HTTPS, unless it serves that host itself. A new certificate is a new Secret value; the gateway serves it after the upgrade. One
   host has one certificate. There is no automatic certificate (ACME) yet.
 - Services carry TCP only; there is no UDP.
 - The gateway runs as root with only `NET_BIND_SERVICE` and `DAC_OVERRIDE` (to bind low ports in the

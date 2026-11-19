@@ -270,7 +270,8 @@ Services is refused.
   configuration is rebuilt under `$KARGA_HOME/gateway.lock` from the settings, the proxies' labels and
   the releases' expose files: one Envoy listener per used listener and address; HTTP listeners with
   virtual hosts by `Host` and path prefix; HTTPS listeners with one filter chain per host (SNI); a
-  redirect to HTTPS on the port-80 http listener; clusters to the proxies' upstreams. Pre-flight
+  redirect to HTTPS on the http listeners with `redirectHTTPS` (each host to the port of the https
+  listener serving it; the default `http` listener on 80 has it); clusters to the proxies' upstreams. Pre-flight
   (`gateway.Check`) refuses exposures on unknown listeners or listeners of another protocol, tcp
   listeners, hosts and paths or certificates another release holds, and listeners a host process holds.
   HTTP routes have no overall deadline (uploads, server-sent events and long polls run until done)
