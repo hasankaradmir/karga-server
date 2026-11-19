@@ -11,6 +11,13 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- A recreate (D36) creates the new container before it stops the old one: a container Docker refuses
+  (a mount, an option) leaves the old one running, and the outage is only from the stop to the
+  start.
+- Every workload container answers to its revision's backend alias, targeted by a Service or not:
+  adding a Service to a workload, or removing the last one, no longer recreates it. The digest no
+  longer depends on Services, so the first upgrade after this version updates every workload
+  once (test releases: upgrade them once).
 - A workload's container is named `<release>-<workload>-<8 hex of its digest>`, like a Kubernetes
   pod-template-hash: the same spec keeps its name, a changed one gets a new name (D34). A replace
   starts the new container under its own name next to the old one and no longer renames it

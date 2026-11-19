@@ -112,13 +112,13 @@ func TestProxyPlan(t *testing.T) {
 		t.Fatalf("proxy create: %+v %+v", px, px.Proxy)
 	}
 
-	// A workload no service targeted gets its backend alias with a recreate.
+	// A workload no service targeted already has its backend alias: a Service added later leaves it.
 	plain := appliedFrom(t, replaceManifest(6379)[:5])
 	p, err = testEnv.Diff("cache", replaceManifest(6379), plain, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w := changeOf(t, p, resource.KindWorkload, "redis"); w.Label() != "recreate: a service now targets it" || w.Fields[0].Path != "(service placement)" {
+	if w := changeOf(t, p, resource.KindWorkload, "redis"); w.Action != ActionUnchanged {
 		t.Fatalf("service added: %+v", w)
 	}
 
@@ -159,7 +159,7 @@ func TestProxyPlan(t *testing.T) {
 		t.Fatalf("expose: %+v %+v", px, px.Proxy)
 	}
 
-	// Without services the proxy goes and the workload loses its alias.
+	// Without services the proxy goes; the workload stays as it is.
 	p, err = testEnv.Diff("cache", replaceManifest(6379)[:5], applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestProxyPlan(t *testing.T) {
 	if px := changeOf(t, p, KindProxy, ""); px.Action != ActionDelete {
 		t.Fatalf("remove proxy: %+v", px)
 	}
-	if w := changeOf(t, p, resource.KindWorkload, "redis"); w.Label() != "recreate: no service targets it anymore" {
+	if w := changeOf(t, p, resource.KindWorkload, "redis"); w.Action != ActionUnchanged {
 		t.Fatalf("remove service: %+v", w)
 	}
 }

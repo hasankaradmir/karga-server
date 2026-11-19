@@ -123,8 +123,9 @@ func TestExecuteInstall(t *testing.T) {
 	if w.Labels[ports.LabelRelease] != "cache" || w.Labels[ports.LabelName] != "redis" || w.Labels[ports.LabelRevision] != "1" {
 		t.Fatalf("labels: %v", w.Labels)
 	}
-	// No Service targets it: no alias and nothing published.
-	if !slices.Equal(w.Networks, []string{"cache-net"}) || len(w.Aliases) != 0 || len(w.Ports) != 0 {
+	// No Service targets it yet: it still has its backend alias, so one added later needs no new
+	// container; nothing is published.
+	if !slices.Equal(w.Networks, []string{"cache-net"}) || !slices.Equal(w.Aliases, []string{"karga-redis-r1"}) || len(w.Ports) != 0 {
 		t.Fatalf("networks/aliases/ports: %v %v %v", w.Networks, w.Aliases, w.Ports)
 	}
 	if w.MemoryBytes != 512<<20 || w.MilliCPU != 500 {
@@ -180,6 +181,25 @@ func TestExecuteFailures(t *testing.T) {
 	}
 }
 
+// A recreate whose new container cannot be created leaves the old one running.
+func TestRecreateCreateFailureKeepsOld(t *testing.T) {
+	r := newRequest(t, freePort(t))
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	old := r.rt.Containers("cache", "redis")
+	r.req.Revision = 2
+	r.req.Resources = manifest(r.req.Resources[0].Spec.(*resource.WorkloadSpec).Ports[0].ContainerPort)
+	r.req.Resources[0].Spec.(*resource.WorkloadSpec).Image = "redis:7.2"
+	r.rt.Fail["CreateWorkload:cache-redis"] = errors.New("boom")
+	if err := r.run(); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("want boom, got %v", err)
+	}
+	if now := r.rt.Containers("cache", "redis"); len(old) != 1 || !slices.Equal(now, old) || r.rt.Workloads[old[0]].State != ports.StateRunning {
+		t.Fatalf("old container %v must keep running: %v", old, now)
+	}
+}
+
 func TestExecuteUpgradeRecreatesOnlyChangedWorkload(t *testing.T) {
 	r := newRequest(t, freePort(t))
 	if err := r.run(); err != nil {
@@ -192,7 +212,8 @@ func TestExecuteUpgradeRecreatesOnlyChangedWorkload(t *testing.T) {
 	if err := r.run(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"StopWorkload:cache-redis", "DeleteWorkload:cache-redis", "CreateWorkload:cache-redis", "StartWorkload:cache-redis"}
+	// The new container is created before the old one stops (names without their digest).
+	want := []string{"CreateWorkload:cache-redis", "StopWorkload:cache-redis", "StartWorkload:cache-redis", "DeleteWorkload:cache-redis"}
 	var got []string
 	for _, c := range r.rt.Calls {
 		if !strings.HasPrefix(c, "Info") && !strings.HasPrefix(c, "EnsureImage") && !strings.HasPrefix(c, "Pull") {
@@ -345,8 +366,8 @@ func TestExecuteReplace(t *testing.T) {
 		}
 	}
 	w := r.rt.Workloads[next]
-	// No Service targets it, so it has no traffic to switch and no alias.
-	if w.Request.Image != "redis:7.2" || w.State != ports.StateRunning || len(w.Aliases["cache-net"]) != 0 {
+	// No Service targets it, so it has no traffic to switch; it has its revision's alias.
+	if w.Request.Image != "redis:7.2" || w.State != ports.StateRunning || !slices.Equal(w.Aliases["cache-net"], []string{"karga-redis-r2"}) {
 		t.Fatalf("after replace: %+v", w)
 	}
 	if r.tr.applied[Key{resource.KindWorkload, "redis"}].RuntimeName != next {
@@ -492,7 +513,7 @@ func TestFailedReplaceWaitsForEarlierRecreates(t *testing.T) {
 
 func TestWorkloadSecurityRequest(t *testing.T) {
 	s := manifest(0)[0].Spec.(*resource.WorkloadSpec)
-	wr, err := workloadRequest("cache", "redis", "cache-redis", s, map[string]string{}, map[Key]string{{resource.KindConfig, "conf"}: "/x"}, false)
+	wr, err := workloadRequest("cache", "redis", "cache-redis", s, map[string]string{}, map[Key]string{{resource.KindConfig, "conf"}: "/x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +522,7 @@ func TestWorkloadSecurityRequest(t *testing.T) {
 	}
 	off := false
 	s.Security = &resource.Security{NoNewPrivileges: &off, ReadOnlyRootFilesystem: true, CapDrop: []string{"ALL"}, CapAdd: []string{"CHOWN"}, User: "999:999"}
-	wr, err = workloadRequest("cache", "redis", "cache-redis", s, map[string]string{}, map[Key]string{{resource.KindConfig, "conf"}: "/x"}, false)
+	wr, err = workloadRequest("cache", "redis", "cache-redis", s, map[string]string{}, map[Key]string{{resource.KindConfig, "conf"}: "/x"})
 	if err != nil {
 		t.Fatal(err)
 	}

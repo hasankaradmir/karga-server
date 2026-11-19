@@ -25,9 +25,9 @@ func labels(release string, revision int, kind, name string) map[string]string {
 }
 
 // workloadRequest builds the container of a workload. It publishes no port and gets no alias of its
-// name: behind the release proxy (a Service targets it) it answers to its revision's backend alias,
-// meant for the proxy.
-func workloadRequest(release, name, container string, s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string, behind bool) (ports.WorkloadRequest, error) {
+// name: it answers to its revision's backend alias, meant for the release proxy, whether a Service
+// targets it yet or not (a Service added later then needs no new container).
+func workloadRequest(release, name, container string, s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string) (ports.WorkloadRequest, error) {
 	wr := ports.WorkloadRequest{
 		Name:          container,
 		Labels:        lbl,
@@ -72,10 +72,8 @@ func workloadRequest(release, name, container string, s *resource.WorkloadSpec, 
 		}
 		wr.Mounts = append(wr.Mounts, ports.Mount{Type: ports.MountBind, Source: dir, Target: m.MountPath, ReadOnly: true})
 	}
-	if behind {
-		rev, _ := strconv.Atoi(lbl[ports.LabelRevision])
-		wr.Aliases = []string{BackendAlias(name, rev)}
-	}
+	rev, _ := strconv.Atoi(lbl[ports.LabelRevision])
+	wr.Aliases = []string{BackendAlias(name, rev)}
 	if hc := s.HealthCheck; hc != nil && hc.Type == resource.HealthExec {
 		// Durations were validated when the resource was decoded.
 		interval, _ := time.ParseDuration(hc.Interval)

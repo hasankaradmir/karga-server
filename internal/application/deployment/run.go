@@ -231,7 +231,7 @@ func (r *run) applyOne(ctx context.Context, c Change) error {
 			break
 		}
 		r.disrupted = true
-		err = recreateWorkload(ctx, r.rt, c, r.owned, r.req.Release, s, lbl, r.paths, r.svcs.wl[c.Name] != nil)
+		err = recreateWorkload(ctx, r.rt, c, r.owned, r.req.Release, s, lbl, r.paths)
 		r.changed = append(r.changed, c)
 	}
 	// Config and Secret have no runtime object: they were materialized in prepare.
