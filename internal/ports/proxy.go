@@ -100,8 +100,10 @@ type ProxyControl interface {
 	WriteInstance(dir, instance, node string, socketMode int) error
 	Command(instance string) []string
 	// Drain makes the proxy stop taking new work and waits until its connections are gone, or
-	// timeout; it reports whether they all finished.
-	Drain(ctx context.Context, dir string, timeout time.Duration) (bool, error)
+	// timeout; it reports whether they all finished. Graceful keeps the listeners open meanwhile
+	// and asks clients to go (for a proxy found by DNS); otherwise they close at once (for one
+	// sharing its ports with its successor, which then takes the new connections).
+	Drain(ctx context.Context, dir string, graceful bool, timeout time.Duration) (bool, error)
 	// Endpoints returns each cluster's endpoint as written in dir ("host:port").
 	Endpoints(dir string) (map[string]string, error)
 	// WaitReady waits until each cluster routes to a healthy endpoint (cluster -> DNS name or ip:port).

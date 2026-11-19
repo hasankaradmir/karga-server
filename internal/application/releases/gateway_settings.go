@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
-	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -86,7 +85,6 @@ func (s *Gateway) RemoveListener(ctx context.Context, name string) error {
 // updateGateway changes the gateway settings under the gateway lock, stores them and applies them
 // to a running gateway, waiting until it routes again.
 func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settings, map[string][]string) error) error {
-	rt := s.c.rt
 	err := func() error {
 		unlock, err := gateway.Lock(ctx, s.c.home)
 		if err != nil {
@@ -109,20 +107,12 @@ func (s *Gateway) updateGateway(ctx context.Context, change func(*gateway.Settin
 	if err != nil {
 		return err
 	}
-	if _, err := rt.GetWorkload(ctx, gateway.ContainerName); errors.Is(err, ports.ErrNotFound) {
+	if _, err := s.c.gw.Current(ctx); errors.Is(err, ports.ErrNotFound) {
 		return nil // applied when a release next exposes something
 	}
 	targets, err := s.c.gw.Sync(ctx)
 	if err != nil {
 		return err
 	}
-	settings, err := gateway.ReadSettings(s.c.home)
-	if err != nil {
-		return err
-	}
-	want := gateway.Want(settings, targets, func(t gateway.Target) bool { return len(t.Routes) > 0 })
-	if len(want) == 0 {
-		return nil
-	}
-	return s.c.env.Host().Proxies.WaitReady(ctx, gateway.Dir(s.c.home), want, proxyops.ProxyReadyTimeout)
+	return s.c.gw.Wait(ctx, "", targets)
 }

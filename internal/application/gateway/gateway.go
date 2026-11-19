@@ -153,6 +153,32 @@ func (g *Gateway) Expose(ctx context.Context, rel, proxy string, rs []resource.R
 	return syncLocked(ctx, rt, h, home)
 }
 
+// gateways returns the gateway containers on the host (more than one while one replaces another).
+func gateways(ctx context.Context, rt Runtime) ([]ports.Object, error) {
+	objs, err := rt.ListLabeled(ctx, LabelComponent)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(objs, func(o ports.Object) bool { return o.Labels[LabelComponent] != "gateway" }), nil
+}
+
+// Current returns the gateway container: the one made from this server's settings if it exists,
+// else any; ports.ErrNotFound when there is none.
+func (g *Gateway) Current(ctx context.Context) (string, error) {
+	gws, err := gateways(ctx, g.rt)
+	if err != nil {
+		return "", err
+	}
+	if len(gws) == 0 {
+		return "", fmt.Errorf("gateway %w", ports.ErrNotFound)
+	}
+	want := request(g.host.Proxies, Dir(g.home)).Name
+	if i := slices.IndexFunc(gws, func(o ports.Object) bool { return o.Name == want }); i >= 0 {
+		return gws[i].Name, nil
+	}
+	return gws[0].Name, nil
+}
+
 func syncLocked(ctx context.Context, rt Runtime, h *proxyops.Host, home string) ([]Target, error) {
 	c := h.Proxies.Container()
 	targets, err := findTargets(ctx, rt, home)
@@ -161,19 +187,28 @@ func syncLocked(ctx context.Context, rt Runtime, h *proxyops.Host, home string) 
 	}
 	dir := Dir(home)
 	exposed := slices.ContainsFunc(targets, func(t Target) bool { return len(t.Routes) > 0 })
+	gws, err := gateways(ctx, rt)
+	if err != nil {
+		return nil, err
+	}
 	// The host has one gateway. Another KARGA_HOME's is never replaced nor removed: two servers
 	// would replace each other's for ever (one karga-server per host).
-	if st, err := rt.GetWorkload(ctx, ContainerName); err == nil && !strings.HasPrefix(st.Labels[labelSource], dir+" ") {
+	for _, o := range gws {
+		if strings.HasPrefix(o.Labels[labelSource], dir+" ") {
+			continue
+		}
 		if !exposed {
 			return nil, os.RemoveAll(dir)
 		}
-		other, _, _ := strings.Cut(st.Labels[labelSource], " ")
+		other, _, _ := strings.Cut(o.Labels[labelSource], " ")
 		return nil, fmt.Errorf("%w: the host gateway %s is the one of the karga-server with its state in %s; one karga-server runs per host",
-			ports.ErrConflict, ContainerName, filepath.Dir(other))
+			ports.ErrConflict, o.Name, filepath.Dir(other))
 	}
 	if !exposed {
-		if err := proxyops.RemoveWorkload(ctx, rt, ContainerName); err != nil && !errors.Is(err, ports.ErrNotFound) {
-			return nil, err
+		for _, o := range gws {
+			if err := proxyops.RemoveWorkload(ctx, rt, o.Name); err != nil && !errors.Is(err, ports.ErrNotFound) {
+				return nil, err
+			}
 		}
 		return nil, os.RemoveAll(dir)
 	}
@@ -197,40 +232,82 @@ func syncLocked(ctx context.Context, rt Runtime, h *proxyops.Host, home string) 
 	if err := syncCerts(dir, targets, true); err != nil {
 		return nil, err
 	}
-	st, err := rt.GetWorkload(ctx, ContainerName)
-	if err == nil && st.Labels[labelSource] != source(c, dir) {
-		if err := proxyops.RemoveWorkload(ctx, rt, ContainerName); err != nil {
-			return nil, err
+	want := request(h.Proxies, dir)
+	var old []string
+	have := false
+	for _, o := range gws {
+		if o.Name == want.Name {
+			have = true
+		} else {
+			old = append(old, o.Name)
 		}
-		err = fmt.Errorf("gateway %w", ports.ErrNotFound)
 	}
-	switch {
-	case errors.Is(err, ports.ErrNotFound):
+	if !have {
 		if err := rt.EnsureImage(ctx, c.Image, "if-not-present"); err != nil {
 			return nil, err
 		}
-		if err := rt.CreateWorkload(ctx, request(c, dir)); err != nil {
+		if inst := instance(want.Name); inst != "" {
+			if err := h.Proxies.WriteInstance(dir, inst, "gateway", 0o666); err != nil {
+				return nil, err
+			}
+		}
+		if err := rt.CreateWorkload(ctx, want); err != nil {
 			return nil, err
 		}
-		err = rt.StartWorkload(ctx, ContainerName)
-	case err == nil && st.State != ports.StateRunning:
-		err = rt.StartWorkload(ctx, ContainerName)
 	}
-	return targets, err
+	if st, err := rt.GetWorkload(ctx, want.Name); err != nil || st.State != ports.StateRunning {
+		if err := rt.StartWorkload(ctx, want.Name); err != nil {
+			return targets, err
+		}
+	}
+	if len(old) == 0 {
+		return targets, nil
+	}
+	// Another image or limits (D38): the new gateway binds the same ports (SO_REUSEPORT) and takes
+	// traffic once it routes; the old one stops accepting, its connections finish, and it goes.
+	all := Want(settings, targets, func(t Target) bool { return len(t.Routes) > 0 })
+	if err := h.Proxies.WaitReady(ctx, adminDir(home, want.Name), all, proxyops.ProxyReadyTimeout); err != nil {
+		if !have {
+			err = errors.Join(err, removeGateway(ctx, rt, home, want.Name))
+		}
+		return targets, err
+	}
+	for _, name := range old {
+		_, _ = h.Proxies.Drain(ctx, adminDir(home, name), false, proxyops.ProxyDrainTimeout) // a gone one is drained
+		if err := removeGateway(ctx, rt, home, name); err != nil {
+			return targets, err
+		}
+	}
+	return targets, nil
 }
 
-// Wait waits until the gateway routes to every exposed port of release rel.
+// removeGateway deletes a gateway container and its instance directory.
+func removeGateway(ctx context.Context, rt Runtime, home, name string) error {
+	if err := proxyops.RemoveWorkload(ctx, rt, name); err != nil && !errors.Is(err, ports.ErrNotFound) {
+		return err
+	}
+	if inst := instance(name); inst != "" {
+		return os.RemoveAll(filepath.Join(Dir(home), inst))
+	}
+	return nil
+}
+
+// Wait waits until the gateway routes to every exposed port of release rel ("": of every release).
 func (g *Gateway) Wait(ctx context.Context, rel string, targets []Target) error {
 	h, home := g.host, g.home
 	settings, err := ReadSettings(home)
 	if err != nil {
 		return err
 	}
-	want := Want(settings, targets, func(t Target) bool { return t.Release == rel && len(t.Routes) > 0 })
+	want := Want(settings, targets, func(t Target) bool { return (rel == "" || t.Release == rel) && len(t.Routes) > 0 })
 	if len(want) == 0 {
 		return nil
 	}
-	return h.Proxies.WaitReady(ctx, Dir(home), want, proxyops.ProxyReadyTimeout)
+	name, err := g.Current(ctx)
+	if err != nil {
+		return err
+	}
+	return h.Proxies.WaitReady(ctx, adminDir(home, name), want, proxyops.ProxyReadyTimeout)
 }
 
 // Listener protocols.
@@ -261,7 +338,11 @@ func (g *Gateway) Health(ctx context.Context) (State, error) {
 		return State{}, err
 	}
 	st := State{AccessLog: settings.AccessLog, Listen: settings.Listen}
-	ws, err := rt.GetWorkload(ctx, ContainerName)
+	name, err := g.Current(ctx)
+	var ws ports.WorkloadStatus
+	if err == nil {
+		ws, err = rt.GetWorkload(ctx, name)
+	}
 	switch {
 	case errors.Is(err, ports.ErrNotFound):
 		st.Container = "missing"
@@ -273,11 +354,11 @@ func (g *Gateway) Health(ctx context.Context) (State, error) {
 	if src := ws.Labels[labelSource]; strings.Contains(src, " ") {
 		st.Image = src[strings.LastIndex(src, " ")+1:]
 	}
-	if st.Ready, err = h.Proxies.Live(ctx, Dir(home)); err != nil {
+	if st.Ready, err = h.Proxies.Live(ctx, adminDir(home, name)); err != nil {
 		st.Error = err.Error()
 		return st, nil
 	}
-	st.Version, _ = h.Proxies.Version(ctx, Dir(home))
+	st.Version, _ = h.Proxies.Version(ctx, adminDir(home, name))
 	return st, nil
 }
 

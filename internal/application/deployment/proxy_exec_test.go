@@ -32,13 +32,13 @@ type fakeProxies struct {
 }
 
 func (f *fakeProxies) kind(dir string) string {
-	if dir == gateway.Dir(f.home) {
+	if dir == gateway.Dir(f.home) || filepath.Dir(dir) == gateway.Dir(f.home) { // the gateway's, or an instance's
 		return "gateway"
 	}
 	return "proxy"
 }
 
-func (f *fakeProxies) Drain(_ context.Context, dir string, _ time.Duration) (bool, error) {
+func (f *fakeProxies) Drain(_ context.Context, dir string, _ bool, _ time.Duration) (bool, error) {
 	f.log("Drain:" + f.kind(dir))
 	return true, nil
 }
@@ -148,7 +148,7 @@ func TestProxyAndGatewayInstall(t *testing.T) {
 		len(gp) != 1 || gp[0] != (gateway.Port{Service: "redis", Port: port, Upstream: pr.Ports[0].HostPort}) {
 		t.Fatalf("the proxy publishes the exposed port on a loopback upstream: %+v %+v", pr.Ports, gp)
 	}
-	for _, req := range []ports.WorkloadRequest{pr, r.rt.Workloads[gateway.ContainerName].Request} {
+	for _, req := range []ports.WorkloadRequest{pr, r.rt.Workload(gateway.ContainerName).Request} {
 		if req.MemoryBytes != 128<<20 || req.MilliCPU != 500 || req.PidsLimit != 256 {
 			t.Fatalf("%s limits: mem %d cpu %d pids %d", req.Name, req.MemoryBytes, req.MilliCPU, req.PidsLimit)
 		}
@@ -156,7 +156,7 @@ func TestProxyAndGatewayInstall(t *testing.T) {
 	if w.Request.PidsLimit != 1024 {
 		t.Fatalf("workload default pids: %d", w.Request.PidsLimit)
 	}
-	gw := r.rt.Workloads[gateway.ContainerName].Request
+	gw := r.rt.Workload(gateway.ContainerName).Request
 	if !gw.HostNetwork || gw.User != "0:0" || !slices.Equal(gw.CapDrop, []string{"ALL"}) || !gw.NoNewPrivileges || gw.Labels[ports.LabelRelease] != "" {
 		t.Fatalf("gateway request: %+v", gw)
 	}
@@ -297,7 +297,7 @@ func TestGatewayGoesWithTheLastRelease(t *testing.T) {
 	if err := envAt(r.home).Delete(context.Background(), r.rt, "cache", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := r.rt.Workloads[gateway.ContainerName]; ok {
+	if _, ok := r.rt.Lookup(gateway.ContainerName); ok {
 		t.Fatal("gateway still exists")
 	}
 	if eps, _ := testHost.Proxies.Endpoints(gateway.Dir(r.home)); len(eps) != 0 {

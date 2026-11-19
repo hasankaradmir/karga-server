@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
+	"github.com/hasankaradmir/karga-server/internal/infrastructure/envoy"
 )
 
 // TestServicesAreIsolatedPerRelease: two releases both have a Service web on port 80; each resolves
@@ -154,7 +156,7 @@ func TestGatewayListenerLimits(t *testing.T) {
 		Values: releases.Values{Sets: packages.Sets([]string{"raw=true", "route=limits.local", "routeListener=" + l, "echo=true", "echoListener=" + tl}...)}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	before, err := rt.GetWorkload(ctx, gateway.ContainerName)
+	before, err := rt.GetWorkload(ctx, gatewayName(t, rt))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +214,7 @@ func TestGatewayListenerLimits(t *testing.T) {
 		t.Fatalf("proxy protocol: %q %v", line, err)
 	}
 
-	after, err := rt.GetWorkload(ctx, gateway.ContainerName)
+	after, err := rt.GetWorkload(ctx, gatewayName(t, rt))
 	if err != nil || after.Labels["io.karga.gateway-source"] != before.Labels["io.karga.gateway-source"] || after.RestartCount != before.RestartCount {
 		t.Fatalf("the gateway was recreated or restarted: %+v %v", after, err)
 	}
@@ -220,4 +222,45 @@ func TestGatewayListenerLimits(t *testing.T) {
 		_ = s.Gateway.SetListenerOptions(context.Background(), l, gateway.ListenerOptions{})
 		_ = s.Gateway.SetListenerOptions(context.Background(), tl, gateway.ListenerOptions{})
 	})
+}
+
+// TestGatewayHandOffWithoutDowntime: a gateway made from another image (here the same image by
+// digest alone) starts next to the old one on the same ports (SO_REUSEPORT); the old one closes its
+// listeners and goes once the new one routes. Not parallel: the gateway is the host's.
+func TestGatewayHandOffWithoutDowntime(t *testing.T) {
+	ctx := context.Background()
+	name := releaseName("it-handoff")
+	s, rt := service(t, name)
+	l, port := listener(t, gateway.ProtocolHTTP)
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+		Values: releases.Values{Sets: packages.Sets([]string{"route=handoff.local", "routeListener=" + l}...)}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	host := startHostPingerFor(port, "handoff.local")
+	time.Sleep(time.Second)
+	before := gatewayName(t, rt)
+	repo, digest, _ := strings.Cut(envoy.DefaultImage, "@")
+	repo, _, _ = strings.Cut(repo, ":")
+	t.Setenv("KARGA_PROXY_IMAGE", repo+"@"+digest)
+	if err := s.Gateway.SetAccessLog(ctx, false); err != nil { // any settings change syncs the gateway
+		t.Fatal(err)
+	}
+	after := gatewayName(t, rt)
+	time.Sleep(time.Second)
+	host.halt()
+	t.Logf("hand-over %s -> %s: %d ok, %d failed", before, after, host.ok.Load(), host.failed.Load())
+	if after == before || after == "" {
+		t.Fatalf("no new gateway: %s -> %s", before, after)
+	}
+	if f := host.failed.Load(); f > maxRaceFailures || host.ok.Load() == 0 {
+		t.Fatalf("%d requests failed during the hand-over (max %d)", f, maxRaceFailures)
+	}
+	if h, err := s.Gateway.Health(ctx); err != nil || !h.Ready {
+		t.Fatalf("health after the hand-over: %+v %v", h, err)
+	}
+	// Back to the default image for the other tests: another hand-over.
+	_ = os.Unsetenv("KARGA_PROXY_IMAGE")
+	if err := s.Gateway.SetAccessLog(ctx, false); err != nil {
+		t.Fatal(err)
+	}
 }

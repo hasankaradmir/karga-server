@@ -183,7 +183,7 @@ func TestSyncFollowsExposures(t *testing.T) {
 	if _, err := New(rt, h, home).Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.GetWorkload(ctx, ContainerName); err == nil {
+	if _, ok := rt.Lookup(ContainerName); ok {
 		t.Fatal("gateway started with nothing exposed")
 	}
 	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "web", Host: "b.example", Path: "/"}})
@@ -191,8 +191,8 @@ func TestSyncFollowsExposures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.GetWorkload(ctx, ContainerName); err != nil || len(targets) != 2 {
-		t.Fatalf("gateway: %v, targets %+v", err, targets)
+	if _, ok := rt.Lookup(ContainerName); !ok || len(targets) != 2 {
+		t.Fatalf("gateway missing, targets %+v", targets)
 	}
 	routes, err := New(rt, nil, home).Routes(ctx)
 	if err != nil || len(routes) != 1 || routes[0] != (Exposed{Listener: "web:80", Route: "b.example/", Release: "b", Service: "web:80", Upstream: "127.0.0.1:4001"}) {
@@ -353,5 +353,43 @@ func TestTargetsPickOneProxyPerRelease(t *testing.T) {
 		if err != nil || len(targets) != 1 || targets[0].Container != want {
 			t.Fatalf("expose names %q: %+v %v", proxy, targets, err)
 		}
+	}
+}
+
+// A gateway made from other settings (an image, limits, a container from before D38) is handed
+// over: the new one starts and routes before the old one is removed.
+func TestSyncHandsOverToANewGateway(t *testing.T) {
+	h := testHost(true)
+	ctx := context.Background()
+	home := t.TempDir()
+	rt := fakeruntime.New("img", envoy.Image())
+	if err := rt.CreateWorkload(ctx, ports.WorkloadRequest{Name: ContainerName, Image: "img", Labels: map[string]string{
+		ports.LabelManaged: "true", LabelComponent: "gateway", labelSource: source(ports.ProxyContainer{Source: "old"}, Dir(home))}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.StartWorkload(ctx, ContainerName); err != nil {
+		t.Fatal(err)
+	}
+	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "web", Host: "b.example", Path: "/"}})
+	rt.Raw = nil
+	if _, err := New(rt, h, home).Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	gws, _ := gateways(ctx, rt)
+	if len(gws) != 1 || gws[0].Name == ContainerName || !strings.HasPrefix(gws[0].Name, ContainerName+"-") {
+		t.Fatalf("gateways after the hand-over: %+v", gws)
+	}
+	next := gws[0].Name
+	if a, b := slices.Index(rt.Raw, "StartWorkload:"+next), slices.Index(rt.Raw, "DeleteWorkload:"+ContainerName); a < 0 || b < 0 || a > b {
+		t.Fatalf("the new gateway must start before the old one goes: %v", rt.Raw)
+	}
+	if cmd := rt.Workloads[next].Request.Command; !slices.Contains(cmd, "/etc/karga-proxy/"+instance(next)+"/envoy.yaml") {
+		t.Fatalf("the new gateway runs its own bootstrap: %v", cmd)
+	}
+	if _, err := os.Stat(filepath.Join(Dir(home), instance(next), "envoy.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if name, err := New(rt, h, home).Current(ctx); err != nil || name != next {
+		t.Fatalf("current: %s %v", name, err)
 	}
 }

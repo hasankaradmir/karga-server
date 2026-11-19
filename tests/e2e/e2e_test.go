@@ -62,9 +62,9 @@ func TestMain(m *testing.M) {
 	}
 	// The host has one gateway, and karga-server leaves another home's alone (the integration
 	// tests' or an earlier run's).
-	_ = exec.Command("docker", "rm", "-f", "karga-gateway").Run()
+	removeGateways()
 	code := m.Run()
-	_ = exec.Command("docker", "rm", "-f", "karga-gateway").Run()
+	removeGateways()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -150,6 +150,13 @@ func (e *env) try(args ...string) (string, error) {
 
 // containerOf returns the container of release's workload, found by label: its name ends with the
 // workload's digest.
+func removeGateways() {
+	out, _ := exec.Command("docker", "ps", "-aq", "--filter", "label=io.karga.component=gateway").Output()
+	if ids := strings.Fields(string(out)); len(ids) > 0 {
+		_ = exec.Command("docker", append([]string{"rm", "-f"}, ids...)...).Run()
+	}
+}
+
 func containerOf(t *testing.T, release, workload string) string {
 	t.Helper()
 	return labeledContainer(t, release, "Workload", workload)

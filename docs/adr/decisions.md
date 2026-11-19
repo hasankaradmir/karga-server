@@ -41,5 +41,6 @@ directory.
 | D35 | Listener options | Timeout, idle timeout, body limit (at most 16Mi: Envoy buffers it), rate limit and PROXY protocol are options of a gateway listener, set by the administrator (`listener add`/`set`), never by packages; they only rewrite the gateway's files. |
 | D36 | Recreate order and backend aliases | A recreate creates the new container before stopping the old one; every workload answers to its revision's backend alias from its creation, so a Service that starts or stops targeting it changes only the release proxy. |
 | D37 | Release proxy replace | The release proxy is named `<release>-karga-proxy-<8 hex of its spec digest>`; a changed proxy starts next to the old one (own bootstrap and admin socket, shared listeners and clusters), the gateway switches to it through the expose file, and the old one drains and goes. Replaces the reconnect and recreate of D20 except on a name collision. |
+| D38 | Gateway hand-over | The gateway is `karga-gateway-<8 hex of its source>`, found by label; a new source starts a second gateway on the same ports (`SO_REUSEPORT`, no hot restart), which takes over once it routes; the old one closes its listeners, drains up to 30s and goes. Measured: no failed connection in 9 hand-overs under load. |
 
 D23 was not used.

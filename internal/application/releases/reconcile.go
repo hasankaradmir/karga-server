@@ -307,7 +307,14 @@ func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present 
 		}
 	}
 	if exposed {
-		if st, err := s.c.rt.GetWorkload(ctx, gateway.ContainerName); err != nil || st.State != ports.StateRunning {
+		name, err := s.c.gw.Current(ctx)
+		if err == nil {
+			var st ports.WorkloadStatus
+			if st, err = s.c.rt.GetWorkload(ctx, name); err == nil && st.State != ports.StateRunning {
+				err = errors.New("not running")
+			}
+		}
+		if err != nil {
 			add(planned{key: name + "/gateway", kind: "Gateway", name: gateway.ContainerName, action: "sync"})
 		}
 	}

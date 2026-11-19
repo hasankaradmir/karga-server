@@ -40,14 +40,16 @@ What karga does not do yet, what it does with known limits, and the open questio
 
 - **One karga-server per host.** The gateway is shared by the host: a server whose `KARGA_HOME`
   is not the gateway's refuses to expose anything (and never removes the other's gateway); remove
-  `karga-gateway` with Docker when moving to another home.
+  it with Docker when moving to another home
+  (`docker rm -f $(docker ps -aq --filter label=io.karga.component=gateway)`).
 - **Repairs** recreate a removed volume empty; settings changed inside a running container (not in
   its spec) are not detected.
 - **Linux only.** Services need the gateway and the release proxy, which need Linux with a local
   Docker daemon; elsewhere a plan with Services is refused.
 - **Gateway.** One container serves every release's outside traffic; it restarts automatically but
-  is a single point. Local users can reach the loopback upstream ports directly. Image or limit
-  changes recreate it (a short interruption).
+  is a single point: a crash interrupts traffic until it is back. Local users can reach the loopback
+  upstream ports directly. A new image or limits hand over to a new gateway without an outage
+  (D38); a connection still open on the old one after 30s is closed.
 - **Release proxy.** One per release with Services (about 15 MB; two for a moment while one
   replaces the other). A service port number belongs to one Service of the release. A client in
   the release's networks that caches the proxy's address beyond the 30s drain of a replaced proxy

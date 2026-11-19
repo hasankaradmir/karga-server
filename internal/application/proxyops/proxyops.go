@@ -97,6 +97,9 @@ func (h *Host) Supported() bool { return h.supported.Load() }
 // ProxyReadyTimeout bounds how long a proxy may take to route to a new backend.
 const ProxyReadyTimeout = 30 * time.Second
 
+// ProxyDrainTimeout bounds how long a replaced proxy or gateway waits for its connections to end.
+const ProxyDrainTimeout = 30 * time.Second
+
 // HTTPHealthPath is the path Envoy checks on port when the workload's health check is http there.
 func HTTPHealthPath(w *resource.WorkloadSpec, port int) string {
 	if hc := w.HealthCheck; hc != nil && hc.Type == resource.HealthHTTP && hc.Port == port {
