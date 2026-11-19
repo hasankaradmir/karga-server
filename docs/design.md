@@ -219,7 +219,7 @@ Progress events (pull, create, wait, switch, drain, stop, done) are reported as 
   recreate and says why. An interrupted replace is repaired before the next plan: of the two
   containers the one the release proxy routes to is kept and recorded.
 
-A workload's container is named `<release>-<workload>-<hash>`, the hash being the first 6 hex
+A workload's container is named `<release>-<workload>-<hash>`, the hash being the first 8 hex
 digits of the workload's digest (its spec and the contents of the Configs and Secrets it mounts),
 like a Kubernetes pod-template-hash: the same spec keeps its name, a changed one gets a new name.
 The state records each container's name; karga finds the containers of a release by label

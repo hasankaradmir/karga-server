@@ -27,7 +27,7 @@ type Remover interface {
 func RuntimeName(release, name string) string { return release + "-" + name }
 
 // workloadHash is how many hex digits of its digest end a workload container's name.
-const workloadHash = 6
+const workloadHash = 8
 
 // WorkloadName is the container name of a workload with digest ("<algorithm>:<hex>"): it ends with
 // the digest's first hex digits, like a Kubernetes pod-template-hash, so the same spec keeps its

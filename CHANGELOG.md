@@ -6,7 +6,7 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Changed
-- A workload's container is named `<release>-<workload>-<6 hex of its digest>`, like a Kubernetes
+- A workload's container is named `<release>-<workload>-<8 hex of its digest>`, like a Kubernetes
   pod-template-hash: the same spec keeps its name, a changed one gets a new name (D34). A replace
   starts the new container under its own name next to the old one and no longer renames it
   (`<name>-next` is gone); an interrupted replace keeps the container the release proxy routes to.

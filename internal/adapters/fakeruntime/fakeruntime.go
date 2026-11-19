@@ -97,10 +97,10 @@ var containerOps = map[string]bool{"CreateWorkload": true, "StartWorkload": true
 	"DeleteWorkload": true, "GetWorkload": true, "Exec": true, "ExportPath": true, "ImportPath": true}
 
 // workloadHash is the suffix proxyops.WorkloadName adds.
-var workloadHash = regexp.MustCompile(`-[0-9a-f]{6}$`)
+var workloadHash = regexp.MustCompile(`-[0-9a-f]{8}$`)
 
 // unhashed drops the digest suffix from the container name of a container operation.
-// shortcut: a workload named like "<x>-cafe12" loses its last part too; no test names one so.
+// shortcut: a workload named like "<x>-cafe1234" loses its last part too; no test names one so.
 func unhashed(op, name string) string {
 	if !containerOps[op] {
 		return name
