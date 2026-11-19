@@ -257,10 +257,13 @@ Services is refused.
   plan: of the two proxies the one the gateway routes to is kept.
 - **Gateway** (`karga-gateway-<hash>`, one per host, host network, found by its label
   `io.karga.component=gateway`) is configured by the host's
-  administrator in `$KARGA_HOME/gateway.yaml` (D39: edited by hand and applied with `karga gateway
-  validate|apply`, or through the gateway commands; karga runs on `gateway.applied.yaml`, the last
-  settings applied, and puts them back when the gateway does not route with new ones, including a
-  listener Envoy rejects): the addresses it listens on (default `127.0.0.1`) and
+  administrator (D40): a document of kind `Gateway` the user keeps and applies (`karga gateway
+  apply -f`), or the gateway commands. Each apply is a revision in `$KARGA_HOME/gateway-settings/`
+  (`<n>.yaml` and `history.yaml`: when, who, from what; the last 10 kept; the highest is in force).
+  An apply is checked first (strict YAML, values, listeners in use, ports, risks needing
+  confirmation); if the gateway then does not route (a listener Envoy rejects included), the
+  revision is dropped and the gateway synced with the one before. The settings are the addresses
+  it listens on (default `127.0.0.1`) and
   its listeners (name, port, protocol `tcp`, `http` or `https`). Packages only name listeners. The
   configuration is rebuilt under `$KARGA_HOME/gateway.lock` from the settings, the proxies' labels and
   the releases' expose files: one Envoy listener per used listener and address; HTTP listeners with
@@ -270,7 +273,7 @@ Services is refused.
   listeners, hosts and paths or certificates another release holds, and listeners a host process holds.
   HTTP routes have no overall deadline (uploads, server-sent events and long polls run until done)
   and pass WebSocket upgrades through; a stream idle for 5 minutes is closed. Only connect
-  failures are retried. A listener's options (the administrator's, in `gateway.yaml`) change that:
+  failures are retried. A listener's options (the administrator's, in the gateway settings) change that:
   a route timeout, the idle timeout (HTTP stream or `tcp_proxy`), a body limit (the `buffer`
   filter, at most 16Mi as it holds the body in memory), a rate limit (`local_ratelimit`, one token
   bucket per HTTP connection manager: per listener, per host on https) and, on tcp listeners, a

@@ -215,13 +215,13 @@ func (b Backend) GatewayRoutes(ctx context.Context) ([]api.Exposed, error) {
 func (b Backend) GatewayHealth(ctx context.Context) (api.State, error) {
 	st, err := b.gateway.Health(ctx)
 	return api.State{Container: st.Container, Ready: st.Ready, Version: st.Version, Image: st.Image, Listen: st.Listen,
-		AccessLog: st.AccessLog, Pending: st.Pending, Error: st.Error}, err
+		AccessLog: st.AccessLog, Revision: st.Revision, Error: st.Error}, err
 }
 
-// ValidateGateway implements api.Backend.
-func (b Backend) ValidateGateway(ctx context.Context) (api.GatewayPlan, error) {
-	p, err := b.gateway.ValidateSettings(ctx)
-	out := api.GatewayPlan{Changes: []api.GatewayChange{}, Problems: p.Problems, Risk: p.Risk, Digest: p.Digest}
+// DiffGateway implements api.Backend.
+func (b Backend) DiffGateway(ctx context.Context, doc api.GatewayDocument) (api.GatewayPlan, error) {
+	p, err := b.gateway.Diff(ctx, doc.Content)
+	out := api.GatewayPlan{Changes: []api.GatewayChange{}, Problems: p.Problems, Risk: p.Risk}
 	for _, c := range p.Changes {
 		out.Changes = append(out.Changes, api.GatewayChange{Kind: c.Kind, Name: c.Name, Action: c.Action, Fields: c.Fields})
 	}
@@ -229,8 +229,38 @@ func (b Backend) ValidateGateway(ctx context.Context) (api.GatewayPlan, error) {
 }
 
 // ApplyGateway implements api.Backend.
-func (b Backend) ApplyGateway(ctx context.Context, req api.GatewayApplyRequest) error {
-	return b.gateway.ApplySettings(ctx, req.Digest, req.Confirmed)
+func (b Backend) ApplyGateway(ctx context.Context, req api.GatewayApplyRequest) (api.GatewayRevision, error) {
+	n, err := b.gateway.Apply(ctx, req.Content, req.Source, req.Confirmed)
+	if err != nil {
+		return api.GatewayRevision{}, err
+	}
+	revs, err := b.gateway.History()
+	for _, r := range revs {
+		if r.Revision == n {
+			return gatewayRevision(r), err
+		}
+	}
+	return api.GatewayRevision{Revision: n}, err
+}
+
+// ExportGateway implements api.Backend.
+func (b Backend) ExportGateway(_ context.Context, req api.GatewayExportRequest) (api.GatewayDocument, error) {
+	data, err := b.gateway.Export(req.Revision)
+	return api.GatewayDocument{Content: data}, err
+}
+
+// GatewayHistory implements api.Backend.
+func (b Backend) GatewayHistory(context.Context) ([]api.GatewayRevision, error) {
+	revs, err := b.gateway.History()
+	out := []api.GatewayRevision{}
+	for _, r := range revs {
+		out = append(out, gatewayRevision(r))
+	}
+	return out, err
+}
+
+func gatewayRevision(r gateway.SettingsRevision) api.GatewayRevision {
+	return api.GatewayRevision{Revision: r.Revision, Time: r.Time, Actor: r.Actor, Source: r.Source}
 }
 
 // GatewaySettings implements api.Backend.

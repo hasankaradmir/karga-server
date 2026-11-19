@@ -321,8 +321,8 @@ type State struct {
 	Image     string
 	Listen    []string
 	AccessLog bool
-	// Pending says gateway.yaml has changes not applied.
-	Pending bool
+	// Revision is the settings revision in force (0: the defaults, none applied).
+	Revision int
 	// Error says why the admin API could not be read, if it could not.
 	Error string
 }
@@ -330,14 +330,11 @@ type State struct {
 // Health reads the gateway container and Envoy's admin API.
 func (g *Gateway) Health(ctx context.Context) (State, error) {
 	rt, h, home := g.rt, g.host, g.home
-	settings, err := ReadSettings(home)
+	settings, rev, err := RevisionSettings(home, 0)
 	if err != nil {
 		return State{}, err
 	}
-	st := State{AccessLog: settings.AccessLog, Listen: settings.Listen}
-	if st.Pending, err = Pending(home); err != nil {
-		return st, err
-	}
+	st := State{AccessLog: settings.AccessLog, Listen: settings.Listen, Revision: rev}
 	name, err := g.Current(ctx)
 	var ws ports.WorkloadStatus
 	if err == nil {

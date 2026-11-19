@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -410,5 +411,56 @@ func TestSettingsChanges(t *testing.T) {
 		"add listener db: port: 5432, protocol: tcp, proxyProtocol: v2"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("changes:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+func TestDocumentsAndRevisions(t *testing.T) {
+	s, err := ParseDocument([]byte("apiVersion: karga.io/v1alpha1\nkind: Gateway\n"))
+	if err != nil || !slices.Equal(s.Listen, []string{DefaultListen}) || !slices.Equal(s.Listeners, defaultListeners()) {
+		t.Fatalf("defaults: %+v %v", s, err)
+	}
+	for doc, want := range map[string]string{
+		"kind: Gateway\n": `apiVersion ""`,
+		"apiVersion: karga.io/v1alpha1\nkind: Gateway\nspec:\n  listenrs: []\n": "field listenrs not found",
+		"apiVersion: karga.io/v1alpha1\nkind: Gateway\nextra: 1\n":              "field extra not found",
+	} {
+		if _, err := ParseDocument([]byte(doc)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v", doc, err)
+		}
+	}
+	in := Settings{Listen: []string{"0.0.0.0"}, AccessLog: true, Listeners: []Listener{{Name: "pg", Port: 5432, Protocol: ProtocolTCP,
+		ListenerOptions: ListenerOptions{ProxyProtocol: "v2"}}}}
+	if out, err := ParseDocument(Document(in)); err != nil || !reflect.DeepEqual(out, in) {
+		t.Fatalf("round trip: %+v %v\n%s", out, err, Document(in))
+	}
+	if out, _ := ParseDocument(Document(Settings{Listen: []string{"127.0.0.1"}})); out.Listeners == nil || len(out.Listeners) != 0 {
+		t.Fatalf("no listeners is a choice, not the defaults: %+v", out)
+	}
+
+	home := t.TempDir()
+	for i := range 12 {
+		in.Listeners[0].Port = 5000 + i
+		if n, err := WriteRevision(home, in, "alice", "apply"); err != nil || n != i+1 {
+			t.Fatalf("revision %d: %d %v", i+1, n, err)
+		}
+	}
+	revs, _ := Revisions(home)
+	if len(revs) != keepRevisions || revs[0].Revision != 3 || revs[9].Revision != 12 {
+		t.Fatalf("kept: %+v", revs)
+	}
+	if _, err := os.Stat(revisionPath(home, 2)); !os.IsNotExist(err) {
+		t.Fatalf("revision 2 not pruned: %v", err)
+	}
+	if err := DropRevision(home, 12); err != nil {
+		t.Fatal(err)
+	}
+	if s, n, err := RevisionSettings(home, 0); err != nil || n != 11 || s.Listeners[0].Port != 5010 {
+		t.Fatalf("in force after the drop: %d %+v %v", n, s, err)
+	}
+	if _, _, err := RevisionSettings(home, 2); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("a pruned revision: %v", err)
+	}
+	if n, err := WriteRevision(home, in, "", "x"); err != nil || n != 12 {
+		t.Fatalf("after a drop the number is reused: %d %v", n, err)
 	}
 }

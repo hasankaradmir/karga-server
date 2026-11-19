@@ -6,11 +6,12 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
-- `gateway.yaml` can be edited by hand (D39): `ValidateGateway` and `ApplyGateway` check and apply
-  it; karga runs on `gateway.applied.yaml` and puts it back when the gateway does not route with
-  new settings, gateway commands included. A listener Envoy rejects (an address it cannot bind)
-  now fails the readiness wait instead of passing unnoticed. Gateway commands are refused while
-  `gateway.yaml` has edits not applied.
+- Gateway settings as documents (D40): a document of kind `Gateway` the user keeps is compared
+  (`DiffGateway`) and applied (`ApplyGateway`) as a revision in `$KARGA_HOME/gateway-settings/`
+  (the last 10, with time, actor and source; `ExportGateway`, `GatewayHistory`); gateway commands
+  apply revisions too. A revision the gateway does not route with is dropped and the one before
+  keeps serving; a listener Envoy rejects (an address it cannot bind) fails the readiness wait
+  instead of passing unnoticed. `gateway.yaml` is no longer read.
 - Gateway listener options (D35): `timeout`, `idleTimeout`, `maxBody` (at most 16Mi), `rateLimit`
   and, on tcp listeners, `proxyProtocol`, stored in `gateway.yaml` and applied without restarting
   the gateway. `SetGatewayListener` changes them on an existing listener.
