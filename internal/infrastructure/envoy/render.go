@@ -205,8 +205,8 @@ func httpListener(l HTTPListener, logs []*accesslogv3.AccessLog) (*listenerv3.Li
 	}
 	if len(l.Certs) == 0 {
 		hosts := virtualHosts(l.Routes, l.Limits.Timeout)
-		for _, h := range slices.Sorted(slices.Values(l.Redirects)) {
-			hosts = append(hosts, redirectHost(h, l.RedirectPort))
+		for _, h := range slices.Sorted(maps.Keys(l.Redirects)) {
+			hosts = append(hosts, redirectHost(h, l.Redirects[h]))
 		}
 		return filterListener(name, l.Address, l.Port, "envoy.filters.network.http_connection_manager", hcm(name, filters, l.Limits.IdleTimeout, hosts, logs))
 	}

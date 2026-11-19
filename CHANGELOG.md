@@ -20,6 +20,11 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- The default gateway listeners are `http` (80) and `https` (443) instead of `web` and
+  `websecure` (D41). An http listener redirects to HTTPS only with `redirectHTTPS` (the default
+  `http` listener has it), on any port, and each host goes to the port of the https listener
+  serving it; before, the http listener on port 80 redirected every host to the first https
+  listener.
 - Code kept for containers and files of earlier karga builds is gone: release proxies and the
   gateway are always named with their digest and have their own instance directory (no bootstrap
   in the proxy or gateway directory itself), and a workload container without a digest label is

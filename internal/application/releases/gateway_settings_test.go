@@ -58,13 +58,13 @@ func TestGatewayDocuments(t *testing.T) {
 		return []byte("apiVersion: karga.io/v1alpha1\nkind: Gateway\nspec:\n" + spec)
 	}
 	listeners := func(web string) string {
-		return "  listen: [127.0.0.1]\n  listeners:\n    - {name: web, port: " + p + ", protocol: http" + web + "}\n    - {name: spare, port: " + spare + ", protocol: http}\n"
+		return "  listen: [127.0.0.1]\n  listeners:\n    - {name: http, port: " + p + ", protocol: http" + web + "}\n    - {name: spare, port: " + spare + ", protocol: http}\n"
 	}
 	if _, err := svc.Gateway.Apply(ctx, doc(listeners("")), "", true); err != nil { // the defaults' websecure goes
 		t.Fatal(err)
 	}
 	if _, err := svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "site", Package: webPkg,
-		Values: Values{Sets: packages.Sets("route=site.local", "routeListener=web")}}, nil); err != nil {
+		Values: Values{Sets: packages.Sets("route=site.local", "routeListener=http")}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	current := func() gateway.Settings {
@@ -82,7 +82,7 @@ func TestGatewayDocuments(t *testing.T) {
 		string(doc("  listenrs: []\n")):                                             "field listenrs not found",
 		"apiVersion: karga.io/v1alpha1\nkind: Gate\n":                               `kind "Gate"`,
 		string(doc(listeners(", timeout: soon"))):                                   `timeout: "soon" is not a duration`,
-		string(doc("  listeners:\n    - {name: spare, port: 1, protocol: http}\n")): "listener web is used by site/web",
+		string(doc("  listeners:\n    - {name: spare, port: 1, protocol: http}\n")): "listener http is used by site/web",
 	} {
 		plan, err := svc.Gateway.Diff(ctx, []byte(content))
 		if err != nil || !strings.Contains(strings.Join(plan.Problems, "\n"), want) {
@@ -129,7 +129,7 @@ func TestGatewayDocuments(t *testing.T) {
 	}
 
 	// A risk (another address, a listener removed) needs the confirmation.
-	risky := doc("  listen: [127.0.0.1, 0.0.0.0]\n  listeners:\n    - {name: web, port: " + p + ", protocol: http}\n")
+	risky := doc("  listen: [127.0.0.1, 0.0.0.0]\n  listeners:\n    - {name: http, port: " + p + ", protocol: http}\n")
 	plan, _ = svc.Gateway.Diff(ctx, risky)
 	if !strings.Contains(plan.Risk, "reachable on 0.0.0.0") || !strings.Contains(plan.Risk, "removes listener spare") {
 		t.Fatalf("risk: %q", plan.Risk)

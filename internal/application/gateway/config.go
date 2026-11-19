@@ -79,10 +79,9 @@ func buildConfig(settings Settings, targets []Target, mountPath string) ports.Pr
 	}
 	for _, l := range settings.Listeners {
 		u := uses[l.Name]
-		var redirects []string
-		redirectPort := 0
-		if l.Protocol == ProtocolHTTP && l.Port == 80 {
-			redirects, redirectPort = redirectHosts(settings, uses, u)
+		var redirects map[string]int
+		if l.Protocol == ProtocolHTTP && l.RedirectHTTPS {
+			redirects = redirectHosts(settings, uses, u)
 		}
 		if u == nil && len(redirects) == 0 {
 			continue
@@ -92,7 +91,7 @@ func buildConfig(settings Settings, targets []Target, mountPath string) ports.Pr
 			if l.Protocol == ProtocolTCP {
 				cfg.TCP = append(cfg.TCP, ports.ProxyTCPListener{Address: ip, Port: l.Port, Cluster: u.tcp, IdleTimeout: lim.IdleTimeout})
 			} else {
-				hl := ports.ProxyHTTPListener{Address: ip, Port: l.Port, Redirects: redirects, RedirectPort: redirectPort, Limits: lim}
+				hl := ports.ProxyHTTPListener{Address: ip, Port: l.Port, Redirects: redirects, Limits: lim}
 				if u != nil {
 					hl.Routes = u.routes
 					if l.Protocol == ProtocolHTTPS {
@@ -106,27 +105,26 @@ func buildConfig(settings Settings, targets []Target, mountPath string) ports.Pr
 	return cfg
 }
 
-// redirectHosts returns the hosts served on an https listener but not on the http listener u, and the
-// port of the first https listener, so plain HTTP on port 80 redirects to HTTPS.
-func redirectHosts(s Settings, uses map[string]*use, u *use) ([]string, int) {
-	var hosts []string
-	port := 0
+// redirectHosts returns the hosts served on an https listener but not on the http listener u, each
+// with the port of the (first) https listener serving it, for u's redirects to HTTPS.
+func redirectHosts(s Settings, uses map[string]*use, u *use) map[string]int {
+	var hosts map[string]int
 	for _, l := range s.Listeners {
 		su := uses[l.Name]
 		if l.Protocol != ProtocolHTTPS || su == nil {
 			continue
 		}
 		for _, h := range slices.Sorted(maps.Keys(su.certs)) {
-			if u != nil && slices.ContainsFunc(u.routes, func(r ports.ProxyRoute) bool { return r.Host == h }) || slices.Contains(hosts, h) {
+			if _, seen := hosts[h]; seen || u != nil && slices.ContainsFunc(u.routes, func(r ports.ProxyRoute) bool { return r.Host == h }) {
 				continue
 			}
-			hosts = append(hosts, h)
-			if port == 0 {
-				port = l.Port
+			if hosts == nil {
+				hosts = map[string]int{}
 			}
+			hosts[h] = l.Port
 		}
 	}
-	return hosts, port
+	return hosts
 }
 
 func healthPath(routes []Route, p Port) string {

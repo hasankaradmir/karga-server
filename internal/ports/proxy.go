@@ -31,16 +31,15 @@ type ProxyTCPListener struct {
 }
 
 // ProxyHTTPListener serves HTTP on Address:Port and routes requests by Host header and path prefix.
-// With Certs it serves HTTPS: each host gets its certificate by SNI. Redirects lists hosts whose
-// plain requests are sent to HTTPS on RedirectPort.
+// With Certs it serves HTTPS: each host gets its certificate by SNI. Redirects sends the plain
+// requests for each of its hosts to HTTPS on that host's port.
 type ProxyHTTPListener struct {
-	Address      string
-	Port         int
-	Routes       []ProxyRoute
-	Certs        map[string]ProxyCert // host -> certificate files, inside the container
-	Redirects    []string
-	RedirectPort int
-	Limits       ProxyHTTPLimits
+	Address   string
+	Port      int
+	Routes    []ProxyRoute
+	Certs     map[string]ProxyCert // host -> certificate files, inside the container
+	Redirects map[string]int
+	Limits    ProxyHTTPLimits
 }
 
 // ProxyHTTPLimits bound the requests of an HTTP listener; zero values mean no limit (IdleTimeout:

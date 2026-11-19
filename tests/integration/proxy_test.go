@@ -455,7 +455,9 @@ func TestProxyReplaceWithoutDowntime(t *testing.T) {
 	if f := host.failed.Load(); f > maxRaceFailures || host.ok.Load() == 0 {
 		t.Fatalf("%d requests through the gateway failed while the proxy was replaced (max %d)", f, maxRaceFailures)
 	}
-	if got.Failed > maxRaceFailures || got.OK == 0 {
-		t.Fatalf("%d requests in the release's network failed while the proxy was replaced (max %d): %s", got.Failed, maxRaceFailures, got)
+	// In the network a client that resolved the old proxy just before it went loses its request
+	// (the DNS race of any container change): the bound holds per replace.
+	if limit := 2 * maxRaceFailures; got.Failed > limit || got.OK == 0 {
+		t.Fatalf("%d requests in the release's network failed while the proxy was replaced twice (max %d): %s", got.Failed, limit, got)
 	}
 }

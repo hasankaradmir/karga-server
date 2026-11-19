@@ -61,7 +61,8 @@ func validateSettings(s Settings) error {
 
 // defaultListeners are the listeners a new host starts with.
 func defaultListeners() []Listener {
-	return []Listener{{Name: "web", Port: 80, Protocol: ProtocolHTTP}, {Name: "websecure", Port: 443, Protocol: ProtocolHTTPS}}
+	return []Listener{{Name: "http", Port: 80, Protocol: ProtocolHTTP, ListenerOptions: ListenerOptions{RedirectHTTPS: true}},
+		{Name: "https", Port: 443, Protocol: ProtocolHTTPS}}
 }
 
 // Listener is a port the gateway serves on every listen address. A tcp listener belongs to one
@@ -80,6 +81,7 @@ type ListenerOptions struct {
 	MaxBody       string `yaml:"maxBody,omitempty"`
 	RateLimit     string `yaml:"rateLimit,omitempty"`
 	ProxyProtocol string `yaml:"proxyProtocol,omitempty"`
+	RedirectHTTPS bool   `yaml:"redirectHTTPS,omitempty"`
 }
 
 // MaxBodyLimit bounds maxBody: Envoy holds a limited body in memory, within its 100MiB heap.
@@ -133,6 +135,9 @@ func (l Listener) limits() (ports.ProxyHTTPLimits, error) {
 		}
 	} else if l.ProxyProtocol != "" {
 		only = append(only, "proxyProtocol")
+	}
+	if l.RedirectHTTPS && l.Protocol != ProtocolHTTP {
+		only = append(only, "redirectHTTPS")
 	}
 	if len(only) > 0 {
 		slices.Sort(only)

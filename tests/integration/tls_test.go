@@ -98,7 +98,7 @@ func TestGatewayTLS(t *testing.T) {
 		t.Fatalf("https: %q serial %v", body, got.SerialNumber)
 	}
 
-	// Plain HTTP on port 80 of the same address redirects to HTTPS.
+	// Plain HTTP on the default http listener (port 80, redirectHTTPS) redirects to HTTPS.
 	req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:80/path", nil)
 	req.Host = host
 	noFollow := &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

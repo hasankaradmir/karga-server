@@ -196,7 +196,7 @@ func TestTLSSecretChangeUpdatesService(t *testing.T) {
 	withProxySupport(t, true)
 	tlsManifest := func(cert string) []resource.Resource {
 		rs := append(manifest(6379), serviceRes("redis", "redis", 443, "redis",
-			resource.Exposure{Port: "p", Listener: "websecure", Host: "a.example", Path: "/", TLS: &resource.ExposureTLS{Secret: "cert"}}))
+			resource.Exposure{Port: "p", Listener: "https", Host: "a.example", Path: "/", TLS: &resource.ExposureTLS{Secret: "cert"}}))
 		return append(rs, secretRes("cert", map[string]string{resource.TLSCertKey: cert, resource.TLSKeyKey: "k"}))
 	}
 	ordered, err := Order(tlsManifest("c1"))
