@@ -227,23 +227,10 @@ func Run(t *testing.T, rt ports.Runtime, cfg Config) {
 			t.Fatalf("port %d not reported in %+v", port, pub)
 		}
 
-		// Rename keeps the container running; network membership can be changed while it runs.
-		renamed := req.Name + "-next"
-		t.Cleanup(func() { _ = rt.DeleteWorkload(ctx, renamed) })
-		must(t, rt.RenameWorkload(ctx, req.Name, renamed))
-		if _, err := rt.GetWorkload(ctx, req.Name); !errors.Is(err, ports.ErrNotFound) {
-			t.Fatalf("old name after rename: want ErrNotFound, got %v", err)
-		}
-		if st, err := rt.GetWorkload(ctx, renamed); err != nil || st.State != ports.StateRunning {
-			t.Fatalf("renamed workload: %+v %v", st, err)
-		}
-		must(t, rt.DisconnectNetwork(ctx, renamed, netReq.Name))
-		must(t, rt.DisconnectNetwork(ctx, renamed, netReq.Name))
-		must(t, rt.ConnectNetwork(ctx, renamed, netReq.Name, []string{"app"}))
-		if err := rt.RenameWorkload(ctx, "ct-missing-workload", "x"); !errors.Is(err, ports.ErrNotFound) {
-			t.Fatalf("rename missing: want ErrNotFound, got %v", err)
-		}
-		must(t, rt.RenameWorkload(ctx, renamed, req.Name))
+		// Network membership can be changed while the container runs.
+		must(t, rt.DisconnectNetwork(ctx, req.Name, netReq.Name))
+		must(t, rt.DisconnectNetwork(ctx, req.Name, netReq.Name))
+		must(t, rt.ConnectNetwork(ctx, req.Name, netReq.Name, []string{"app"}))
 
 		must(t, rt.StopWorkload(ctx, req.Name, 5*time.Second))
 		if st, err := rt.GetWorkload(ctx, req.Name); err != nil || st.State != ports.StateExited {

@@ -175,7 +175,7 @@ func (r *run) dependencies(ctx context.Context, c Change, w *resource.WorkloadSp
 	want := map[string]string{}
 	for _, d := range w.DependsOn {
 		if dep := r.svcs.svc[d]; dep != nil {
-			rev, err := revisionOf(ctx, r.rt, proxyops.RuntimeName(r.req.Release, dep.Workload))
+			rev, err := revisionOf(ctx, r.rt, r.req.Plan.containers(dep.Workload))
 			if err != nil {
 				return fmt.Errorf("%s %q depends on service %s, whose workload %s does not run: %w", c.Kind, c.Name, d, dep.Workload, err)
 			}
@@ -250,12 +250,12 @@ func (r *run) routeProxy(ctx context.Context) error {
 	for _, c := range r.req.Plan.Changes {
 		changedService := c.Kind == resource.KindService && c.Action != ActionUnchanged && c.Action != ActionDelete
 		if r.svcs.wl[c.Name] != nil && c.Kind == resource.KindWorkload && (r.waitAll || c.Action != ActionUnchanged) {
-			if rev, err := revisionOf(ctx, r.rt, proxyops.RuntimeName(r.req.Release, c.Name)); err == nil {
+			if rev, err := revisionOf(ctx, r.rt, r.req.Plan.containers(c.Name)); err == nil {
 				maps.Copy(want, proxyWant(r.svcs, c.Name, BackendAlias(c.Name, rev)))
 			}
 		}
 		if s := r.svcs.svc[c.Name]; changedService && s != nil {
-			if rev, err := revisionOf(ctx, r.rt, proxyops.RuntimeName(r.req.Release, s.Workload)); err == nil {
+			if rev, err := revisionOf(ctx, r.rt, r.req.Plan.containers(s.Workload)); err == nil {
 				maps.Copy(want, proxyWant(r.svcs, s.Workload, BackendAlias(s.Workload, rev)))
 			}
 		}

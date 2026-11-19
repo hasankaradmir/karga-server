@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -22,8 +23,19 @@ type Remover interface {
 	DeleteVolume(ctx context.Context, name string) error
 }
 
-// RuntimeName is the runtime object name of a release-local resource name.
+// RuntimeName is the runtime object name of a release-local resource name (a Network, a Volume).
 func RuntimeName(release, name string) string { return release + "-" + name }
+
+// workloadHash is how many hex digits of its digest end a workload container's name.
+const workloadHash = 6
+
+// WorkloadName is the container name of a workload with digest ("<algorithm>:<hex>"): it ends with
+// the digest's first hex digits, like a Kubernetes pod-template-hash, so the same spec keeps its
+// name and a changed one gets a new name next to the old.
+func WorkloadName(release, workload, digest string) string {
+	_, hex, _ := strings.Cut(digest, ":")
+	return RuntimeName(release, workload) + "-" + hex[:min(workloadHash, len(hex))]
+}
 
 // RemoveWorkload stops a container gracefully and deletes it with its anonymous volumes; a missing
 // one is fine.

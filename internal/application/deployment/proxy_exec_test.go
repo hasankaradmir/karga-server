@@ -125,12 +125,12 @@ func TestProxyAndGatewayInstall(t *testing.T) {
 	if err := r.run(); err != nil {
 		t.Fatal(err)
 	}
-	w := r.rt.Workloads["cache-redis"]
+	w := r.rt.Workload("cache-redis")
 	if !slices.Equal(w.Request.Aliases, []string{"karga-redis-r1"}) || len(w.Request.Ports) != 0 {
 		t.Fatalf("the workload carries only the backend alias and publishes nothing: %+v", w.Request)
 	}
 
-	proxy := r.rt.Workloads["cache-karga-proxy"]
+	proxy := r.rt.Workload("cache-karga-proxy")
 	pr := proxy.Request
 	if !slices.Equal(pr.Aliases, []string{"redis"}) || !slices.Equal(pr.Networks, []string{"cache-net"}) || pr.User != "1000:1000" ||
 		pr.Sysctls["net.ipv4.ip_unprivileged_port_start"] != "0" || pr.Mounts[0].Target != testHost.Proxies.Container().MountPath {
@@ -178,11 +178,11 @@ func TestProxyReplace(t *testing.T) {
 	}
 	c := r.rt.Calls
 	for _, step := range [][2]string{
-		{"StartWorkload:cache-redis-next", "Write:proxy:karga-redis-r2"},
+		{"StartWorkload:cache-redis", "Write:proxy:karga-redis-r2"},
 		{"Write:proxy:karga-redis-r2", "WaitReady:proxy:karga-redis-r2"},
 		{"WaitReady:proxy:karga-redis-r2", "WaitDrained:proxy"},
 		{"WaitDrained:proxy", "StopWorkload:cache-redis"},
-		{"DeleteWorkload:cache-redis", "RenameWorkload:cache-redis-next->cache-redis"},
+		{"StopWorkload:cache-redis", "DeleteWorkload:cache-redis"},
 	} {
 		before(t, c, step[0], step[1])
 	}
@@ -192,7 +192,7 @@ func TestProxyReplace(t *testing.T) {
 	}) {
 		t.Fatalf("a replace must not touch the proxy or gateway containers: %v", c)
 	}
-	if w := r.rt.Workloads["cache-redis"].Request; w.Image != "redis:7.2" || !slices.Equal(w.Aliases, []string{"karga-redis-r2"}) {
+	if w := r.rt.Workload("cache-redis").Request; w.Image != "redis:7.2" || !slices.Equal(w.Aliases, []string{"karga-redis-r2"}) {
 		t.Fatalf("after replace: %+v", w)
 	}
 }
@@ -203,18 +203,21 @@ func TestReplaceRevertsWhenProxyNotReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	px.notReady["proxy"] = true
+	old := r.rt.Name("cache-redis")
 	if err := r.upgrade(2); err == nil {
 		t.Fatal("expected failure")
 	}
 	before(t, r.rt.Calls, "Write:proxy:karga-redis-r2", "Write:proxy:karga-redis-r1")
-	if slices.Contains(r.rt.Calls, "StopWorkload:cache-redis") {
-		t.Fatalf("old container stopped although the proxy never got ready: %v", r.rt.Calls)
+	if slices.Contains(r.rt.Raw, "StopWorkload:"+old) {
+		t.Fatalf("old container stopped although the proxy never got ready: %v", r.rt.Raw)
 	}
 	if eps, _ := testHost.Proxies.Endpoints(ProxyDir(r.home, "cache")); eps[proxyCluster("redis", r.port())] != "karga-redis-r1:"+strconv.Itoa(r.port()) {
 		t.Fatalf("old backend not restored: %v", eps)
 	}
-	if n := r.rt.Workloads["cache-redis-next"]; n == nil || n.State != ports.StateExited {
-		t.Fatalf("failed -next should be stopped and kept: %+v", n)
+	for _, n := range r.rt.Containers("cache", "redis") {
+		if n != old && r.rt.Workloads[n].State != ports.StateExited {
+			t.Fatalf("the failed new container should be stopped and kept: %+v", r.rt.Workloads[n])
+		}
 	}
 }
 
@@ -251,15 +254,16 @@ func TestReconcileKeepsWhatTheProxyRoutesTo(t *testing.T) {
 	rt := fakeruntime.New("img")
 	create := func(name, rev string) {
 		t.Helper()
-		lbl := map[string]string{ports.LabelManaged: "true", ports.LabelRelease: "web", ports.LabelName: "app", ports.LabelRevision: rev}
+		lbl := map[string]string{ports.LabelManaged: "true", ports.LabelRelease: "web", ports.LabelKind: resource.KindWorkload,
+			ports.LabelName: "app", ports.LabelRevision: rev, ports.LabelDigest: "sha256:" + name[len(name)-6:]}
 		if err := rt.CreateWorkload(ctx, ports.WorkloadRequest{Name: name, Image: "img", Labels: lbl}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	applied := []release.AppliedResource{{Kind: resource.KindWorkload, Name: "app", RuntimeName: "web-app", Digest: "sha256:x"}}
+	applied := []release.AppliedResource{{Kind: resource.KindWorkload, Name: "app", RuntimeName: "web-app-aaaaaa", Digest: "sha256:aaaaaa"}}
 	// Interrupted after the proxy switched to revision 2 but before the old container went away.
-	create("web-app", "1")
-	create("web-app-next", "2")
+	create("web-app-aaaaaa", "1")
+	create("web-app-bbbbbb", "2")
 	cfg := ports.ProxyConfig{Clusters: []ports.ProxyCluster{{Name: "app-p8080", Host: BackendAlias("app", 2), Port: 8080, DNS: true}}}
 	if err := envoy.Write(ProxyDir(home, "web"), "web", 0o600, cfg); err != nil {
 		t.Fatal(err)
@@ -268,8 +272,7 @@ func TestReconcileKeepsWhatTheProxyRoutesTo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, ok := rt.Workloads["web-app"]
-	if !ok || w.Request.Labels[ports.LabelRevision] != "2" || rt.Workloads["web-app-next"] != nil || len(repaired) != 1 {
-		t.Fatalf("kept the wrong container: %v %+v", repaired, rt.Workloads)
+	if !slices.Equal(rt.Containers("web", "app"), []string{"web-app-bbbbbb"}) || len(repaired) != 1 || repaired[0].RuntimeName != "web-app-bbbbbb" {
+		t.Fatalf("kept the wrong container: %v %v", repaired, rt.Containers("web", "app"))
 	}
 }

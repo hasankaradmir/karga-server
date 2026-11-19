@@ -80,7 +80,7 @@ func TestLifecycleGolden(t *testing.T) {
 	res, err = e.svc.Lifecycle.Rollback(ctx, RollbackRequest{CommonOptions: common(), Name: "cache", Revision: 2}, nil)
 	record("rollback to 2", res, err)
 
-	if err := e.rt.DeleteWorkload(ctx, "cache-redis"); err != nil {
+	if err := e.rt.DeleteWorkload(ctx, e.rt.Name("cache-redis")); err != nil {
 		t.Fatal(err)
 	}
 	e.rt.Calls = nil

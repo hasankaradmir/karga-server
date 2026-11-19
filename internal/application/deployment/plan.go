@@ -97,6 +97,24 @@ const (
 	ActionUnchanged = "unchanged"
 )
 
+// containers names the containers workload may run as while the plan runs: the one the plan gives
+// it, then the one it ran as before (a recreate removes that one first, a replace last).
+func (p Plan) containers(workload string) []string {
+	var out []string
+	for _, c := range p.Changes {
+		if c.Kind != resource.KindWorkload || c.Name != workload {
+			continue
+		}
+		if c.Action != ActionDelete {
+			out = append(out, c.RuntimeName)
+		}
+		if c.Applied != nil && c.Applied.RuntimeName != c.RuntimeName {
+			out = append(out, c.Applied.RuntimeName)
+		}
+	}
+	return out
+}
+
 // Digest is "hmac-sha256:<hex>" of data under the digest key, or "sha256:<hex>" without one (tests;
 // karga-server always sets the key from $KARGA_HOME/state.key before it plans).
 func (e *Env) Digest(data []byte) string {
@@ -263,6 +281,13 @@ func (e *Env) Diff(releaseName string, desired []resource.Resource, applied []re
 			}
 			if k.Kind == resource.KindNetwork || k.Kind == resource.KindVolume {
 				errs = append(errs, fmt.Sprintf("changing %s %q is not supported (uninstall the release or rename the resource)", k.Kind, k.Name))
+			}
+		}
+		if k.Kind == resource.KindWorkload {
+			// The container's name ends with its digest: an unchanged workload keeps the one it runs as.
+			c.RuntimeName = proxyops.WorkloadName(releaseName, k.Name, want.Digest)
+			if c.Action == ActionUnchanged {
+				c.RuntimeName = have.RuntimeName
 			}
 		}
 		plan.Changes = append(plan.Changes, c)

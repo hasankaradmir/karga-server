@@ -20,12 +20,27 @@ import (
 
 // revisionOf reads the revision label of a running workload, so the proxy is pointed at the alias
 // the container actually carries.
-func revisionOf(ctx context.Context, rt ports.Runtime, name string) (int, error) {
-	st, err := rt.GetWorkload(ctx, name)
-	if err != nil {
-		return 0, err
+// revisionOf returns the revision of the container a workload runs as, of names (see
+// Plan.containers): the first running one, else the first that exists (a failed replace leaves its
+// new container stopped next to the old one, which still serves).
+func revisionOf(ctx context.Context, rt ports.Runtime, names []string) (int, error) {
+	var found *ports.WorkloadStatus
+	for _, name := range names {
+		st, err := rt.GetWorkload(ctx, name)
+		if err != nil {
+			continue
+		}
+		if st.State == ports.StateRunning {
+			return strconv.Atoi(st.Labels[ports.LabelRevision])
+		}
+		if found == nil {
+			found = &st
+		}
 	}
-	return strconv.Atoi(st.Labels[ports.LabelRevision])
+	if found == nil {
+		return 0, fmt.Errorf("no container of %v: %w", names, ports.ErrNotFound)
+	}
+	return strconv.Atoi(found.Labels[ports.LabelRevision])
 }
 
 // proxyWant is what the release proxy must route to for workload's services to reach it via alias.
@@ -55,7 +70,7 @@ func proxyClusters(svcs services, workload string) []string {
 // proxyConfig listens on every service port and routes it to the backend alias of the container
 // running the service's workload (override names another alias per workload, for a replace). A
 // service whose workload has no container yet is left out until it has one.
-func proxyConfig(ctx context.Context, rt ports.Runtime, rel string, svcs services, override map[string]string) ports.ProxyConfig {
+func proxyConfig(ctx context.Context, rt ports.Runtime, plan Plan, svcs services, override map[string]string) ports.ProxyConfig {
 	var cfg ports.ProxyConfig
 	for _, n := range svcs.names() {
 		s := svcs.svc[n]
@@ -65,7 +80,7 @@ func proxyConfig(ctx context.Context, rt ports.Runtime, rel string, svcs service
 		}
 		alias, ok := override[s.Workload]
 		if !ok {
-			rev, err := revisionOf(ctx, rt, proxyops.RuntimeName(rel, s.Workload))
+			rev, err := revisionOf(ctx, rt, plan.containers(s.Workload))
 			if err != nil {
 				continue
 			}
@@ -86,7 +101,7 @@ func proxyConfig(ctx context.Context, rt ports.Runtime, rel string, svcs service
 }
 
 func (e *Env) writeProxy(ctx context.Context, rt ports.Runtime, req ExecRequest, svcs services, override map[string]string) error {
-	return e.host.Proxies.Write(ProxyDir(e.home, req.Release), req.Release, 0o600, proxyConfig(ctx, rt, req.Release, svcs, override))
+	return e.host.Proxies.Write(ProxyDir(e.home, req.Release), req.Release, 0o600, proxyConfig(ctx, rt, req.Plan, svcs, override))
 }
 
 // exposeRoutes is what the release exposes on the gateway, written next to the proxy's

@@ -41,7 +41,7 @@ func TestRedisReleaseLifecycle(t *testing.T) {
 	if _, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: "../testdata/redis", Values: values("7.4")}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if st := workload(t, rt, name+"-redis"); st.Health != ports.HealthHealthy || st.Labels[ports.LabelRevision] != "2" {
+	if st := workload(t, rt, containerName(t, rt, name, "redis")); st.Health != ports.HealthHealthy || st.Labels[ports.LabelRevision] != "2" {
 		t.Fatalf("after upgrade: %+v", st)
 	}
 	var out strings.Builder
@@ -53,7 +53,7 @@ func TestRedisReleaseLifecycle(t *testing.T) {
 	if _, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: "../testdata/redis", Values: values("0.0.0-missing")}, nil); err == nil {
 		t.Fatal("upgrade to a missing image should fail")
 	}
-	if st := workload(t, rt, name+"-redis"); st.State != ports.StateRunning || st.Labels[ports.LabelRevision] != "2" {
+	if st := workload(t, rt, containerName(t, rt, name, "redis")); st.State != ports.StateRunning || st.Labels[ports.LabelRevision] != "2" {
 		t.Fatalf("running workload was touched by a failed pull: %+v", st)
 	}
 	// Nothing that runs was changed, so the release stays deployed at revision 2 (D18).
@@ -106,7 +106,7 @@ func TestFailedUpgradeKeepsHistory(t *testing.T) {
 	if r := currentRelease(t, s, name); r.CurrentRevision != 1 {
 		t.Fatalf("current revision: %+v", r)
 	}
-	if st := workload(t, rt, name+"-probe"); st.State != ports.StateExited {
+	if st := workload(t, rt, containerName(t, rt, name, "probe")); st.State != ports.StateExited {
 		t.Fatalf("failed container should be stopped and kept: %+v", st)
 	}
 
@@ -114,7 +114,7 @@ func TestFailedUpgradeKeepsHistory(t *testing.T) {
 	if err != nil || res.Revision != 3 {
 		t.Fatalf("rollback: %+v %v", res, err)
 	}
-	if st := workload(t, rt, name+"-probe"); st.State != ports.StateRunning || st.Health != ports.HealthHealthy {
+	if st := workload(t, rt, containerName(t, rt, name, "probe")); st.State != ports.StateRunning || st.Health != ports.HealthHealthy {
 		t.Fatalf("after rollback: %+v", st)
 	}
 }
@@ -128,7 +128,7 @@ func TestEnvironmentFromSecret(t *testing.T) {
 	printenv := func() string {
 		t.Helper()
 		var out bytes.Buffer
-		if code, err := rt.Exec(ctx, name+"-web", ports.ExecOptions{Cmd: []string{"printenv", "SECRET_VALUE"}, Stdout: &out, Stderr: &out}); err != nil || code != 0 {
+		if code, err := rt.Exec(ctx, containerName(t, rt, name, "web"), ports.ExecOptions{Cmd: []string{"printenv", "SECRET_VALUE"}, Stdout: &out, Stderr: &out}); err != nil || code != 0 {
 			t.Fatalf("printenv: %d %v %s", code, err, out.String())
 		}
 		return strings.TrimSpace(out.String())

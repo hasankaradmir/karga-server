@@ -20,7 +20,7 @@ directory.
 | D13 | History | `--history-max`, default 10 revisions. |
 | D14 | Failed containers | Stopped, not removed, so their logs can be read. |
 | D15 | Interrupted operations | PID, hostname and the request's options are recorded; karga-server resumes them at start with those options, or an interrupted operation is aborted with `--force` (ADR-0015). One left running is always an earlier process's: one karga-server runs per home and only it runs operations, so a PID another process took since (a reboot) does not keep the release locked. |
-| D16 | Replace strategy | `updateStrategy: {type: replace, drainTimeout}`: the new container starts next to the old one; eligible with read-only volumes and a health check. |
+| D16 | Replace strategy | `updateStrategy: {type: replace, drainTimeout}`: the new container starts next to the old one; eligible with read-only volumes and a health check. Names: D34. |
 | D17 | Strategy override | `--strategy recreate\|replace` on upgrade and rollback. |
 | D18 | Harmless failures | A failure that touched nothing running (failed pull, unhealthy replace) keeps the release status. |
 | D19 | Replace with a proxy | Per-workload Envoy (ADR-0009), later replaced by D20. |
@@ -37,5 +37,6 @@ directory.
 | D31 | Lifecycle rules | What an install, upgrade, rollback or prune may do is decided in `internal/domain/release` (`Install`, `CanUpgrade`, `CanRollback`, `Prunable`, the status transitions), without I/O, before an operation is recorded. |
 | D32 | Confirmations | The SDK names each request's risk (`Risk()`); karga-server refuses one with a risk that is not `Confirmed`; the CLI asks with the same text, or takes `--yes` (ADR-0016). |
 | D33 | Not planned | No automatic rollback (`--atomic`, D2 stands); no default resource limits (packages set theirs); the SDK's `packages` keeps its name (`package` is a keyword, and it names the domain's term); `ports.HostNet` has one implementation and no fake (Linux only, covered by the integration tests). |
+| D34 | Container names | A workload's container is `<release>-<workload>-<6 hex of its digest>`: the same spec keeps its name, a changed one gets a new one, so a replace starts the new container under its own name and renames nothing. Containers are found by label and the state records their names; the proxy, Networks and Volumes keep fixed names. |
 
 D23 was not used.

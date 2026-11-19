@@ -31,7 +31,7 @@ func TestReconcilerRepairsFromDockerEvents(t *testing.T) {
 	loop := reconciler.New(reconciler.NewQueue(0), s.Reads, s.Lifecycle, rt,
 		reconciler.Options{Only: func(rel string) bool { return rel == name }}) // other tests share the host
 	go loop.Run(ctx)
-	container := name + "-web"
+	container := containerName(t, rt, name, "web")
 	running := func(why string) {
 		t.Helper()
 		deadline := time.Now().Add(30 * time.Second)

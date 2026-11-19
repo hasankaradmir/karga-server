@@ -57,7 +57,7 @@ func TestResumeFinishesAnInterruptedUpgrade(t *testing.T) {
 	must[*Result](t)(e.upgrade("image.tag=7.2"))
 	// Stopped mid-replace: the old container is gone, the new one not created yet.
 	e.crash("upgrade", 2, release.StatusUpgrading)
-	delete(e.rt.Workloads, "cache-redis")
+	delete(e.rt.Workloads, e.rt.Name("cache-redis"))
 
 	<-e.svc.Lifecycle.Resume(context.Background())
 
@@ -109,7 +109,7 @@ func TestResumeAbortsOtherOperationsAndUninstallsAgain(t *testing.T) {
 	if r := e.release(); r.Status != release.StatusUninstalled {
 		t.Fatalf("release: %+v", r)
 	}
-	if _, ok := e.rt.Workloads["cache-redis"]; ok {
+	if _, ok := e.rt.Lookup("cache-redis"); ok {
 		t.Fatal("workload left after the resumed uninstall")
 	}
 	if len(e.rt.Volumes) == 0 {
@@ -141,7 +141,7 @@ func TestResumeWaitsForTheRuntime(t *testing.T) {
 	must[*Result](t)(e.install())
 	must[*Result](t)(e.upgrade("image.tag=7.2"))
 	e.crash("upgrade", 2, release.StatusUpgrading)
-	delete(e.rt.Workloads, "cache-redis")
+	delete(e.rt.Workloads, e.rt.Name("cache-redis"))
 	e.rt.Fail = map[string]error{"Info:": fmt.Errorf("docker is starting: %w", ports.ErrUnavailable)}
 	resumeRetry = 20 * time.Millisecond
 	t.Cleanup(func() { resumeRetry = 5 * time.Second })
