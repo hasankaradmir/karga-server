@@ -161,6 +161,7 @@ spec:
       listener: {{ .Values.routeListener }}
       host: {{ .Values.route }}
       path: {{ .Values.rawPath }}
+      pathType: {{ .Values.rawPathType }}
       {{- if .Values.rawTo }}
       to: {{ .Values.rawTo }}
       {{- end }}

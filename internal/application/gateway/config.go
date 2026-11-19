@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/hasankaradmir/karga-sdk/resource"
+
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -66,9 +68,9 @@ func buildConfig(settings Settings, targets []Target, mountPath string) ports.Pr
 						cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: u.tcp, Host: t.IP, Port: r.Port, ProxyProtocol: l.ProxyProtocol})
 					}
 				}
-			case !u.seen[r.Host+r.Path]:
-				u.seen[r.Host+r.Path] = true
-				u.routes = append(u.routes, ports.ProxyRoute{Host: r.Host, Path: r.Path, To: r.To, Cluster: cluster})
+			case !u.seen[r.key()]:
+				u.seen[r.key()] = true
+				u.routes = append(u.routes, ports.ProxyRoute{Host: r.Host, Path: r.Path, Exact: r.PathType == resource.PathExact, To: r.To, Cluster: cluster})
 				if _, ok := u.certs[r.Host]; l.Protocol == ProtocolHTTPS && !ok {
 					n := mountPath + "/certs/" + certName(t.Release, l.Name, r.Host, r.CertDir)
 					u.certs[r.Host] = ports.ProxyCert{Chain: n + ".crt", Key: n + ".key"}

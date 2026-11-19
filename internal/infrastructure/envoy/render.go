@@ -274,7 +274,7 @@ func redirectHost(host string, port int) *routev3.VirtualHost {
 }
 
 // virtualHosts groups routes by host. Within a host exact paths match first, then prefixes, the
-// longest first, then "/*".
+// longest first ("/" last).
 func virtualHosts(routes []HTTPRoute, timeout time.Duration) []*routev3.VirtualHost {
 	byHost := map[string][]HTTPRoute{}
 	for _, r := range routes {
@@ -284,14 +284,13 @@ func virtualHosts(routes []HTTPRoute, timeout time.Duration) []*routev3.VirtualH
 	for _, h := range slices.Sorted(maps.Keys(byHost)) {
 		rs := byHost[h]
 		slices.SortFunc(rs, func(a, b HTTPRoute) int {
-			ap, aPrefix := pathPrefix(a.Path)
-			bp, bPrefix := pathPrefix(b.Path)
+			ap, bp := matchPath(a), matchPath(b)
 			switch {
-			case aPrefix != bPrefix:
-				if aPrefix {
-					return 1
+			case a.Exact != b.Exact:
+				if a.Exact {
+					return -1
 				}
-				return -1
+				return 1
 			case len(ap) != len(bp):
 				return len(bp) - len(ap)
 			}
@@ -308,8 +307,8 @@ func virtualHosts(routes []HTTPRoute, timeout time.Duration) []*routev3.VirtualH
 				// timeout ends idle ones.
 				Timeout: durationpb.New(timeout),
 			}
-			route := &routev3.Route{Match: pathMatch(r.Path), Action: &routev3.Route_Route{Route: action}}
-			if prefix, ok := pathPrefix(r.Path); ok && r.To != "" {
+			route := &routev3.Route{Match: pathMatch(r), Action: &routev3.Route_Route{Route: action}}
+			if prefix := strings.TrimSuffix(matchPath(r), "/"); !r.Exact && r.To != "" {
 				// prefix_rewrite would turn /x/y into //y with a by-segment match.
 				action.RegexRewrite = &matcherv3.RegexMatchAndSubstitute{
 					Pattern:      &matcherv3.RegexMatcher{Regex: "^" + regexp.QuoteMeta(prefix) + "/?(.*)"},
@@ -329,24 +328,24 @@ func virtualHosts(routes []HTTPRoute, timeout time.Duration) []*routev3.VirtualH
 	return out
 }
 
-// pathPrefix returns the prefix of a "/x/*" path ("/x"; "" for "/*"), and whether it is one.
-func pathPrefix(path string) (string, bool) {
-	if p, ok := strings.CutSuffix(path, "/*"); ok {
-		return p, true
+// matchPath is a route's path as matched: a prefix without its trailing "/" ("/" stays).
+func matchPath(r HTTPRoute) string {
+	if r.Exact || r.Path == "/" {
+		return r.Path
 	}
-	return "", false
+	return strings.TrimSuffix(r.Path, "/")
 }
 
-// pathMatch matches "/*" (everything), "/x/*" (/x and below it, by segment) or an exact path.
-func pathMatch(path string) *routev3.RouteMatch {
-	prefix, ok := pathPrefix(path)
+// pathMatch matches the path only (exact), everything ("/"), or the path and below it by segment.
+func pathMatch(r HTTPRoute) *routev3.RouteMatch {
+	p := matchPath(r)
 	switch {
-	case !ok:
-		return &routev3.RouteMatch{PathSpecifier: &routev3.RouteMatch_Path{Path: path}}
-	case prefix == "":
+	case r.Exact:
+		return &routev3.RouteMatch{PathSpecifier: &routev3.RouteMatch_Path{Path: p}}
+	case p == "/":
 		return &routev3.RouteMatch{PathSpecifier: &routev3.RouteMatch_Prefix{Prefix: "/"}}
 	}
-	return &routev3.RouteMatch{PathSpecifier: &routev3.RouteMatch_PathSeparatedPrefix{PathSeparatedPrefix: prefix}}
+	return &routev3.RouteMatch{PathSpecifier: &routev3.RouteMatch_PathSeparatedPrefix{PathSeparatedPrefix: p}}
 }
 
 // Clusters renders cds.yaml.

@@ -40,7 +40,7 @@ func (g *Gateway) Check(ctx context.Context, rel string, rs []resource.Resource)
 			if r.Host == "" {
 				tcp[r.Listener] = o
 			} else {
-				routes[r.Listener+" "+r.Host+r.Path] = o
+				routes[r.Listener+" "+r.key()] = o
 			}
 			if r.TLSSecret != "" {
 				certs[r.Host] = t.Release + "/" + r.TLSSecret
@@ -78,7 +78,7 @@ func (g *Gateway) Check(ctx context.Context, rel string, rs []resource.Resource)
 			if o, taken := tcp[l.Name]; taken {
 				errs = append(errs, fmt.Errorf("%s: the listener is used by %s/%s: %w", where, o.release, o.service, ports.ErrPortInUse))
 			}
-			if o, taken := routes[l.Name+" "+e.Host+e.Path]; taken && e.Host != "" {
+			if o, taken := routes[l.Name+" "+e.RouteKey()]; taken && e.Host != "" {
 				errs = append(errs, fmt.Errorf("%s: %s%s is already routed to %s/%s: %w", where, e.Host, e.Path, o.release, o.service, ports.ErrPortInUse))
 			}
 			if e.TLS != nil && certs[e.Host] != "" && certs[e.Host] != rel+"/"+e.TLS.Secret {

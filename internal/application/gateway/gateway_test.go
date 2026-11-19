@@ -552,17 +552,17 @@ func TestRoutePathAndTo(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()
 	rt := fakeruntime.New("img")
-	proxyOf(t, rt, home, "a", nil, []Route{{Service: "api", Port: 80, Listener: "http", Host: "a.example", Path: "/api/*", To: "/"}})
+	proxyOf(t, rt, home, "a", nil, []Route{{Service: "api", Port: 80, Listener: "http", Host: "a.example", Path: "/api", PathType: "prefix", To: "/"}})
 	targets, err := findTargets(ctx, rt, home)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg := buildConfig(Settings{Listen: []string{"127.0.0.1"}, Listeners: defaultListeners()}, targets, "/etc/karga-proxy")
-	if len(cfg.HTTP) != 1 || len(cfg.HTTP[0].Routes) != 1 || cfg.HTTP[0].Routes[0].Path != "/api/*" || cfg.HTTP[0].Routes[0].To != "/" {
+	if len(cfg.HTTP) != 1 || len(cfg.HTTP[0].Routes) != 1 || cfg.HTTP[0].Routes[0].Path != "/api" || cfg.HTTP[0].Routes[0].To != "/" {
 		t.Fatalf("routes: %+v", cfg.HTTP)
 	}
 	routes, err := New(rt, nil, home).Routes(ctx)
-	if err != nil || len(routes) != 1 || routes[0].Route != "a.example/api/* → /" {
+	if err != nil || len(routes) != 1 || routes[0].Route != "a.example/api → /" {
 		t.Fatalf("status routes: %+v %v", routes, err)
 	}
 }

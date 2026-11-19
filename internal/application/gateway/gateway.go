@@ -43,15 +43,21 @@ type Route struct {
 	Port     int    `yaml:"port"`
 	Listener string `yaml:"listener"`
 	Host     string `yaml:"host,omitempty"`
-	// Path is "/x/*" (a prefix, by segment), "/*" or a path matched exactly; To (with a prefix)
-	// replaces it in what the service receives.
-	Path string `yaml:"path,omitempty"`
-	To   string `yaml:"to,omitempty"`
+	// Path and PathType (prefix, by segment, or exact) select the requests; To (with a prefix)
+	// replaces the prefix in what the service receives.
+	Path     string `yaml:"path,omitempty"`
+	PathType string `yaml:"pathType,omitempty"`
+	To       string `yaml:"to,omitempty"`
 	// TLSSecret and CertDir (its materialized directory, with tls.crt and tls.key) serve HTTPS.
 	TLSSecret string `yaml:"tlsSecret,omitempty"`
 	CertDir   string `yaml:"certDir,omitempty"`
 	// HealthPath is checked by HTTP instead of a TCP connect (the workload's http health check).
 	HealthPath string `yaml:"healthPath,omitempty"`
+}
+
+// key is what the route takes on its listener (resource.Exposure.RouteKey).
+func (r Route) key() string {
+	return resource.Exposure{Host: r.Host, Path: r.Path, PathType: r.PathType}.RouteKey()
 }
 
 // Target is one release proxy the gateway forwards to, with what its release exposes.
@@ -400,7 +406,10 @@ func (g *Gateway) Routes(ctx context.Context) ([]Exposed, error) {
 			route := "tcp"
 			if r.Host != "" {
 				route = r.Host + r.Path
-				if r.To != "" {
+				switch {
+				case r.PathType == resource.PathExact:
+					route += " (exact)"
+				case r.To != "":
 					route += " → " + r.To
 				}
 			}

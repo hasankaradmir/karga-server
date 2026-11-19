@@ -90,7 +90,7 @@ interruption. `KARGA_PROXY_IMAGE` overrides the image.
   add`): a name, a port and a protocol. A new host has `http` (80, with `redirectHTTPS`) and
   `https` (443). A Service exposes a port on a listener by name; exposing on a listener that does not exist,
   of another protocol, or that another release holds is refused before anything changes. HTTP and
-  HTTPS listeners select a Service by `Host` header and path (`/x/*` by segment, `/*`, or exact; `to`
+  HTTPS listeners select a Service by `Host` header and path (`pathType` prefix, by segment, or exact; `to`
   replaces a prefix in what the Service gets), so several releases share them;
   the backend receives the client address in `x-forwarded-for`. A tcp listener belongs to one Service.
   Listeners nobody uses are not opened. karga creates the gateway when a Service is exposed and

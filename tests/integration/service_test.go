@@ -350,8 +350,8 @@ func TestGatewaySettingsFileApply(t *testing.T) {
 	}
 }
 
-// TestGatewayPathRouting: "/x/*" takes /x and below it by segment (not /xy), to replaces the prefix
-// in what the service gets (with x-forwarded-prefix), and a path without * is matched exactly.
+// TestGatewayPathRouting: a prefix takes /x and below it by segment (not /xy), to replaces it in
+// what the service gets (with x-forwarded-prefix), and pathType exact takes the path only.
 func TestGatewayPathRouting(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -365,8 +365,8 @@ func TestGatewayPathRouting(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	install("it-path-a", "route=strip.local", "rawPath=/x/*", "rawTo=/")
-	install("it-path-b", "route=exact.local", "rawPath=/x/path")
+	install("it-path-a", "route=strip.local", "rawPath=/x", "rawTo=/")
+	install("it-path-b", "route=exact.local", "rawPath=/x/path", "rawPathType=exact")
 	get := func(host, path string) (int, string) {
 		t.Helper()
 		var code int

@@ -62,10 +62,11 @@ type ProxyCert struct {
 // ProxyRoute sends requests for Host whose path starts with Path to Cluster.
 type ProxyRoute struct {
 	Host string
-	// Path is "/x/*" (/x and below it, by segment), "/*" (everything) or a path matched exactly.
-	Path string
-	// To, with a "/x/*" path, replaces /x in the request's path (the prefix goes in
-	// x-forwarded-prefix).
+	// Path is a prefix (the path and below it, by segment; "/" is everything), or with Exact the
+	// path only.
+	Path  string
+	Exact bool
+	// To, with a prefix, replaces it in the request's path (the prefix goes in x-forwarded-prefix).
 	To      string
 	Cluster string
 }
