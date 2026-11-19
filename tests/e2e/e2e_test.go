@@ -361,13 +361,14 @@ func TestRedisLifecycle(t *testing.T) {
 	if got := redis(t, port, "GET e2e"); !strings.Contains(got, "kept") {
 		t.Fatalf("key after restore: %q", got)
 	}
-	// The workload publishes nothing; the release proxy only a loopback upstream for the gateway.
+	// Neither the workload nor the release proxy publishes anything.
 	if out, _ := exec.Command("docker", "port", containerOf(t, rel, "redis")).Output(); len(strings.TrimSpace(string(out))) != 0 {
 		t.Fatalf("the workload published ports: %s", out)
 	}
-	if out, _ := exec.Command("docker", "port", labeledContainer(t, rel, "Proxy", "proxy")).Output(); !strings.Contains(string(out), "127.0.0.1:") || strings.Contains(string(out), "0.0.0.0") {
-		t.Fatalf("proxy ports: %s", out)
+	if out, _ := exec.Command("docker", "port", labeledContainer(t, rel, "Proxy", "proxy")).Output(); len(strings.TrimSpace(string(out))) != 0 {
+		t.Fatalf("the proxy publishes nothing (the gateway reaches it on the edge network): %s", out)
 	}
+
 	if out := e.run("gateway", "status"); !strings.Contains(out, "redis:"+strconv.Itoa(port)) || !strings.Contains(out, "Listen:     127.0.0.1") {
 		t.Fatalf("gateway status:\n%s", out)
 	}

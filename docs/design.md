@@ -241,9 +241,17 @@ Services is refused.
   Service port and forwards to the backend alias of the container currently running the Service's
   workload (`karga-<workload>-r<revision>`). Workloads carry no alias of their own name (Docker
   still resolves the container name, which changes with every update: reach a workload through its
-  Service). One proxy has one address, so a port number belongs to one Service of the release. The
-  exposed Service ports are published on loopback upstream ports chosen by karga and recorded in a
-  container label (`io.karga.gateway`). What the release exposes (listener, host, path,
+  Service). One proxy has one address, so a port number belongs to one Service of the release. It
+  publishes no port (D42). Every proxy also joins the edge network `karga-edge`: one Docker bridge
+  for the host, `internal` (no way out), with traffic between its containers off
+  (`enable_icc=false`), so releases stay apart while the host, and so the gateway in its network,
+  reaches every address on it. Its range is karga-server's `--edge-subnet` (`KARGA_EDGE_SUBNET`,
+  default `10.213.0.0/16`); it cannot change while proxies use it. Each release gets a pair of
+  addresses, given in order from a counter in `$KARGA_HOME/edge.yaml` (an address a release leaves is
+  not given again until the counter wraps); a proxy takes the one its predecessor does not hold, so
+  a replace alternates between the two, and records it in its `io.karga.edge-ip` label. The gateway
+  forwards to `<edge address>:<service port>`: the proxy already listens on every Service port, so
+  exposing one changes nothing of the proxy. What the release exposes (listener, host, path,
   certificate directory) and the proxy container the gateway routes to are written to
   `$KARGA_HOME/proxies/<release>/expose.yaml`, so changing a host or path needs no new container.
   Docker cannot change a running container's ports or aliases: a changed proxy (an exposed port, a

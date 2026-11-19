@@ -444,12 +444,18 @@ func (r *Runtime) PublishedPorts(ctx context.Context) ([]ports.PublishedPort, er
 }
 
 // ConnectNetwork implements ports.Runtime.
-func (r *Runtime) ConnectNetwork(ctx context.Context, workload, net string, aliases []string) error {
+func (r *Runtime) ConnectNetwork(ctx context.Context, workload, net string, aliases []string, ip string) error {
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
-	_, err := r.c.NetworkConnect(ctx, net, client.NetworkConnectOptions{
-		Container: workload, EndpointConfig: &network.EndpointSettings{Aliases: aliases},
-	})
+	ep := &network.EndpointSettings{Aliases: aliases}
+	if ip != "" {
+		addr, err := netip.ParseAddr(ip)
+		if err != nil {
+			return fmt.Errorf("connect workload %s to network %s: address %q: %w", workload, net, ip, ports.ErrInvalid)
+		}
+		ep.IPAMConfig = &network.EndpointIPAMConfig{IPv4Address: addr}
+	}
+	_, err := r.c.NetworkConnect(ctx, net, client.NetworkConnectOptions{Container: workload, EndpointConfig: ep})
 	return wrap(err, fmt.Sprintf("connect workload %s to network %s", workload, net))
 }
 

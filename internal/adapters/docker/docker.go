@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	goruntime "runtime"
 	"strings"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -141,9 +143,15 @@ func (r *Runtime) Info(ctx context.Context) (ports.RuntimeInfo, error) {
 func (r *Runtime) CreateNetwork(ctx context.Context, req ports.NetworkRequest) error {
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
-	_, err := r.c.NetworkCreate(ctx, req.Name, client.NetworkCreateOptions{
-		Driver: req.Driver, Internal: req.Internal, Labels: req.Labels,
-	})
+	opts := client.NetworkCreateOptions{Driver: req.Driver, Internal: req.Internal, Labels: req.Labels, Options: req.Options}
+	if req.Subnet != "" {
+		subnet, err := netip.ParsePrefix(req.Subnet)
+		if err != nil {
+			return fmt.Errorf("create network %s: subnet %q: %w", req.Name, req.Subnet, ports.ErrInvalid)
+		}
+		opts.IPAM = &network.IPAM{Config: []network.IPAMConfig{{Subnet: subnet}}}
+	}
+	_, err := r.c.NetworkCreate(ctx, req.Name, opts)
 	return wrap(err, "create network "+req.Name)
 }
 

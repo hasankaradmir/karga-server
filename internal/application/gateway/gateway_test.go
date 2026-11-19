@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"maps"
 	"os"
@@ -30,20 +29,20 @@ func testSettings() Settings {
 
 func TestGatewayConfigListenersAndRedirects(t *testing.T) {
 	targets := []Target{
-		{Release: "a", Ports: []Port{{Service: "shop", Port: 80, Upstream: 4001}, {Service: "db", Port: 5432, Upstream: 4002}},
+		{Release: "a", IP: "10.213.0.2", Ports: []Port{{Service: "shop", Port: 80}, {Service: "db", Port: 5432}},
 			Routes: []Route{
 				{Service: "shop", Port: 80, Listener: "https", Host: "secure.example", Path: "/", TLSSecret: "cert", CertDir: "/c"},
 				{Service: "shop", Port: 80, Listener: "http", Host: "plain.example", Path: "/"},
 				{Service: "db", Port: 5432, Listener: "pg"},
 			}},
-		{Release: "b", Ports: []Port{{Service: "web", Port: 80, Upstream: 4003}},
+		{Release: "b", IP: "10.213.0.4", Ports: []Port{{Service: "web", Port: 80}},
 			Routes: []Route{
 				{Service: "web", Port: 80, Listener: "https", Host: "both.example", Path: "/", TLSSecret: "cert", CertDir: "/d"},
 				{Service: "web", Port: 80, Listener: "http", Host: "both.example", Path: "/"},
 			}},
 	}
 	cfg := buildConfig(testSettings(), targets, "/etc/karga-proxy")
-	if len(cfg.Clusters) != 3 || cfg.Clusters[0].Name != "a_shop_p80" || cfg.Clusters[0].Port != 4001 {
+	if len(cfg.Clusters) != 3 || cfg.Clusters[0].Name != "a_shop_p80" || cfg.Clusters[0].Host != "10.213.0.2" || cfg.Clusters[0].Port != 80 {
 		t.Fatalf("clusters: %+v", cfg.Clusters)
 	}
 	if len(cfg.TCP) != 2 || cfg.TCP[0].Port != 5432 || cfg.TCP[0].Cluster != "a_db_p5432" || cfg.TCP[1].Address != "10.0.0.5" {
@@ -102,9 +101,9 @@ func TestSyncCertsCopiesAndPrunes(t *testing.T) {
 // proxyOf creates the proxy container of release rel with its upstream ports and expose file.
 func proxyOf(t *testing.T, rt *fakeruntime.Runtime, home, rel string, ps []Port, routes []Route) {
 	t.Helper()
-	label, _ := json.Marshal(ps)
+	_ = ps // the ports are the routes'; the proxy serves them at its edge address
 	if err := rt.CreateWorkload(context.Background(), ports.WorkloadRequest{Name: rel + "-karga-proxy-0a1b2c3d", Image: "img", Labels: map[string]string{
-		ports.LabelManaged: "true", ports.LabelRelease: rel, ports.LabelName: "proxy", LabelPorts: string(label)}}); err != nil {
+		ports.LabelManaged: "true", ports.LabelRelease: rel, ports.LabelName: "proxy", LabelEdgeIP: "10.213.0." + strconv.Itoa(len(rel)+10)}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeExpose(home, rel, "", routes); err != nil {
@@ -120,7 +119,7 @@ func TestCheckExposures(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt := fakeruntime.New("img")
-	proxyOf(t, rt, home, "other", []Port{{Service: "web", Port: 80, Upstream: 4001}, {Service: "db", Port: 5432, Upstream: 4002}}, []Route{
+	proxyOf(t, rt, home, "other", []Port{{Service: "web", Port: 80}, {Service: "db", Port: 5432}}, []Route{
 		{Service: "web", Port: 80, Listener: "https", Host: "secure.example", Path: "/", TLSSecret: "cert"},
 		{Service: "db", Port: 5432, Listener: "pg"},
 	})
@@ -188,7 +187,7 @@ func TestSyncFollowsExposures(t *testing.T) {
 	if _, ok := rt.Lookup(ContainerName); ok {
 		t.Fatal("gateway started with nothing exposed")
 	}
-	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "http", Host: "b.example", Path: "/"}})
+	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80}}, []Route{{Service: "web", Port: 80, Listener: "http", Host: "b.example", Path: "/"}})
 	targets, err := New(rt, h, home).Sync(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +196,7 @@ func TestSyncFollowsExposures(t *testing.T) {
 		t.Fatalf("gateway missing, targets %+v", targets)
 	}
 	routes, err := New(rt, nil, home).Routes(ctx)
-	if err != nil || len(routes) != 1 || routes[0] != (Exposed{Listener: "http:80", Route: "b.example/", Release: "b", Service: "web:80", Upstream: "127.0.0.1:4001"}) {
+	if err != nil || len(routes) != 1 || routes[0] != (Exposed{Listener: "http:80", Route: "b.example/", Release: "b", Service: "web:80", Upstream: "10.213.0.11:80"}) {
 		t.Fatalf("routes: %+v %v", routes, err)
 	}
 }
@@ -233,7 +232,7 @@ func TestExposeChecksUnderTheLock(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()
 	rt := fakeruntime.New("img")
-	proxyOf(t, rt, home, "other", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{
+	proxyOf(t, rt, home, "other", []Port{{Service: "web", Port: 80}}, []Route{
 		{Service: "web", Port: 80, Listener: "http", Host: "a.example", Path: "/"},
 	})
 	svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
@@ -272,11 +271,11 @@ func TestSyncRefusesAnotherHomesGateway(t *testing.T) {
 	rt := fakeruntime.New("img", envoy.Image())
 	route := []Route{{Service: "web", Port: 80, Listener: "http", Host: "b.example", Path: "/"}}
 	first, second := t.TempDir(), t.TempDir()
-	proxyOf(t, rt, first, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, route)
+	proxyOf(t, rt, first, "b", []Port{{Service: "web", Port: 80}}, route)
 	if _, err := New(rt, h, first).Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
-	proxyOf(t, rt, second, "c", []Port{{Service: "web", Port: 80, Upstream: 4002}}, route)
+	proxyOf(t, rt, second, "c", []Port{{Service: "web", Port: 80}}, route)
 	rt.Calls = nil
 	if _, err := New(rt, h, second).Sync(ctx); !errors.Is(err, ports.ErrConflict) || !strings.Contains(err.Error(), first) {
 		t.Fatalf("want a conflict naming the other home, got %v", err)
@@ -294,7 +293,7 @@ func TestListenerOptions(t *testing.T) {
 	if err := validateSettings(settings); err != nil {
 		t.Fatal(err)
 	}
-	targets := []Target{{Release: "a", Ports: []Port{{Service: "shop", Port: 80, Upstream: 4001}, {Service: "db", Port: 5432, Upstream: 4002}},
+	targets := []Target{{Release: "a", IP: "10.213.0.2", Ports: []Port{{Service: "shop", Port: 80}, {Service: "db", Port: 5432}},
 		Routes: []Route{{Service: "shop", Port: 80, Listener: "http", Host: "shop.example", Path: "/"}, {Service: "db", Port: 5432, Listener: "pg"}}}}
 	cfg := buildConfig(settings, targets, "/etc/karga-proxy")
 	want := ports.ProxyHTTPLimits{Timeout: 30 * time.Second, IdleTimeout: 10 * time.Minute, MaxBodyBytes: 1 << 20, RateRequests: 60, RatePer: time.Minute}
@@ -306,11 +305,11 @@ func TestListenerOptions(t *testing.T) {
 		t.Fatalf("tcp: %+v", cfg.TCP)
 	}
 	i := slices.IndexFunc(cfg.Clusters, func(c ports.ProxyCluster) bool { return c.Name == "a_db_p5432_ppv2" })
-	if i < 0 || cfg.Clusters[i].Port != 4002 || cfg.Clusters[i].ProxyProtocol != "v2" {
+	if i < 0 || cfg.Clusters[i].Host != "10.213.0.2" || cfg.Clusters[i].Port != 5432 || cfg.Clusters[i].ProxyProtocol != "v2" {
 		t.Fatalf("clusters: %+v", cfg.Clusters)
 	}
 	// Readiness waits for the clusters the listeners use.
-	if want := Want(settings, targets, func(Target) bool { return true }); len(want) != 2 || want["a_db_p5432_ppv2"] != "127.0.0.1:4002" || want["a_shop_p80"] != "127.0.0.1:4001" {
+	if want := Want(settings, targets, func(Target) bool { return true }); len(want) != 2 || want["a_db_p5432_ppv2"] != "10.213.0.2:5432" || want["a_shop_p80"] != "10.213.0.2:80" {
 		t.Fatalf("want: %v", want)
 	}
 
@@ -340,9 +339,8 @@ func TestTargetsPickOneProxyPerRelease(t *testing.T) {
 	home := t.TempDir()
 	rt := fakeruntime.New("img")
 	for i, name := range []string{"a-karga-proxy-1111aaaa", "a-karga-proxy-2222bbbb"} {
-		label, _ := json.Marshal([]Port{{Service: "web", Port: 80, Upstream: 4001 + i}})
 		if err := rt.CreateWorkload(ctx, ports.WorkloadRequest{Name: name, Image: "img", Labels: map[string]string{ports.LabelManaged: "true",
-			ports.LabelRelease: "a", ports.LabelRevision: strconv.Itoa(9 + i), LabelPorts: string(label)}}); err != nil {
+			ports.LabelRelease: "a", ports.LabelRevision: strconv.Itoa(9 + i), LabelEdgeIP: "10.213.0." + strconv.Itoa(20+i)}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -374,7 +372,7 @@ func TestSyncHandsOverToANewGateway(t *testing.T) {
 	if err := rt.StartWorkload(ctx, old); err != nil {
 		t.Fatal(err)
 	}
-	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80, Upstream: 4001}}, []Route{{Service: "web", Port: 80, Listener: "http", Host: "b.example", Path: "/"}})
+	proxyOf(t, rt, home, "b", []Port{{Service: "web", Port: 80}}, []Route{{Service: "web", Port: 80, Listener: "http", Host: "b.example", Path: "/"}})
 	rt.Raw = nil
 	if _, err := New(rt, h, home).Sync(ctx); err != nil {
 		t.Fatal(err)
@@ -472,7 +470,7 @@ func TestRedirectHTTPS(t *testing.T) {
 	tls := func(l, host string) Route {
 		return Route{Service: "web", Port: 80, Listener: l, Host: host, Path: "/", TLSSecret: "c", CertDir: "/c"}
 	}
-	targets := []Target{{Release: "a", Ports: []Port{{Service: "web", Port: 80, Upstream: 4001}},
+	targets := []Target{{Release: "a", IP: "10.213.0.2", Ports: []Port{{Service: "web", Port: 80}},
 		Routes: []Route{tls("https", "a.example"), tls("alt", "b.example"), {Service: "web", Port: 80, Listener: "plain", Host: "p.example", Path: "/"}}}}
 	settings := Settings{Listen: []string{"127.0.0.1"}, Listeners: []Listener{
 		{Name: "plain", Port: 8080, Protocol: ProtocolHTTP},
@@ -497,5 +495,54 @@ func TestRedirectHTTPS(t *testing.T) {
 	bad := Settings{Listeners: []Listener{{Name: "s", Port: 443, Protocol: ProtocolHTTPS, ListenerOptions: ListenerOptions{RedirectHTTPS: true}}}}
 	if err := validateSettings(bad); err == nil || !strings.Contains(err.Error(), "redirectHTTPS cannot be set on a https listener") {
 		t.Fatalf("redirectHTTPS on https: %v", err)
+	}
+}
+
+func TestEdgeAddresses(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	rt := fakeruntime.New("img")
+	const subnet = "10.213.0.0/29" // .2 to .6 usable
+	if err := EnsureEdge(ctx, rt, subnet); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureEdge(ctx, rt, subnet); err != nil {
+		t.Fatalf("again: %v", err)
+	}
+	if n := rt.Networks[EdgeNetwork]; !n.Internal || n.Subnet != subnet || n.Options["com.docker.network.bridge.enable_icc"] != "false" {
+		t.Fatalf("edge network: %+v", n)
+	}
+	ip := func(rel, avoid string) string {
+		t.Helper()
+		got, err := EdgeIP(ctx, rt, home, subnet, rel, avoid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	// A release keeps its pair; a replace takes the other address of it.
+	if a, a2, b := ip("a", ""), ip("a", ""), ip("a", "10.213.0.2"); a != "10.213.0.2" || a2 != a || b != "10.213.0.3" {
+		t.Fatalf("pair of a: %s %s %s", a, a2, b)
+	}
+	if b := ip("a", "10.213.0.3"); b != "10.213.0.2" {
+		t.Fatalf("back to the first: %s", b)
+	}
+	// A proxy holding an address (made elsewhere) is skipped.
+	if err := rt.CreateWorkload(ctx, ports.WorkloadRequest{Name: "x", Image: "img", Labels: map[string]string{ports.LabelManaged: "true", LabelEdgeIP: "10.213.0.4"}}); err != nil {
+		t.Fatal(err)
+	}
+	if c := ip("c", ""); c != "10.213.0.5" {
+		t.Fatalf("c: %s", c)
+	}
+	// c took .5 and .6; a release that goes leaves its pair, given again only after the counter
+	// wraps (here at once: the subnet is tiny).
+	if err := ReleaseEdge(ctx, home, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if d := ip("d", ""); d != "10.213.0.2" {
+		t.Fatalf("d after the wrap: %s", d)
+	}
+	if _, err := EdgeIP(ctx, rt, home, subnet, "e", ""); !errors.Is(err, ports.ErrConflict) {
+		t.Fatalf("a full subnet: %v", err)
 	}
 }

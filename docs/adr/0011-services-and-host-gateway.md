@@ -16,7 +16,8 @@
   `127.0.0.1`) and named listeners (port and protocol `tcp`, `http` or `https`). A Service exposes a
   port on a listener by name. A package cannot open a listener, choose an address or take a port
   another release holds; an unknown listener is refused before anything changes.
-- The gateway forwards to the release proxies' loopback upstreams, not to workloads, so a replace
+- The gateway forwards to the release proxies (on the edge network since D42; loopback upstream
+  ports before), not to workloads, so a replace
   switches only the release proxy. What a release exposes lives in a file next to its proxy
   configuration; changing a host or path does not recreate the proxy.
 - `hostPort`, `hostIP` and `routes` are removed from the Workload, in `v1alpha1` itself. Without the

@@ -108,7 +108,7 @@ func TestProxyPlan(t *testing.T) {
 	}
 	px := changeOf(t, p, KindProxy, "")
 	if px.Action != ActionCreate || px.Name != ProxyResource || px.RuntimeName != ProxyName("cache", px.Digest) || !strings.HasPrefix(px.RuntimeName, "cache-karga-proxy-") ||
-		strings.Join(px.Proxy.Networks["net"], ",") != "redis" || px.Proxy.Published != nil {
+		strings.Join(px.Proxy.Networks["net"], ",") != "redis" {
 		t.Fatalf("proxy create: %+v %+v", px, px.Proxy)
 	}
 
@@ -148,14 +148,14 @@ func TestProxyPlan(t *testing.T) {
 		t.Fatalf("add service: %+v", px)
 	}
 
-	// Exposing a port publishes it on a new proxy container, which replaces the old one.
+	// Exposing a port changes nothing of the proxy: it already listens on every service port.
 	exposed := replaceManifest(6379)
 	exposed[len(exposed)-1].Spec.(*resource.ServiceSpec).Expose = []resource.Exposure{{Port: "p", Listener: "pg"}}
 	p, err = testEnv.Diff("cache", exposed, applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if px := changeOf(t, p, KindProxy, ""); px.Strategy != proxyReplace || px.Proxy.Published["redis"][0] != 6379 {
+	if px := changeOf(t, p, KindProxy, ""); px.Action != ActionUnchanged {
 		t.Fatalf("expose: %+v %+v", px, px.Proxy)
 	}
 

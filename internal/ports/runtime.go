@@ -80,8 +80,9 @@ type Runtime interface {
 	// are kept.
 	DeleteWorkload(ctx context.Context, name string) error
 	GetWorkload(ctx context.Context, name string) (WorkloadStatus, error)
-	// ConnectNetwork attaches a workload to a network with the given DNS aliases.
-	ConnectNetwork(ctx context.Context, workload, network string, aliases []string) error
+	// ConnectNetwork attaches a workload to a network with the given DNS aliases, at ip (empty: an
+	// address the runtime picks).
+	ConnectNetwork(ctx context.Context, workload, network string, aliases []string, ip string) error
 	// DisconnectNetwork detaches a workload; it succeeds if the workload is not attached.
 	DisconnectNetwork(ctx context.Context, workload, network string) error
 
@@ -130,6 +131,10 @@ type NetworkRequest struct {
 	Labels   map[string]string
 	Driver   string
 	Internal bool
+	// Subnet (CIDR) is the network's address range (empty: the runtime picks one); Options are
+	// driver options (e.g. com.docker.network.bridge.enable_icc).
+	Subnet  string
+	Options map[string]string
 }
 
 // VolumeRequest creates a named volume.

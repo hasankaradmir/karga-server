@@ -20,6 +20,12 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- The gateway reaches release proxies on the edge network (D42): one internal Docker bridge,
+  `karga-edge`, with traffic between its containers off; each release has a fixed pair of addresses
+  (`--edge-subnet`, `KARGA_EDGE_SUBNET`, default `10.213.0.0/16`). Proxies publish no port: no NAT
+  rule or docker-proxy per exposed port, no port allocation race; exposing a new port no longer
+  replaces the proxy. `karga gateway status` shows the edge address as UPSTREAM. Remove the
+  network with `docker network rm karga-edge` when removing karga.
 - The default gateway listeners are `http` (80) and `https` (443) instead of `web` and
   `websecure` (D41). An http listener redirects to HTTPS only with `redirectHTTPS` (the default
   `http` listener has it), on any port, and each host goes to the port of the https listener

@@ -10,7 +10,9 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -230,7 +232,19 @@ func Run(t *testing.T, rt ports.Runtime, cfg Config) {
 		// Network membership can be changed while the container runs.
 		must(t, rt.DisconnectNetwork(ctx, req.Name, netReq.Name))
 		must(t, rt.DisconnectNetwork(ctx, req.Name, netReq.Name))
-		must(t, rt.ConnectNetwork(ctx, req.Name, netReq.Name, []string{"app"}))
+		must(t, rt.ConnectNetwork(ctx, req.Name, netReq.Name, []string{"app"}, ""))
+
+		// A network with its own subnet and inter-container traffic off; a fixed address on it.
+		edge := ports.NetworkRequest{Name: name("edge"), Labels: labels("Network", "edge"), Driver: "bridge", Internal: true,
+			Subnet: "10.231." + strconv.Itoa(os.Getpid()%250) + ".0/24", Options: map[string]string{"com.docker.network.bridge.enable_icc": "false"}}
+		must(t, rt.CreateNetwork(ctx, edge))
+		t.Cleanup(func() { _ = rt.DeleteNetwork(ctx, edge.Name) })
+		ip := strings.TrimSuffix(edge.Subnet, "0/24") + "9"
+		must(t, rt.ConnectNetwork(ctx, req.Name, edge.Name, nil, ip))
+		if st, err := rt.GetWorkload(ctx, req.Name); err != nil || st.IPs[edge.Name] != ip {
+			t.Fatalf("address on %s: %v, %v", edge.Name, st.IPs, err)
+		}
+		must(t, rt.DisconnectNetwork(ctx, req.Name, edge.Name))
 
 		must(t, rt.StopWorkload(ctx, req.Name, 5*time.Second))
 		if st, err := rt.GetWorkload(ctx, req.Name); err != nil || st.State != ports.StateExited {

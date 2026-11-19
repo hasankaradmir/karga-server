@@ -46,6 +46,9 @@ type Config struct {
 	// ReconcileInterval is the time between full reconciliation passes (0: events only); a
 	// negative value turns reconciliation off (tests).
 	ReconcileInterval time.Duration
+	// EdgeSubnet is the address range of the network the gateway reaches release proxies on
+	// (empty: proxyops.DefaultEdgeSubnet).
+	EdgeSubnet string
 }
 
 // DefaultReconcileInterval is how often every release is looked at besides runtime events.
@@ -104,7 +107,7 @@ func New(ctx context.Context, cfg Config, rt ports.Runtime) (*Server, error) {
 		redact, mask = cfg.Redactor.Add, cfg.Redactor.Redact
 	}
 	// The composition root: Envoy runs the proxies, the host's network runs probes and port tests.
-	host := &proxyops.Host{Proxies: envoy.Proxies{}, Net: hostnet.Net{}}
+	host := &proxyops.Host{Proxies: envoy.Proxies{}, Net: hostnet.Net{}, EdgeSubnet: cfg.EdgeSubnet}
 	// The queue comes first: the service tells it what changed, the loop takes from it.
 	q := reconciler.NewQueue(0)
 	notify := q.Notify

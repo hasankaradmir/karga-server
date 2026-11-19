@@ -3,36 +3,13 @@ package gateway
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"maps"
-	"net"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
-
-// allocatePort picks a free loopback port for an upstream. Docker binds it right after; a race
-// with another process makes the container start fail, which is reported as usual.
-func allocatePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("allocate an upstream port: %w", err)
-	}
-	defer func() { _ = l.Close() }()
-	return l.Addr().(*net.TCPAddr).Port, nil
-}
-
-// ParseLabel reads the upstream ports of a proxy container.
-func ParseLabel(labels map[string]string) []Port {
-	var out []Port
-	_ = json.Unmarshal([]byte(labels[LabelPorts]), &out) // karga writes it; a broken label means no ports
-	return out
-}
 
 // labelSource records what a gateway container was created from; another KARGA_HOME or image
 // means it must be recreated.
@@ -79,30 +56,4 @@ func request(h ports.ProxyControl, dir string) ports.WorkloadRequest {
 		LogMaxSize:      resource.DefaultLogMaxSize,
 		LogMaxFiles:     resource.DefaultLogMaxFiles,
 	}
-}
-
-// Publish publishes service ports of a release proxy request on fresh loopback upstream ports and
-// records them in its labels.
-func Publish(wr *ports.WorkloadRequest, published map[string][]int) error {
-	var label []Port
-	for _, svc := range slices.Sorted(maps.Keys(published)) {
-		for _, port := range published[svc] {
-			up, err := allocatePort()
-			if err != nil {
-				return err
-			}
-			wr.Ports = append(wr.Ports, ports.PortBinding{ContainerPort: port, HostPort: up, HostIP: "127.0.0.1", Protocol: "tcp"})
-			label = append(label, Port{Service: svc, Port: port, Upstream: up})
-		}
-	}
-	if len(label) == 0 {
-		return nil
-	}
-	js, err := json.Marshal(label)
-	if err != nil {
-		return err
-	}
-	wr.Labels = maps.Clone(wr.Labels)
-	wr.Labels[LabelPorts] = string(js)
-	return nil
 }

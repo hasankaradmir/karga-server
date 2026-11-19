@@ -47,8 +47,8 @@ What karga does not do yet, what it does with known limits, and the open questio
 - **Linux only.** Services need the gateway and the release proxy, which need Linux with a local
   Docker daemon; elsewhere a plan with Services is refused.
 - **Gateway.** One container serves every release's outside traffic; it restarts automatically but
-  is a single point: a crash interrupts traffic until it is back. Local users can reach the loopback
-  upstream ports directly. A new image or limits hand over to a new gateway without an outage
+  is a single point: a crash interrupts traffic until it is back. Local users can reach the release
+  proxies' edge addresses directly (they bypass the gateway's limits). A new image or limits hand over to a new gateway without an outage
   (D38); a connection still open on the old one after 30s is closed.
 - **Release proxy.** One per release with Services (about 15 MB; two for a moment while one
   replaces the other). A service port number belongs to one Service of the release. A client in
