@@ -473,9 +473,13 @@ func (a *Admin) notReady(ctx context.Context, want map[string]string) (string, e
 	if err != nil {
 		return "", err
 	}
-	used, err := a.listenerClusters(ctx)
+	used, rejected, err := a.listenerClusters(ctx)
 	if err != nil {
 		return "", err
+	}
+	if len(rejected) > 0 {
+		// Envoy keeps serving what it had: the configuration written is not the one in force.
+		return "rejected " + strings.Join(rejected, "; "), nil
 	}
 	for _, cluster := range slices.Sorted(maps.Keys(want)) {
 		endpoint := want[cluster]
@@ -501,19 +505,30 @@ func (a *Admin) notReady(ctx context.Context, want map[string]string) (string, e
 	return "", nil
 }
 
-// listenerClusters returns the clusters the active listeners route to.
-func (a *Admin) listenerClusters(ctx context.Context) (map[string]bool, error) {
+// listenerClusters returns the clusters the active listeners route to, and the listeners whose
+// last update Envoy rejected (a port it cannot bind), with why.
+func (a *Admin) listenerClusters(ctx context.Context) (map[string]bool, []string, error) {
 	body, err := a.get(ctx, "/config_dump?resource=dynamic_listeners")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var doc struct {
 		Configs []struct {
-			ActiveState any `json:"active_state"` // warming listeners are not serving yet
+			Name        string `json:"name"`
+			ActiveState any    `json:"active_state"` // warming listeners are not serving yet
+			ErrorState  *struct {
+				Details string `json:"details"`
+			} `json:"error_state"`
 		} `json:"configs"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	var rejected []string
+	for _, c := range doc.Configs {
+		if c.ErrorState != nil {
+			rejected = append(rejected, "listener "+c.Name+": "+c.ErrorState.Details)
+		}
 	}
 	out := map[string]bool{}
 	var walk func(any)
@@ -535,7 +550,7 @@ func (a *Admin) listenerClusters(ctx context.Context) (map[string]bool, error) {
 	for _, c := range doc.Configs {
 		walk(c.ActiveState)
 	}
-	return out, nil
+	return out, rejected, nil
 }
 
 // OldConnections counts connections still open to hosts no longer in the clusters: each cluster's

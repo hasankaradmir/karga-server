@@ -3,6 +3,8 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -146,19 +148,20 @@ func Lock(ctx context.Context, home string) (func(), error) {
 	}
 }
 
+// The administrator's settings are in gateway.yaml, which they may edit; karga runs on
+// gateway.applied.yaml, the settings last applied successfully (D39).
 func settingsPath(home string) string { return filepath.Join(home, "gateway.yaml") }
+func appliedPath(home string) string  { return filepath.Join(home, "gateway.applied.yaml") }
 
-// ReadSettings returns the stored settings, with defaults for what was never set.
-func ReadSettings(home string) (Settings, error) {
+// parseSettings reads settings as written (an unknown field is an error, so a typo is not
+// ignored), with defaults for what was never set.
+func parseSettings(data []byte) (Settings, error) {
 	var s Settings
-	data, err := os.ReadFile(settingsPath(home))
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-	case err != nil:
-		return s, err
-	default:
-		if err := yaml.Unmarshal(data, &s); err != nil {
-			return s, fmt.Errorf("%s: %w", settingsPath(home), err)
+	if len(bytes.TrimSpace(data)) > 0 {
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		if err := dec.Decode(&s); err != nil {
+			return s, err
 		}
 	}
 	if len(s.Listen) == 0 {
@@ -170,8 +173,53 @@ func ReadSettings(home string) (Settings, error) {
 	return s, nil
 }
 
-// WriteSettings validates and stores settings; the next Sync applies them.
+// ReadSettings returns the settings the gateway runs on. On a host where none were applied yet,
+// they are gateway.yaml's (or the defaults), checked like an apply would.
+func ReadSettings(home string) (Settings, error) {
+	path := appliedPath(home)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		path = settingsPath(home)
+		data, err = os.ReadFile(path)
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return Settings{}, err
+	}
+	s, err := parseSettings(data)
+	if err == nil {
+		err = validateSettings(s)
+	}
+	if err != nil {
+		return s, fmt.Errorf("%s: %w", path, err)
+	}
+	return s, nil
+}
+
+// ReadEdited returns gateway.yaml as the administrator wrote it, and the digest of its content
+// (an apply names it, so a file changed after its validation is not applied).
+func ReadEdited(home string) (Settings, string, error) {
+	data, err := os.ReadFile(settingsPath(home))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return Settings{}, "", err
+	}
+	sum := sha256.Sum256(data)
+	s, err := parseSettings(data)
+	return s, "sha256:" + hex.EncodeToString(sum[:]), err
+}
+
+// WriteSettings validates settings and stores them as the administrator's and the applied ones
+// (a karga gateway command changed them); the next Sync applies them.
 func WriteSettings(home string, s Settings) error {
+	if err := writeSettings(home, settingsPath(home), s); err != nil {
+		return err
+	}
+	return writeSettings(home, appliedPath(home), s)
+}
+
+// writeApplied stores validated settings as the applied ones only.
+func writeApplied(home string, s Settings) error { return writeSettings(home, appliedPath(home), s) }
+
+func writeSettings(home, path string, s Settings) error {
 	if err := validateSettings(s); err != nil {
 		return err
 	}
@@ -185,5 +233,5 @@ func WriteSettings(home string, s Settings) error {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return err
 	}
-	return writeFile(settingsPath(home), data)
+	return writeFile(path, data)
 }

@@ -393,3 +393,20 @@ func TestSyncHandsOverToANewGateway(t *testing.T) {
 		t.Fatalf("current: %s %v", name, err)
 	}
 }
+
+func TestSettingsChanges(t *testing.T) {
+	a := Settings{Listen: []string{"127.0.0.1"}, Listeners: []Listener{{Name: "web", Port: 80, Protocol: ProtocolHTTP}, {Name: "old", Port: 81, Protocol: ProtocolHTTP}}}
+	b := Settings{Listen: []string{"0.0.0.0"}, AccessLog: true, Listeners: []Listener{
+		{Name: "web", Port: 8080, Protocol: ProtocolHTTP, ListenerOptions: ListenerOptions{RateLimit: "10/s"}},
+		{Name: "db", Port: 5432, Protocol: ProtocolTCP, ListenerOptions: ListenerOptions{ProxyProtocol: "v2"}}}}
+	var got []string
+	for _, c := range settingsChanges(a, b) {
+		got = append(got, c.Action+" "+c.Kind+" "+c.Name+": "+strings.Join(c.Fields, ", "))
+	}
+	want := []string{"change listen : 127.0.0.1 -> 0.0.0.0", "change accessLog : off -> on",
+		"change listener web: port: 80 -> 8080, rateLimit: - -> 10/s", "remove listener old: ",
+		"add listener db: port: 5432, protocol: tcp, proxyProtocol: v2"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("changes:\n%s", strings.Join(got, "\n"))
+	}
+}

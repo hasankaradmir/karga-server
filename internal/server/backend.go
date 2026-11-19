@@ -215,7 +215,22 @@ func (b Backend) GatewayRoutes(ctx context.Context) ([]api.Exposed, error) {
 func (b Backend) GatewayHealth(ctx context.Context) (api.State, error) {
 	st, err := b.gateway.Health(ctx)
 	return api.State{Container: st.Container, Ready: st.Ready, Version: st.Version, Image: st.Image, Listen: st.Listen,
-		AccessLog: st.AccessLog, Error: st.Error}, err
+		AccessLog: st.AccessLog, Pending: st.Pending, Error: st.Error}, err
+}
+
+// ValidateGateway implements api.Backend.
+func (b Backend) ValidateGateway(ctx context.Context) (api.GatewayPlan, error) {
+	p, err := b.gateway.ValidateSettings(ctx)
+	out := api.GatewayPlan{Changes: []api.GatewayChange{}, Problems: p.Problems, Risk: p.Risk, Digest: p.Digest}
+	for _, c := range p.Changes {
+		out.Changes = append(out.Changes, api.GatewayChange{Kind: c.Kind, Name: c.Name, Action: c.Action, Fields: c.Fields})
+	}
+	return out, err
+}
+
+// ApplyGateway implements api.Backend.
+func (b Backend) ApplyGateway(ctx context.Context, req api.GatewayApplyRequest) error {
+	return b.gateway.ApplySettings(ctx, req.Digest, req.Confirmed)
 }
 
 // GatewaySettings implements api.Backend.

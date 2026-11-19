@@ -159,7 +159,7 @@ func (e *Env) replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecReq
 		if err := e.writeProxy(ctx, rt, req, svcs, map[string]string{c.Name: alias}); err != nil {
 			return false, stopNext(err)
 		}
-		if err := envoyErr(ctx, rt, proxy, e.host.Proxies.WaitReady(ctx, ProxyAdminDir(e.home, req.Release, proxy), proxyWant(svcs, c.Name, alias), proxyops.ProxyReadyTimeout)); err != nil {
+		if err := proxyops.EnvoyErr(ctx, rt, proxy, e.host.Proxies.WaitReady(ctx, ProxyAdminDir(e.home, req.Release, proxy), proxyWant(svcs, c.Name, alias), proxyops.ProxyReadyTimeout)); err != nil {
 			// The proxy may have routed to the new backend for a moment: count it as touched. The new
 			// container stops first, so the proxy goes back to the old one, which still runs.
 			err = stopNext(err)
