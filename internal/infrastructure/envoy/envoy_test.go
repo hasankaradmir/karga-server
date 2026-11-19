@@ -34,7 +34,7 @@ var sample = Config{
 }
 
 func TestConfigGolden(t *testing.T) {
-	boot, err := bootstrap("web", 0o600, "")
+	boot, err := bootstrap("web", 0o600, "3f9a2c1b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestWriteAndEndpoints(t *testing.T) {
 	if e, err := Endpoints(dir); err != nil || len(e) != 0 {
 		t.Fatalf("no config: %v %v", e, err)
 	}
-	if err := Write(dir, "web", 0o600, sample); err != nil {
+	if err := Write(dir, sample); err != nil {
 		t.Fatal(err)
 	}
 	if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
@@ -80,7 +80,7 @@ func TestWriteAndEndpoints(t *testing.T) {
 	before, _ := os.Stat(filepath.Join(dir, listenersFile))
 	next := sample
 	next.Clusters = []Cluster{{Name: "db_pg_p5432", Host: "127.0.0.1", Port: 41002}}
-	if err := Write(dir, "web", 0o600, next); err != nil {
+	if err := Write(dir, next); err != nil {
 		t.Fatal(err)
 	}
 	if e, err := Endpoints(dir); err != nil || len(e) != 1 || e["db_pg_p5432"] != "127.0.0.1:41002" {
@@ -90,7 +90,7 @@ func TestWriteAndEndpoints(t *testing.T) {
 		t.Fatal("unchanged listeners were rewritten")
 	}
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 3 {
+	if len(entries) != 2 { // lds.yaml and cds.yaml
 		t.Fatalf("leftover temp files: %v", entries)
 	}
 }
@@ -103,6 +103,10 @@ func fakeAdmin(t *testing.T, clusters, stats func() string) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir = filepath.Join(dir, "i") // an instance's directory, as WriteInstance makes it
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	l, err := net.Listen("unix", filepath.Join(dir, adminSocket))
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +200,7 @@ func TestDefaultImagePinned(t *testing.T) {
 func TestInvalidConfigRefusedBeforeWriting(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "proxy")
 	bad := Config{Clusters: []Cluster{{Name: "", Host: "127.0.0.1", Port: 8080}}}
-	err := Write(dir, "web", 0o600, bad)
+	err := Write(dir, bad)
 	if err == nil || !strings.Contains(err.Error(), "envoy config") {
 		t.Fatalf("want a validation error, got %v", err)
 	}
@@ -213,13 +217,13 @@ func TestWriteWaitsForClustersBeforeListeners(t *testing.T) {
 	t.Cleanup(func() { clusterWait = old })
 
 	start := time.Now()
-	if err := Write(dir, "gw", 0o600, sample); err != nil {
+	if err := Write(filepath.Dir(dir), sample); err != nil {
 		t.Fatal(err)
 	}
 	if time.Since(start) < 300*time.Millisecond {
 		t.Fatal("listeners written before Envoy knew the clusters")
 	}
-	if _, err := os.Stat(filepath.Join(dir, listenersFile)); err != nil {
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), listenersFile)); err != nil {
 		t.Fatalf("listeners must be written after the wait anyway: %v", err)
 	}
 
@@ -228,7 +232,7 @@ func TestWriteWaitsForClustersBeforeListeners(t *testing.T) {
 	next.Clusters = append(slices.Clone(sample.Clusters), Cluster{Name: "new", Host: "127.0.0.1", Port: 1})
 	next.TCP = append(slices.Clone(sample.TCP), TCPListener{Address: "127.0.0.1", Port: 1, Cluster: "new"})
 	start = time.Now()
-	if err := Write(dir, "gw", 0o600, next); err != nil {
+	if err := Write(filepath.Dir(dir), next); err != nil {
 		t.Fatal(err)
 	}
 	if time.Since(start) > 200*time.Millisecond {

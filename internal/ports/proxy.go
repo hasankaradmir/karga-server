@@ -80,12 +80,11 @@ type ProxyConfig struct {
 // mounted inside it.
 type ProxyContainer struct {
 	Image     string
-	Command   []string
 	MountPath string
 	// Limits of the container.
 	MemoryBytes, MilliCPU, Pids int64
 	// Source names what the container is made from (image and limits): a proxy whose recorded
-	// source differs is recreated.
+	// source differs is replaced.
 	Source string
 }
 
@@ -93,7 +92,7 @@ type ProxyContainer struct {
 // release proxies and the gateway alike.
 type ProxyControl interface {
 	Container() ProxyContainer
-	Write(dir, node string, socketMode int, cfg ProxyConfig) error
+	Write(dir string, cfg ProxyConfig) error
 	// WriteInstance prepares a second Envoy of dir, in dir/instance: it serves dir's configuration
 	// with its own admin socket, whose directory (dir/instance) the other methods then take. Command
 	// runs it ("" runs dir's own).

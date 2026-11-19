@@ -36,21 +36,14 @@ func ProxyName(release, digest string) string {
 }
 
 // ProxyAdminDir is the directory holding the admin socket of proxy container name: its instance
-// directory below ProxyDir (a container named ProxyBase, from before D37, uses ProxyDir itself).
+// directory below ProxyDir.
 func ProxyAdminDir(home, release, name string) string {
-	if inst, ok := strings.CutPrefix(name, ProxyBase(release)+"-"); ok {
-		return filepath.Join(ProxyDir(home, release), inst)
-	}
-	return ProxyDir(home, release)
+	return filepath.Join(ProxyDir(home, release), proxyInstance(release, name))
 }
 
-// proxyInstance is the instance (WriteInstance) of proxy container name, "" for ProxyDir's own.
+// proxyInstance is the instance (WriteInstance) of proxy container name: its digest suffix.
 func proxyInstance(release, name string) string {
-	inst, _ := strings.CutPrefix(name, ProxyBase(release)+"-")
-	if inst == name {
-		return ""
-	}
-	return inst
+	return strings.TrimPrefix(name, ProxyBase(release)+"-")
 }
 
 // BackendAlias is the network alias a workload container of a revision answers to; only the release
