@@ -40,5 +40,6 @@ directory.
 | D34 | Container names | A workload's container is `<release>-<workload>-<8 hex of its digest>`: the same spec keeps its name, a changed one gets a new one, so a replace starts the new container under its own name and renames nothing. Containers are found by label and the state records their names; the proxy, Networks and Volumes keep fixed names. |
 | D35 | Listener options | Timeout, idle timeout, body limit (at most 16Mi: Envoy buffers it), rate limit and PROXY protocol are options of a gateway listener, set by the administrator (`listener add`/`set`), never by packages; they only rewrite the gateway's files. |
 | D36 | Recreate order and backend aliases | A recreate creates the new container before stopping the old one; every workload answers to its revision's backend alias from its creation, so a Service that starts or stops targeting it changes only the release proxy. |
+| D37 | Release proxy replace | The release proxy is named `<release>-karga-proxy-<8 hex of its spec digest>`; a changed proxy starts next to the old one (own bootstrap and admin socket, shared listeners and clusters), the gateway switches to it through the expose file, and the old one drains and goes. Replaces the reconnect and recreate of D20 except on a name collision. |
 
 D23 was not used.

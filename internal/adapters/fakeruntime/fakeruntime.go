@@ -180,6 +180,17 @@ func (Proxies) WaitDrained(context.Context, string, []string, time.Duration) (bo
 	return true, nil
 }
 
+// WriteInstance writes an instance's bootstrap like the real thing.
+func (Proxies) WriteInstance(dir, instance, node string, mode int) error {
+	return envoy.WriteInstance(dir, instance, node, mode)
+}
+
+// Command is Envoy's.
+func (Proxies) Command(instance string) []string { return envoy.CommandFor(instance) }
+
+// Drain returns at once.
+func (Proxies) Drain(context.Context, string, time.Duration) (bool, error) { return true, nil }
+
 // Container is Envoy's.
 func (Proxies) Container() ports.ProxyContainer { return envoy.Proxies{}.Container() }
 

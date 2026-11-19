@@ -2,11 +2,13 @@ package deployment
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -131,12 +133,12 @@ func exposeRoutes(svcs services, paths map[Key]string) []gateway.Route {
 // proxyRequest is the release's Envoy container. It runs as the karga user so it can read its 0700
 // directory and karga can reach its admin socket. It joins its first network at creation; the
 // others are connected with their own aliases (connectProxy).
-func (e *Env) proxyRequest(rel string, revision int, spec ProxySpec, dir, user string) (ports.WorkloadRequest, error) {
+func (e *Env) proxyRequest(rel, name string, revision int, spec ProxySpec, dir, user string) (ports.WorkloadRequest, error) {
 	wr := ports.WorkloadRequest{
-		Name:          ProxyName(rel),
+		Name:          name,
 		Labels:        labels(rel, revision, KindProxy, ProxyResource),
 		Image:         spec.Image,
-		Command:       e.host.Proxies.Container().Command,
+		Command:       e.host.Proxies.Command(proxyInstance(rel, name)),
 		User:          user,
 		Sysctls:       map[string]string{"net.ipv4.ip_unprivileged_port_start": "0"},
 		RestartPolicy: "always",
@@ -162,15 +164,29 @@ func sortedNetworks(spec ProxySpec) []string {
 	return out
 }
 
-// createProxy writes the configuration for what runs now and starts the release proxy.
-func (e *Env) createProxy(ctx context.Context, rt ports.Runtime, req ExecRequest, c Change, svcs services) error {
+// createProxy writes the configuration for what runs now and starts the release proxy c names, next
+// to the one it replaces if any (both serve the same files; each has its own admin socket). A
+// container of that name left by an interrupted operation is removed first.
+func (e *Env) createProxy(ctx context.Context, rt ports.Runtime, req ExecRequest, c Change, svcs services, owned map[string]bool) error {
 	if err := e.writeProxy(ctx, rt, req, svcs, nil); err != nil {
 		return err
 	}
-	wr, err := e.proxyRequest(req.Release, req.Revision, *c.Proxy, ProxyDir(e.home, req.Release), req.ProxyUser)
+	dir := ProxyDir(e.home, req.Release)
+	if inst := proxyInstance(req.Release, c.RuntimeName); inst != "" {
+		if err := e.host.Proxies.WriteInstance(dir, inst, req.Release, 0o600); err != nil {
+			return err
+		}
+	}
+	if owned[ports.ObjectWorkload+"/"+c.RuntimeName] && (c.Applied == nil || c.Applied.RuntimeName != c.RuntimeName) {
+		if err := proxyops.RemoveWorkload(ctx, rt, c.RuntimeName); err != nil {
+			return err
+		}
+	}
+	wr, err := e.proxyRequest(req.Release, c.RuntimeName, req.Revision, *c.Proxy, dir, req.ProxyUser)
 	if err != nil {
 		return err
 	}
+	wr.Labels[ports.LabelDigest] = c.Digest
 	if err := rt.CreateWorkload(ctx, wr); err != nil {
 		return err
 	}
@@ -182,28 +198,10 @@ func (e *Env) createProxy(ctx context.Context, rt ports.Runtime, req ExecRequest
 	return rt.StartWorkload(ctx, wr.Name)
 }
 
-// reconnectProxy gives the running proxy its new aliases: Docker only sets aliases when a container
-// joins a network, so each changed network is left and joined again.
-func reconnectProxy(ctx context.Context, rt ports.Runtime, rel string, c Change) error {
-	var old ProxySpec
-	_ = json.Unmarshal(c.Applied.Spec, &old) // stored by karga; unreadable reconnects every network
-	for _, n := range changedNetworks(old, *c.Proxy) {
-		if err := rt.DisconnectNetwork(ctx, c.RuntimeName, proxyops.RuntimeName(rel, n)); err != nil {
-			return err
-		}
-		if aliases := c.Proxy.Networks[n]; len(aliases) > 0 {
-			if err := rt.ConnectNetwork(ctx, c.RuntimeName, proxyops.RuntimeName(rel, n), aliases); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 // removeProxy deletes a proxy container; with dropConfig its directory goes too. A per-workload
 // proxy of an earlier karga version had its own directory below the release's.
 func removeProxy(ctx context.Context, rt ports.Runtime, home, rel string, c Change, dropConfig bool) error {
-	if err := proxyops.RemoveWorkload(ctx, rt, c.Applied.RuntimeName); err != nil {
+	if err := removeProxyContainer(ctx, rt, home, rel, c.Applied.RuntimeName); err != nil {
 		return err
 	}
 	if !dropConfig {
@@ -218,6 +216,29 @@ func removeProxy(ctx context.Context, rt ports.Runtime, home, rel string, c Chan
 		}
 	}
 	return nil
+}
+
+// removeProxyContainer deletes a release proxy container and its instance directory.
+func removeProxyContainer(ctx context.Context, rt ports.Runtime, home, rel, name string) error {
+	if err := proxyops.RemoveWorkload(ctx, rt, name); err != nil {
+		return err
+	}
+	if inst := proxyInstance(rel, name); inst != "" {
+		return os.RemoveAll(filepath.Join(ProxyDir(home, rel), inst))
+	}
+	return nil
+}
+
+// gatewayRoutesTo reports whether the host gateway sends traffic to proxy container o (to one of
+// the upstream ports it publishes): then an interrupted proxy replace switched over to it.
+func (e *Env) gatewayRoutesTo(o ports.Object) bool {
+	eps, _ := e.host.Proxies.Endpoints(gateway.Dir(e.home))
+	for _, p := range gateway.ParseLabel(o.Labels) {
+		if slices.Contains(slices.Collect(maps.Values(eps)), net.JoinHostPort("127.0.0.1", strconv.Itoa(p.Upstream))) {
+			return true
+		}
+	}
+	return false
 }
 
 // routedTo reports whether the release proxy routes workload name to container next: then an

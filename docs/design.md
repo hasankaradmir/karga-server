@@ -227,7 +227,8 @@ like a Kubernetes pod-template-hash: the same spec keeps its name, a changed one
 The state records each container's name; karga finds the containers of a release by label
 (`io.karga.release`, `io.karga.name`), never by building the name. A failed replace leaves its new
 container stopped next to the old one, for its logs; the next deployment removes it. The release
-proxy (`<release>-karga-proxy`), Networks and Volumes (`<release>-<name>`) keep fixed names.
+proxy is named the same way (`<release>-karga-proxy-<hash>`, D37); Networks and Volumes
+(`<release>-<name>`) keep fixed names.
 
 ## 8. Traffic: Services, the release proxy and the gateway (ADR-0011)
 
@@ -235,16 +236,25 @@ Karga's Envoys need the runtime capability `karga.host-gateway` (Linux with a lo
 bind-mounted configuration and admin sockets, inotify, the host network). Without it a plan with
 Services is refused.
 
-- **Release proxy** (`<release>-karga-proxy`, one per release with Services) joins the networks of
+- **Release proxy** (`<release>-karga-proxy-<hash>`, one per release with Services) joins the networks of
   the Services' workloads and carries the Service names as aliases on them. It listens on every
   Service port and forwards to the backend alias of the container currently running the Service's
   workload (`karga-<workload>-r<revision>`). Workloads carry no alias of their own name (Docker
   still resolves the container name, which changes with every update: reach a workload through its
   Service). One proxy has one address, so a port number belongs to one Service of the release. The
   exposed Service ports are published on loopback upstream ports chosen by karga and recorded in a
-  container label (`io.karga.gateway`); adding one recreates the proxy. What the release exposes
-  (listener, host, path, certificate directory) is written to `$KARGA_HOME/proxies/<release>/expose.yaml`,
-  so changing a host or path needs no recreate.
+  container label (`io.karga.gateway`). What the release exposes (listener, host, path,
+  certificate directory) and the proxy container the gateway routes to are written to
+  `$KARGA_HOME/proxies/<release>/expose.yaml`, so changing a host or path needs no new container.
+  Docker cannot change a running container's ports or aliases: a changed proxy (an exposed port, a
+  Service added or removed, a new image) is a new container, started next to the old one (D37).
+  Both read the directory's `lds.yaml` and `cds.yaml`; each has its own bootstrap and admin socket
+  in `proxies/<release>/<hash>/`. Once the new one routes, the gateway switches to it (the expose
+  file names it; while two are labeled the gateway uses that one), the old one drains
+  (`/drain_listeners?graceful`, up to 30s for its connections) and is removed. In the release's
+  networks both answer to the Service names meanwhile; a client that cached the old address past
+  that fails, as after any container change. An interrupted switch is repaired before the next
+  plan: of the two proxies the one the gateway routes to is kept.
 - **Gateway** (`karga-gateway`, one per host, host network) is configured by the host's
   administrator in `$KARGA_HOME/gateway.yaml`: the addresses it listens on (default `127.0.0.1`) and
   its listeners (name, port, protocol `tcp`, `http` or `https`). Packages only name listeners. The

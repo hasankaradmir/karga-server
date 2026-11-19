@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
-	"reflect"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 )
 
@@ -24,9 +23,34 @@ const KindProxy = "Proxy"
 // ProxyResource is the name of the release proxy in the plan and the applied state.
 const ProxyResource = "proxy"
 
-// ProxyName is the container name of a release's proxy.
-func ProxyName(release string) string {
+// ProxyBase is what a release proxy's container name starts with; a Service, which has no
+// container of its own, records it as its runtime name.
+func ProxyBase(release string) string {
 	return release + "-" + resource.ReservedPrefix + "proxy"
+}
+
+// ProxyName is the container name of a release proxy of spec digest: like a workload's (D34), it
+// ends with 8 hex of the digest, so a new proxy can start next to the one it replaces.
+func ProxyName(release, digest string) string {
+	return proxyops.WorkloadName(release, resource.ReservedPrefix+"proxy", digest)
+}
+
+// ProxyAdminDir is the directory holding the admin socket of proxy container name: its instance
+// directory below ProxyDir (a container named ProxyBase, from before D37, uses ProxyDir itself).
+func ProxyAdminDir(home, release, name string) string {
+	if inst, ok := strings.CutPrefix(name, ProxyBase(release)+"-"); ok {
+		return filepath.Join(ProxyDir(home, release), inst)
+	}
+	return ProxyDir(home, release)
+}
+
+// proxyInstance is the instance (WriteInstance) of proxy container name, "" for ProxyDir's own.
+func proxyInstance(release, name string) string {
+	inst, _ := strings.CutPrefix(name, ProxyBase(release)+"-")
+	if inst == name {
+		return ""
+	}
+	return inst
 }
 
 // BackendAlias is the network alias a workload container of a revision answers to; only the release
@@ -140,19 +164,21 @@ func proxyApplied(releaseName string, spec ProxySpec) (release.AppliedResource, 
 		return release.AppliedResource{}, err
 	}
 	sum := sha256.Sum256(js)
-	return release.AppliedResource{Kind: KindProxy, Name: ProxyResource, RuntimeName: ProxyName(releaseName),
-		Spec: js, Digest: "sha256:" + hex.EncodeToString(sum[:])}, nil
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+	return release.AppliedResource{Kind: KindProxy, Name: ProxyResource, RuntimeName: ProxyName(releaseName, digest),
+		Spec: js, Digest: digest}, nil
 }
 
-// Proxy strategies: the container is recreated (image), or reconnected to networks whose aliases changed.
+// Proxy strategies: a new proxy starts next to the old one and takes over (replace), or, when the
+// new name is the old one's, the old one goes first (recreate).
 const (
-	proxyRecreate  = "recreate"
-	proxyReconnect = "reconnect"
+	proxyReplace  = "replace"
+	proxyRecreate = "recreate"
 )
 
-// proxyChange plans the release proxy. Docker cannot change a running container's image or
-// aliases: an image change recreates it, an alias change reconnects it to the affected networks.
-// Both briefly interrupt the proxied connections of what they touch.
+// proxyChange plans the release proxy. Docker cannot change a running container's image, ports
+// or aliases, so a changed proxy is a new container: it starts next to the old one, the gateway
+// switches to it, and the old one drains and goes.
 func (e *Env) proxyChange(releaseName string, svcs services, current map[Key]release.AppliedResource) (Change, error) {
 	spec := e.proxySpecFor(svcs)
 	want, err := proxyApplied(releaseName, spec)
@@ -165,34 +191,15 @@ func (e *Env) proxyChange(releaseName string, svcs services, current map[Key]rel
 	case !exists:
 		c.Action = ActionCreate
 	case have.Digest == want.Digest:
-		c.Action = ActionUnchanged
+		c.Action, c.RuntimeName = ActionUnchanged, have.RuntimeName
 	default:
 		c.Action, c.Applied = ActionUpdate, &have
 		c.Fields = fieldChanges(KindProxy, have.Spec, want.Spec)
-		var old ProxySpec
-		_ = json.Unmarshal(have.Spec, &old) // stored by karga; unreadable reads as changed: recreate
-		if old.Image != spec.Image || old.Limits != spec.Limits || !reflect.DeepEqual(old.Published, spec.Published) {
-			c.Strategy, c.StrategyReason = proxyRecreate, "image, limits or exposed ports changed: brief interruption"
-		} else {
-			c.Strategy, c.StrategyReason = proxyReconnect, strings.Join(changedNetworks(old, spec), ", ")+": brief interruption"
+		c.Strategy = proxyReplace
+		if c.RuntimeName == have.RuntimeName {
+			// shortcut: 8 hex can collide (1 in 4 billion per change); the old proxy then goes first.
+			c.Strategy, c.StrategyReason = proxyRecreate, "the new proxy's name is the old one's: brief interruption"
 		}
 	}
 	return c, nil
-}
-
-// changedNetworks lists the networks whose proxy aliases differ between two specs.
-func changedNetworks(a, b ProxySpec) []string {
-	var out []string
-	for n := range a.Networks {
-		if !slices.Equal(a.Networks[n], b.Networks[n]) {
-			out = append(out, n)
-		}
-	}
-	for n := range b.Networks {
-		if _, ok := a.Networks[n]; !ok {
-			out = append(out, n)
-		}
-	}
-	sort.Strings(out)
-	return out
 }

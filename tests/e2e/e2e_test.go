@@ -152,8 +152,13 @@ func (e *env) try(args ...string) (string, error) {
 // workload's digest.
 func containerOf(t *testing.T, release, workload string) string {
 	t.Helper()
+	return labeledContainer(t, release, "Workload", workload)
+}
+
+func labeledContainer(t *testing.T, release, kind, workload string) string {
+	t.Helper()
 	out, err := exec.Command("docker", "ps", "-a", "--format", "{{.Names}}",
-		"--filter", "label=io.karga.release="+release, "--filter", "label=io.karga.kind=Workload",
+		"--filter", "label=io.karga.release="+release, "--filter", "label=io.karga.kind="+kind,
 		"--filter", "label=io.karga.name="+workload).Output()
 	names := strings.Fields(string(out))
 	if err != nil || len(names) != 1 {
@@ -325,7 +330,7 @@ func TestRedisLifecycle(t *testing.T) {
 	if out, _ := exec.Command("docker", "port", containerOf(t, rel, "redis")).Output(); len(strings.TrimSpace(string(out))) != 0 {
 		t.Fatalf("the workload published ports: %s", out)
 	}
-	if out, _ := exec.Command("docker", "port", rel+"-karga-proxy").Output(); !strings.Contains(string(out), "127.0.0.1:") || strings.Contains(string(out), "0.0.0.0") {
+	if out, _ := exec.Command("docker", "port", labeledContainer(t, rel, "Proxy", "proxy")).Output(); !strings.Contains(string(out), "127.0.0.1:") || strings.Contains(string(out), "0.0.0.0") {
 		t.Fatalf("proxy ports: %s", out)
 	}
 	if out := e.run("gateway", "status"); !strings.Contains(out, "redis:"+strconv.Itoa(port)) || !strings.Contains(out, "Listen:     127.0.0.1") {

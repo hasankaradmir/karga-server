@@ -20,35 +20,41 @@ import (
 // Dir holds the gateway's configuration and admin socket.
 func Dir(home string) string { return filepath.Join(home, "gateway") }
 
-// exposeFile lists what a release exposes ([]Route). It lives in the release proxy's directory, so
+// exposeFile lists what a release exposes (exposeData). It lives in the release proxy's directory, so
 // changing a host or path rewrites a file instead of recreating the proxy container.
 func exposeFile(home, rel string) string { return filepath.Join(home, "proxies", rel, "expose.yaml") }
 
 // readExpose reads what a release exposes; a release without the file exposes nothing.
-func readExpose(home, rel string) ([]Route, error) {
+func readExpose(home, rel string) (string, []Route, error) {
 	data, err := os.ReadFile(exposeFile(home, rel))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return "", nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	var out []Route
-	if err := yaml.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("%s: %w", exposeFile(home, rel), err)
+	var f exposeData
+	if err := yaml.Unmarshal(data, &f); err != nil {
+		return "", nil, fmt.Errorf("%s: %w", exposeFile(home, rel), err)
 	}
-	return out, nil
+	return f.Proxy, f.Routes, nil
 }
 
-// writeExpose stores what a release exposes (none removes the file).
-func writeExpose(home, rel string, routes []Route) error {
+// exposeData is a release's expose file: the proxy container the gateway routes to, and the routes.
+type exposeData struct {
+	Proxy  string  `yaml:"proxy,omitempty"`
+	Routes []Route `yaml:"routes"`
+}
+
+// writeExpose stores what a release exposes, through proxy (no routes removes the file).
+func writeExpose(home, rel, proxy string, routes []Route) error {
 	if len(routes) == 0 {
 		if err := os.Remove(exposeFile(home, rel)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		return nil
 	}
-	data, err := yaml.Marshal(routes)
+	data, err := yaml.Marshal(exposeData{Proxy: proxy, Routes: routes})
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,6 +36,11 @@ func (f *fakeProxies) kind(dir string) string {
 		return "gateway"
 	}
 	return "proxy"
+}
+
+func (f *fakeProxies) Drain(_ context.Context, dir string, _ time.Duration) (bool, error) {
+	f.log("Drain:" + f.kind(dir))
+	return true, nil
 }
 
 func (f *fakeProxies) log(s string) { f.rt.Calls = append(f.rt.Calls, s) }
@@ -194,6 +201,56 @@ func TestProxyReplace(t *testing.T) {
 	}
 	if w := r.rt.Workload("cache-redis").Request; w.Image != "redis:7.2" || !slices.Equal(w.Aliases, []string{"karga-redis-r2"}) {
 		t.Fatalf("after replace: %+v", w)
+	}
+}
+
+// A changed proxy (here: a port newly exposed) starts next to the old one; the gateway switches to
+// it before the old one drains and goes.
+func TestProxyReplacedNextToOld(t *testing.T) {
+	r, _ := newProxyRequest(t)
+	r.req.Resources = replaceManifest(r.port())
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	proxies := func() []string {
+		var out []string
+		for n, w := range r.rt.Workloads {
+			if w.Request.Labels[ports.LabelKind] == KindProxy {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+	old := proxies()
+	r.rt.Calls, r.rt.Raw = nil, nil
+	r.req.Revision = 2
+	r.req.Resources = exposedManifest(r.port())
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	now := proxies()
+	if len(old) != 1 || len(now) != 1 || now[0] == old[0] {
+		t.Fatalf("proxies before %v, after %v", old, now)
+	}
+	raw := r.rt.Raw
+	before(t, raw, "StartWorkload:"+now[0], "DeleteWorkload:"+old[0])
+	c := r.rt.Calls
+	for _, step := range [][2]string{
+		{"StartWorkload:cache-karga-proxy", "WaitReady:proxy:karga-redis-r1"},
+		{"WaitReady:proxy:karga-redis-r1", "Write:gateway:" + upstream(t, r.rt.Workloads[now[0]])},
+		{"Write:gateway:" + upstream(t, r.rt.Workloads[now[0]]), "Drain:proxy"},
+		{"Drain:proxy", "DeleteWorkload:cache-karga-proxy"},
+	} {
+		before(t, c, step[0], step[1])
+	}
+	if slices.Contains(c, "StopWorkload:cache-redis") {
+		t.Fatalf("the workload must not be touched: %v", c)
+	}
+	if data, err := os.ReadFile(filepath.Join(ProxyDir(r.home, "cache"), "expose.yaml")); err != nil || !strings.Contains(string(data), "proxy: "+now[0]+"\n") {
+		t.Fatalf("the expose file must name %s: %s %v", now[0], data, err)
+	}
+	if _, err := os.Stat(ProxyAdminDir(r.home, "cache", old[0])); !os.IsNotExist(err) {
+		t.Fatalf("the old proxy's instance directory is left: %v", err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
@@ -144,14 +145,47 @@ func (r *run) proxyUp(ctx context.Context) error {
 			continue
 		}
 		r.disrupted, r.waitAll = true, true
-		var err error
-		if c.Action == ActionCreate || c.Strategy == proxyRecreate {
-			err = r.e.createProxy(ctx, r.rt, r.req, c, r.svcs)
-		} else {
-			err = reconnectProxy(ctx, r.rt, r.req.Release, c)
+		if c.Strategy == proxyReplace {
+			progress(ctx, c.Kind, c.Name, PhaseCreate, "starting %s next to %s", c.RuntimeName, c.Applied.RuntimeName)
 		}
-		if err := r.report(ctx, c, c.Action, err); err != nil {
+		if err := r.report(ctx, c, c.Action, r.e.createProxy(ctx, r.rt, r.req, c, r.svcs, r.owned)); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// proxy is the release proxy that serves now: until proxyUp, the one that ran before the plan.
+func (r *run) proxy() string {
+	for _, c := range r.req.Plan.Changes {
+		if c.Kind == KindProxy && c.Action != ActionDelete {
+			if !r.proxyDone && c.Applied != nil {
+				return c.Applied.RuntimeName
+			}
+			return c.RuntimeName
+		}
+	}
+	return ""
+}
+
+// proxyDrain bounds how long a replaced release proxy waits for its connections to finish.
+const proxyDrain = 30 * time.Second
+
+// retireProxy drains and removes the proxy a replaced one took over from, once the gateway routes
+// to the new one: in the release's networks both answer to the Services' names until then.
+func (r *run) retireProxy(ctx context.Context) error {
+	for _, c := range r.req.Plan.Changes {
+		if c.Kind != KindProxy || c.Strategy != proxyReplace {
+			continue
+		}
+		old := c.Applied.RuntimeName
+		progress(ctx, c.Kind, c.Name, PhaseDrain, "waiting up to %s for connections to %s to finish", proxyDrain, old)
+		if done, err := r.e.host.Proxies.Drain(ctx, ProxyAdminDir(r.e.home, r.req.Release, old), proxyDrain); err != nil || !done {
+			progress(ctx, c.Kind, c.Name, PhaseDrain, "%s still had connections (%v); they are closed", old, err)
+		}
+		progress(ctx, c.Kind, c.Name, PhaseStop, "stopping %s", old)
+		if err := removeProxy(ctx, r.rt, r.e.home, r.req.Release, c, false); err != nil {
+			return fmt.Errorf("%s %q: %w", c.Kind, c.Name, err)
 		}
 	}
 	return nil
@@ -182,7 +216,7 @@ func (r *run) dependencies(ctx context.Context, c Change, w *resource.WorkloadSp
 			maps.Copy(want, proxyWant(r.svcs, dep.Workload, BackendAlias(dep.Workload, rev)))
 		}
 	}
-	return envoyErr(ctx, r.rt, ProxyName(r.req.Release), r.e.host.Proxies.WaitReady(ctx, ProxyDir(r.e.home, r.req.Release), want, r.req.Timeout))
+	return envoyErr(ctx, r.rt, r.proxy(), r.e.host.Proxies.WaitReady(ctx, ProxyAdminDir(r.e.home, r.req.Release, r.proxy()), want, r.req.Timeout))
 }
 
 // apply creates and updates what the plan creates and updates, in order.
@@ -218,7 +252,7 @@ func (r *run) applyOne(ctx context.Context, c Change) error {
 	case *resource.WorkloadSpec:
 		lbl[ports.LabelDigest] = c.Digest
 		if c.Action == ActionUpdate && c.Strategy == resource.StrategyReplace {
-			touched, rerr := r.e.replaceWorkload(ctx, r.rt, r.req, c, r.owned, s, lbl, r.paths, r.svcs)
+			touched, rerr := r.e.replaceWorkload(ctx, r.rt, r.req, c, r.owned, s, lbl, r.paths, r.svcs, r.proxy())
 			r.disrupted = r.disrupted || touched
 			if rerr != nil && !touched {
 				_ = r.req.OnStep(c, release.Step{Kind: c.Kind, Name: c.Name, Action: c.Action, Status: StepKept, Error: rerr.Error()})
@@ -263,7 +297,7 @@ func (r *run) routeProxy(ctx context.Context) error {
 	if len(want) == 0 {
 		return nil
 	}
-	return envoyErr(ctx, r.rt, ProxyName(r.req.Release), r.e.host.Proxies.WaitReady(ctx, ProxyDir(r.e.home, r.req.Release), want, proxyops.ProxyReadyTimeout))
+	return envoyErr(ctx, r.rt, r.proxy(), r.e.host.Proxies.WaitReady(ctx, ProxyAdminDir(r.e.home, r.req.Release, r.proxy()), want, proxyops.ProxyReadyTimeout))
 }
 
 // expose updates what the host gateway routes to the release and waits until it routes so.
@@ -272,7 +306,7 @@ func (r *run) expose(ctx context.Context) error {
 		return nil
 	}
 	progress(ctx, "Gateway", gateway.ContainerName, PhaseSwitch, "updating the host gateway")
-	targets, err := gateway.New(r.rt, r.e.host, r.e.home).Expose(ctx, r.req.Release, r.req.Resources, exposeRoutes(r.svcs, r.paths))
+	targets, err := gateway.New(r.rt, r.e.host, r.e.home).Expose(ctx, r.req.Release, r.proxy(), r.req.Resources, exposeRoutes(r.svcs, r.paths))
 	if err == nil {
 		err = envoyErr(ctx, r.rt, gateway.ContainerName, gateway.New(r.rt, r.e.host, r.e.home).Wait(ctx, r.req.Release, targets))
 	}

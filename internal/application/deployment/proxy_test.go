@@ -107,7 +107,7 @@ func TestProxyPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	px := changeOf(t, p, KindProxy, "")
-	if px.Action != ActionCreate || px.Name != ProxyResource || px.RuntimeName != "cache-karga-proxy" ||
+	if px.Action != ActionCreate || px.Name != ProxyResource || px.RuntimeName != ProxyName("cache", px.Digest) || !strings.HasPrefix(px.RuntimeName, "cache-karga-proxy-") ||
 		strings.Join(px.Proxy.Networks["net"], ",") != "redis" || px.Proxy.Published != nil {
 		t.Fatalf("proxy create: %+v %+v", px, px.Proxy)
 	}
@@ -139,23 +139,23 @@ func TestProxyPlan(t *testing.T) {
 		}
 	}
 
-	// A second service on the network reconnects the proxy with its alias.
+	// A second service on the network: a new proxy, with its alias, replaces the old one.
 	p, err = testEnv.Diff("cache", withWorkload(replaceManifest(6379), "web", 8080), applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if px := changeOf(t, p, KindProxy, ""); px.Action != ActionUpdate || px.Label() != "reconnect: net: brief interruption" {
+	if px := changeOf(t, p, KindProxy, ""); px.Action != ActionUpdate || px.Label() != "replace" || px.RuntimeName == px.Applied.RuntimeName {
 		t.Fatalf("add service: %+v", px)
 	}
 
-	// Exposing a port publishes it on the proxy container: a recreate.
+	// Exposing a port publishes it on a new proxy container, which replaces the old one.
 	exposed := replaceManifest(6379)
 	exposed[len(exposed)-1].Spec.(*resource.ServiceSpec).Expose = []resource.Exposure{{Port: "p", Listener: "pg"}}
 	p, err = testEnv.Diff("cache", exposed, applied, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if px := changeOf(t, p, KindProxy, ""); px.Strategy != proxyRecreate || px.Proxy.Published["redis"][0] != 6379 {
+	if px := changeOf(t, p, KindProxy, ""); px.Strategy != proxyReplace || px.Proxy.Published["redis"][0] != 6379 {
 		t.Fatalf("expose: %+v %+v", px, px.Proxy)
 	}
 

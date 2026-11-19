@@ -251,7 +251,7 @@ func (e *Env) Diff(releaseName string, desired []resource.Resource, applied []re
 		want := specs[k]
 		c := Change{Summary: Summary{Kind: k.Kind, Name: k.Name}, Resource: &r, Spec: want.Spec, Digest: want.Digest, RuntimeName: proxyops.RuntimeName(releaseName, k.Name)}
 		if k.Kind == resource.KindService {
-			c.RuntimeName = ProxyName(releaseName) // a Service has no container; the release proxy serves it
+			c.RuntimeName = ProxyBase(releaseName) // a Service has no container; the release proxy serves it
 		}
 		have, exists := current[k]
 		switch {

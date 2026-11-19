@@ -11,6 +11,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- The release proxy is replaced like a workload (D37): it is named
+  `<release>-karga-proxy-<8 hex>`, and a changed one (a newly exposed port, a Service added or
+  removed, a new image) starts next to the old one; the gateway switches to it and the old one
+  drains for up to 30s. Exposing a port or adding a Service no longer interrupts connections.
 - A recreate (D36) creates the new container before it stops the old one: a container Docker refuses
   (a mount, an option) leaves the old one running, and the outage is only from the stop to the
   start.

@@ -13,11 +13,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
@@ -46,8 +48,11 @@ func Image() string {
 
 // Command runs Envoy on the mounted bootstrap file with one worker thread (ADR-0010: low resources).
 // It starts with a flag, so both the distroless entrypoint (envoy) and the debian one accept it.
-func Command() []string {
-	return []string{"-c", MountPath + "/envoy.yaml", "--concurrency", "1", "--log-level", "warn"}
+func Command() []string { return CommandFor("") }
+
+// CommandFor runs the Envoy of one instance (see WriteInstance); "" is the directory's own.
+func CommandFor(instance string) []string {
+	return []string{"-c", path.Join(MountPath, instance, bootstrapFile), "--concurrency", "1", "--log-level", "warn"}
 }
 
 const (
@@ -101,6 +106,19 @@ func (Proxies) Write(dir, node string, socketMode int, cfg Config) error {
 	return Write(dir, node, socketMode, cfg)
 }
 
+// WriteInstance implements ports.ProxyControl.
+func (Proxies) WriteInstance(dir, instance, node string, socketMode int) error {
+	return WriteInstance(dir, instance, node, socketMode)
+}
+
+// Command implements ports.ProxyControl.
+func (Proxies) Command(instance string) []string { return CommandFor(instance) }
+
+// Drain implements ports.ProxyControl.
+func (Proxies) Drain(ctx context.Context, dir string, timeout time.Duration) (bool, error) {
+	return newAdmin(dir).Drain(ctx, timeout)
+}
+
 // Endpoints implements ports.ProxyControl.
 func (Proxies) Endpoints(dir string) (map[string]string, error) { return Endpoints(dir) }
 
@@ -124,7 +142,7 @@ func (Proxies) Version(ctx context.Context, dir string) (string, error) {
 
 // bootstrap is the static part: an admin API on a unix socket and file-based LDS/CDS. socketMode is
 // the admin socket's permission; the proxy directory (0700) is what keeps other users out.
-func bootstrap(node string, socketMode int) ([]byte, error) {
+func bootstrap(node string, socketMode int, instance string) ([]byte, error) {
 	source := func(file string) map[string]any {
 		return map[string]any{
 			"resource_api_version": "V3",
@@ -158,7 +176,7 @@ func bootstrap(node string, socketMode int) ([]byte, error) {
 			},
 		},
 		"node":  map[string]any{"id": node, "cluster": "karga"},
-		"admin": map[string]any{"address": map[string]any{"pipe": map[string]any{"path": MountPath + "/" + adminSocket, "mode": socketMode}}},
+		"admin": map[string]any{"address": map[string]any{"pipe": map[string]any{"path": path.Join(MountPath, instance, adminSocket), "mode": socketMode}}},
 		"dynamic_resources": map[string]any{
 			"lds_config": source(listenersFile),
 			"cds_config": source(clustersFile),
@@ -187,7 +205,7 @@ func Write(dir, node string, socketMode int, cfg Config) error {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
-	boot, err := bootstrap(node, socketMode)
+	boot, err := bootstrap(node, socketMode, "")
 	if err != nil {
 		return err
 	}
@@ -214,16 +232,39 @@ func Write(dir, node string, socketMode int, cfg Config) error {
 	return writeAtomic(dir, listenersFile, lds)
 }
 
+// WriteInstance writes the bootstrap of one Envoy of dir into dir/instance: two Envoys share
+// the directory's listeners and clusters, each with its own admin socket there (a proxy started
+// next to the one it replaces).
+func WriteInstance(dir, instance, node string, socketMode int) error {
+	sub := filepath.Join(dir, instance)
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		return err
+	}
+	boot, err := bootstrap(node, socketMode, instance)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(sub, bootstrapFile, boot)
+}
+
 // clusterWait bounds how long Write waits for a running Envoy to take new clusters.
 var clusterWait = 15 * time.Second
 
+// waitClusters waits until every running Envoy of dir (its own and its instances') knows clusters.
 func waitClusters(dir string, clusters []Cluster, timeout time.Duration) {
-	if _, err := os.Stat(filepath.Join(dir, adminSocket)); err != nil {
-		return // not running yet: at startup Envoy loads clusters before listeners
-	}
+	socks, _ := filepath.Glob(filepath.Join(dir, "*", adminSocket))
+	socks = append(socks, filepath.Join(dir, adminSocket))
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	a := newAdmin(dir)
+	for _, s := range socks {
+		if _, err := os.Stat(s); err != nil {
+			continue // not running yet: at startup Envoy loads clusters before listeners
+		}
+		waitKnown(ctx, newAdmin(filepath.Dir(s)), clusters)
+	}
+}
+
+func waitKnown(ctx context.Context, a *Admin, clusters []Cluster) {
 	for {
 		hosts, err := a.hosts(ctx)
 		if err == nil && !slices.ContainsFunc(clusters, func(c Cluster) bool { _, ok := hosts[c.Name]; return !ok }) {
@@ -338,7 +379,11 @@ func newAdmin(dir string) *Admin {
 }
 
 func (a *Admin) get(ctx context.Context, path string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(context.WithValue(ctx, adminSocketKey{}, a.sock), http.MethodGet, "http://envoy"+path, nil)
+	return a.do(ctx, http.MethodGet, path)
+}
+
+func (a *Admin) do(ctx context.Context, method, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(context.WithValue(ctx, adminSocketKey{}, a.sock), method, "http://envoy"+path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -511,6 +556,51 @@ func (a *Admin) OldConnections(ctx context.Context, clusters []string) (int, err
 			current += h.cxActive()
 		}
 		total += max(0, all-current)
+	}
+	return total, nil
+}
+
+// Drain stops the Envoy taking new work: its listeners drain gracefully (HTTP responses ask clients
+// to close, HTTP/2 gets GOAWAY), then it waits until no client connection is left, or timeout. It
+// reports whether every connection finished. An Envoy that is gone counts as drained.
+func (a *Admin) Drain(ctx context.Context, timeout time.Duration) (bool, error) {
+	if _, err := a.do(ctx, http.MethodPost, "/drain_listeners?graceful"); err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
+			return true, nil
+		}
+		return false, err
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		n, err := a.clientConnections(ctx)
+		if err != nil || n == 0 {
+			return err == nil, err
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+// clientConnections counts the connections open on the Envoy's listeners, its admin API's aside.
+func (a *Admin) clientConnections(ctx context.Context) (int, error) {
+	body, err := a.get(ctx, "/stats?filter=^listener\\..*\\.downstream_cx_active$")
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+		name, v, ok := strings.Cut(line, ": ")
+		if !ok || strings.HasPrefix(name, "listener.admin.") {
+			continue
+		}
+		n, _ := strconv.Atoi(v)
+		total += n
 	}
 	return total, nil
 }
