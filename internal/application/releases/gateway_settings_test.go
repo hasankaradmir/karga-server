@@ -108,6 +108,17 @@ func TestGatewayDocuments(t *testing.T) {
 		t.Fatalf("in force: %+v", l)
 	}
 
+	// Envoy refuses what karga's checks pass: a problem, found in a container of its own.
+	rt.ValidateExit, rt.ValidateOutput = 1, "[critical][main] error initializing configuration '/etc/karga-proxy/envoy.yaml': bad certificate\n"
+	plan, err = svc.Gateway.Diff(ctx, doc(listeners(", timeout: 45s")))
+	if err != nil || len(plan.Problems) != 1 || !strings.Contains(plan.Problems[0], "envoy: ") || !strings.Contains(plan.Problems[0], "bad certificate") {
+		t.Fatalf("envoy refusal: %+v %v", plan.Problems, err)
+	}
+	if _, ok := rt.Lookup("karga-gateway-validate"); ok {
+		t.Fatal("the validation container is left")
+	}
+	rt.ValidateExit = 0
+
 	// The gateway does not route with the new settings: revision 3 is dropped, 2 keeps serving.
 	px.failures.Store(1)
 	if _, err := svc.Gateway.Apply(ctx, doc(listeners(", timeout: 60s")), "", false); err == nil || !strings.Contains(err.Error(), "the gateway kept revision 2") {

@@ -261,7 +261,9 @@ Services is refused.
   apply -f`), or the gateway commands. Each apply is a revision in `$KARGA_HOME/gateway-settings/`
   (`<n>.yaml` and `history.yaml`: when, who, from what; the last 10 kept; the highest is in force).
   An apply is checked first (strict YAML, values, listeners in use, ports, risks needing
-  confirmation); if the gateway then does not route (a listener Envoy rejects included), the
+  confirmation, then Envoy's own `--mode validate` on the configuration as static resources, in a
+  throwaway container with copies of the certificates; it binds nothing); if the gateway then does
+  not route (a listener Envoy rejects included), the
   revision is dropped and the gateway synced with the one before. The settings are the addresses
   it listens on (default `127.0.0.1`) and
   its listeners (name, port, protocol `tcp`, `http` or `https`). Packages only name listeners. The

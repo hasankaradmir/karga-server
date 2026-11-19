@@ -109,6 +109,14 @@ func (Proxies) WriteInstance(dir, instance, node string, socketMode int) error {
 	return WriteInstance(dir, instance, node, socketMode)
 }
 
+// ValidationBootstrap implements ports.ProxyControl.
+func (Proxies) ValidationBootstrap(cfg Config) ([]byte, error) { return ValidationBootstrap(cfg) }
+
+// ValidateCommand implements ports.ProxyControl: Envoy checks the bootstrap at path and exits.
+func (Proxies) ValidateCommand(path string) []string {
+	return []string{"-c", path, "--mode", "validate", "--log-level", "warn", "--disable-hot-restart"}
+}
+
 // Command implements ports.ProxyControl.
 func (Proxies) Command(instance string) []string { return CommandFor(instance) }
 

@@ -243,7 +243,11 @@ func TestGatewayHandOffWithoutDowntime(t *testing.T) {
 	repo, digest, _ := strings.Cut(envoy.DefaultImage, "@")
 	repo, _, _ = strings.Cut(repo, ":")
 	t.Setenv("KARGA_PROXY_IMAGE", repo+"@"+digest)
-	if err := s.Gateway.SetAccessLog(ctx, false); err != nil { // any settings change syncs the gateway
+	orig, err := gateway.ReadSettings(sharedHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Gateway.SetAccessLog(ctx, !orig.AccessLog); err != nil { // a settings change syncs the gateway
 		t.Fatal(err)
 	}
 	after := gatewayName(t, rt)
@@ -261,7 +265,7 @@ func TestGatewayHandOffWithoutDowntime(t *testing.T) {
 	}
 	// Back to the default image for the other tests: another hand-over.
 	_ = os.Unsetenv("KARGA_PROXY_IMAGE")
-	if err := s.Gateway.SetAccessLog(ctx, false); err != nil {
+	if err := s.Gateway.SetAccessLog(ctx, orig.AccessLog); err != nil {
 		t.Fatal(err)
 	}
 }

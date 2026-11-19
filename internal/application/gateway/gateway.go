@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -88,6 +89,7 @@ type Runtime interface {
 	CreateWorkload(ctx context.Context, req ports.WorkloadRequest) error
 	StartWorkload(ctx context.Context, name string) error
 	ListLabeled(ctx context.Context, key string) ([]ports.Object, error)
+	Logs(ctx context.Context, name string, tail int, follow bool, w io.Writer) error
 }
 
 // findTargets lists every release proxy that publishes upstream ports, with its release's routes.
