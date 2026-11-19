@@ -52,10 +52,10 @@
     - 'Info:'
     - EnsureImage:redis:7.4.1
     - Pull:redis:7.4.1
-    - StopWorkload:cache-redis
-    - DeleteWorkload:cache-redis
     - CreateWorkload:cache-redis
+    - StopWorkload:cache-redis
     - StartWorkload:cache-redis
+    - DeleteWorkload:cache-redis
     - StopWorkload:karga-gateway
 - step: upgrade config
   result:
@@ -78,10 +78,10 @@
   runtimeCalls:
     - 'Info:'
     - EnsureImage:redis:7.4.1
-    - StopWorkload:cache-redis
-    - DeleteWorkload:cache-redis
     - CreateWorkload:cache-redis
+    - StopWorkload:cache-redis
     - StartWorkload:cache-redis
+    - DeleteWorkload:cache-redis
     - StopWorkload:karga-gateway
 - step: upgrade that fails to start
   error: 'Workload "redis": boom'
@@ -108,10 +108,10 @@
     - 'Info:'
     - EnsureImage:redis:7.4.2
     - Pull:redis:7.4.2
-    - StopWorkload:cache-redis
-    - DeleteWorkload:cache-redis
     - CreateWorkload:cache-redis
+    - StopWorkload:cache-redis
     - StartWorkload:cache-redis
+    - DeleteWorkload:cache-redis
     - StopWorkload:karga-gateway
 - step: rollback to 2
   result:
@@ -138,10 +138,10 @@
   runtimeCalls:
     - 'Info:'
     - EnsureImage:redis:7.4.1
-    - StopWorkload:cache-redis
-    - DeleteWorkload:cache-redis
     - CreateWorkload:cache-redis
+    - StopWorkload:cache-redis
     - StartWorkload:cache-redis
+    - DeleteWorkload:cache-redis
     - StopWorkload:karga-gateway
 - step: repair a removed container
   result:

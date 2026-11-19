@@ -15,15 +15,29 @@ import (
 // recreateWorkload recreates a workload: the old container goes first, so ports and names are free.
 // Its anonymous volumes (image VOLUME paths no Volume covers) move to the new container, as docker
 // compose does, so their data survives the update.
-func recreateWorkload(ctx context.Context, rt ports.Runtime, c Change, owned map[string]bool, rel string, s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string, behind bool) error {
+func recreateWorkload(ctx context.Context, rt ports.Runtime, c Change, owned map[string]bool, rel string, s *resource.WorkloadSpec, lbl map[string]string, paths map[Key]string) error {
 	name := c.RuntimeName
-	wr, err := workloadRequest(rel, c.Name, name, s, lbl, paths, behind)
+	wr, err := workloadRequest(rel, c.Name, name, s, lbl, paths)
 	if err != nil {
 		return err
 	}
+	old := ""
 	if c.Applied != nil {
-		progress(ctx, c.Kind, c.Name, PhaseStop, "stopping and removing %s", c.Applied.RuntimeName)
-		if wr.Mounts, err = takeOver(ctx, rt, c.Applied.RuntimeName, wr.Mounts); err != nil {
+		old = c.Applied.RuntimeName
+	}
+	if old == name {
+		// A repair of the same spec, or (rarely: 8 hex) a new digest with the old one's name: the
+		// old container must go first.
+		progress(ctx, c.Kind, c.Name, PhaseStop, "stopping and removing %s", old)
+		if wr.Mounts, err = takeOver(ctx, rt, old, wr.Mounts); err != nil {
+			return err
+		}
+		old = ""
+	}
+	// The new container is created while the old one still runs: a spec Docker refuses leaves the
+	// old one serving. Anonymous volumes move to it; only one of the two runs at a time.
+	if old != "" {
+		if wr.Mounts, err = anonymousMounts(ctx, rt, old, wr.Mounts); err != nil {
 			return err
 		}
 	}
@@ -38,7 +52,17 @@ func recreateWorkload(ctx context.Context, rt ports.Runtime, c Change, owned map
 	if err != nil {
 		return err
 	}
-	return rt.StartWorkload(ctx, name)
+	if old != "" {
+		progress(ctx, c.Kind, c.Name, PhaseStop, "stopping %s", old)
+		if err := rt.StopWorkload(ctx, old, 0); err != nil && !errors.Is(err, ports.ErrNotFound) {
+			return err
+		}
+	}
+	err = rt.StartWorkload(ctx, name)
+	if old != "" {
+		err = errors.Join(err, rt.DeleteWorkload(ctx, old))
+	}
+	return err
 }
 
 // takeOver stops and deletes a container, keeping its anonymous volumes, and returns mounts with
@@ -57,12 +81,30 @@ func takeOver(ctx context.Context, rt ports.Runtime, name string, mounts []ports
 	if err := rt.DeleteWorkload(ctx, name); err != nil {
 		return mounts, err
 	}
+	return withAnonymous(st, mounts), nil
+}
+
+// anonymousMounts is withAnonymous for container name; a missing container adds none.
+func anonymousMounts(ctx context.Context, rt ports.Runtime, name string, mounts []ports.Mount) ([]ports.Mount, error) {
+	st, err := rt.GetWorkload(ctx, name)
+	if errors.Is(err, ports.ErrNotFound) {
+		return mounts, nil
+	}
+	if err != nil {
+		return mounts, err
+	}
+	return withAnonymous(st, mounts), nil
+}
+
+// withAnonymous returns mounts with the anonymous volumes of st added at their paths (unless a
+// mount already uses the path).
+func withAnonymous(st ports.WorkloadStatus, mounts []ports.Mount) []ports.Mount {
 	for _, a := range st.AnonymousVolumes {
 		if !slices.ContainsFunc(mounts, func(m ports.Mount) bool { return m.Target == a.Target }) {
 			mounts = append(mounts, ports.Mount{Type: ports.MountVolume, Source: a.Source, Target: a.Target})
 		}
 	}
-	return mounts, nil
+	return mounts
 }
 
 // replaceWorkload updates a workload without downtime (ADR-0011): its clients reach it only
@@ -89,7 +131,7 @@ func (e *Env) replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecReq
 			return false, err
 		}
 	}
-	wr, err := workloadRequest(req.Release, c.Name, next, s, lbl, paths, behind)
+	wr, err := workloadRequest(req.Release, c.Name, next, s, lbl, paths)
 	if err != nil {
 		return false, err
 	}

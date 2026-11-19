@@ -144,21 +144,6 @@ func proxyApplied(releaseName string, spec ProxySpec) (release.AppliedResource, 
 		Spec: js, Digest: "sha256:" + hex.EncodeToString(sum[:])}, nil
 }
 
-// appliedBehind returns the workloads the applied release proxy sends traffic to.
-func appliedBehind(applied []release.AppliedResource) map[string]bool {
-	out := map[string]bool{}
-	for _, a := range applied {
-		if a.Kind == resource.KindService {
-			if r, err := resource.DecodeStored(a.Spec); err == nil {
-				if s, ok := r.Spec.(*resource.ServiceSpec); ok {
-					out[s.Workload] = true
-				}
-			}
-		}
-	}
-	return out
-}
-
 // Proxy strategies: the container is recreated (image), or reconnected to networks whose aliases changed.
 const (
 	proxyRecreate  = "recreate"

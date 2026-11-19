@@ -362,9 +362,11 @@ func TestReplaceUpgradeAndNonDisruptiveFailure(t *testing.T) {
 			w = deploymentChange{c.Action, c.Strategy}
 		}
 	}
-	if names := e.rt.Containers("site", "web"); w != (deploymentChange{"update", "replace"}) || len(names) != 1 || names[0] == webBefore {
+	names := e.rt.Containers("site", "web")
+	if w != (deploymentChange{"update", "replace"}) || len(names) != 1 || names[0] == webBefore {
 		t.Fatalf("replace upgrade: %+v %v (before %s)", w, names, webBefore)
 	}
+	v2 := names[0]
 
 	// A failed replace changes nothing that runs: the release stays deployed at revision 2.
 	e.rt.Health = ports.HealthUnhealthy
@@ -379,7 +381,8 @@ func TestReplaceUpgradeAndNonDisruptiveFailure(t *testing.T) {
 	if rev := must[release.Revision](t)(e.svc.c.store.GetRevision(ctx, "site", 3)); rev.Status != release.RevisionFailed {
 		t.Fatalf("revision 3: %+v", rev)
 	}
-	if e.rt.Workload("site-web").State != ports.StateRunning {
+	// The failed new container is kept stopped next to it.
+	if e.rt.Workloads[v2].State != ports.StateRunning {
 		t.Fatal("old container must keep running")
 	}
 

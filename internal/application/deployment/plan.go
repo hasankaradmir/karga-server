@@ -160,7 +160,6 @@ func withoutStrategy(r resource.Resource) resource.Resource {
 // Secrets it serves TLS with, so changing their content applies them again.
 func (e *Env) specs(rs []resource.Resource) (map[Key]release.AppliedResource, error) {
 	out := map[Key]release.AppliedResource{}
-	behind := servicesOf(rs).wl
 	pass := func(r resource.Resource) int {
 		switch r.Spec.(type) {
 		case *resource.ServiceSpec:
@@ -183,9 +182,6 @@ func (e *Env) specs(rs []resource.Resource) (map[Key]release.AppliedResource, er
 			h := sha256.New()
 			h.Write(js)
 			if isWorkload {
-				if behind[r.Metadata.Name] != nil {
-					h.Write([]byte("\nproxied")) // behind the proxy the container answers to its backend alias
-				}
 				for _, m := range w.Mounts {
 					kind, name := m.Target()
 					if kind != resource.KindVolume {
@@ -229,9 +225,7 @@ func (e *Env) Diff(releaseName string, desired []resource.Resource, applied []re
 	for _, a := range applied {
 		current[Key{a.Kind, a.Name}] = a
 	}
-	hadProxy := appliedBehind(applied)
 	svcs := servicesOf(desired)
-	behind := svcs.wl
 	ordered, err := Order(desired)
 	if err != nil {
 		return Plan{}, err
@@ -270,14 +264,10 @@ func (e *Env) Diff(releaseName string, desired []resource.Resource, applied []re
 			c.Fields = fieldChanges(k.Kind, have.Spec, want.Spec)
 			w, isWorkload := r.Spec.(*resource.WorkloadSpec)
 			if isWorkload {
-				c.Strategy, c.StrategyReason = workloadStrategy(w, anon[k.Name], strategy, behind[k.Name] != nil, hadProxy[k.Name])
+				c.Strategy, c.StrategyReason = strategyFor(w, anon[k.Name], strategy)
 			}
 			if len(c.Fields) == 0 {
-				why := "(mounted Config/Secret content or previous failure)"
-				if isWorkload && (behind[k.Name] != nil) != hadProxy[k.Name] {
-					why = "(service placement)"
-				}
-				c.Fields = []FieldChange{{Path: why}}
+				c.Fields = []FieldChange{{Path: "(mounted Config/Secret content or previous failure)"}}
 			}
 			if k.Kind == resource.KindNetwork || k.Kind == resource.KindVolume {
 				errs = append(errs, fmt.Sprintf("changing %s %q is not supported (uninstall the release or rename the resource)", k.Kind, k.Name))
@@ -321,18 +311,6 @@ func (e *Env) Diff(releaseName string, desired []resource.Resource, applied []re
 		return plan, fmt.Errorf("release %s: %s", releaseName, strings.Join(errs, "; "))
 	}
 	return plan, nil
-}
-
-// workloadStrategy adds the service transitions to strategyFor: a workload a Service starts or
-// stops targeting gains or loses its backend alias, which only a recreate can do.
-func workloadStrategy(w *resource.WorkloadSpec, anon []string, override string, now, had bool) (string, string) {
-	switch {
-	case now && !had:
-		return resource.StrategyRecreate, "a service now targets it"
-	case !now && had:
-		return resource.StrategyRecreate, "no service targets it anymore"
-	}
-	return strategyFor(w, anon, override)
 }
 
 // strategyFor decides how a workload update is applied. replace runs the new container next to the

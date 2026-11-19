@@ -39,5 +39,6 @@ directory.
 | D33 | Not planned | No automatic rollback (`--atomic`, D2 stands); no default resource limits (packages set theirs); the SDK's `packages` keeps its name (`package` is a keyword, and it names the domain's term); `ports.HostNet` has one implementation and no fake (Linux only, covered by the integration tests). |
 | D34 | Container names | A workload's container is `<release>-<workload>-<8 hex of its digest>`: the same spec keeps its name, a changed one gets a new one, so a replace starts the new container under its own name and renames nothing. Containers are found by label and the state records their names; the proxy, Networks and Volumes keep fixed names. |
 | D35 | Listener options | Timeout, idle timeout, body limit (at most 16Mi: Envoy buffers it), rate limit and PROXY protocol are options of a gateway listener, set by the administrator (`listener add`/`set`), never by packages; they only rewrite the gateway's files. |
+| D36 | Recreate order and backend aliases | A recreate creates the new container before stopping the old one; every workload answers to its revision's backend alias from its creation, so a Service that starts or stops targeting it changes only the release proxy. |
 
 D23 was not used.
