@@ -260,25 +260,3 @@ func (e *Env) routedTo(ctx context.Context, rt ports.Runtime, rel, name, next st
 	}
 	return false
 }
-
-// envoyErr adds what an Envoy container logged about rejected configuration to err, so a config
-// Envoy refused (e.g. a port it cannot bind) is reported instead of only a timeout.
-func envoyErr(ctx context.Context, rt ports.Runtime, container string, err error) error {
-	if err == nil {
-		return nil
-	}
-	var out strings.Builder
-	if lerr := rt.Logs(ctx, container, 50, false, &out); lerr != nil {
-		return err
-	}
-	var why []string
-	for _, line := range strings.Split(out.String(), "\n") {
-		if strings.Contains(line, "rejected") || strings.Contains(line, "][error]") || strings.Contains(line, "][critical]") {
-			why = append(why, strings.TrimSpace(line))
-		}
-	}
-	if len(why) == 0 {
-		return err
-	}
-	return fmt.Errorf("%w; %s logged:\n  %s", err, container, strings.Join(why[max(0, len(why)-3):], "\n  "))
-}

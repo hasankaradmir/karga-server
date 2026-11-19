@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -117,8 +118,8 @@ func fakeAdmin(t *testing.T, clusters, stats func() string) string {
 		case "/server_info":
 			_, _ = w.Write([]byte(`{"version":"eb0a95ba/1.36.13/Clean/RELEASE/BoringSSL","state":"LIVE"}`))
 		case "/config_dump":
-			_, _ = w.Write([]byte(`{"configs":[{"active_state":{"listener":{"filter_chains":[{"filters":[{"typed_config":{"cluster":"p8080"}}]}]}}},
-			  {"warming_state":{"listener":{"filter_chains":[{"filters":[{"typed_config":{"cluster":"p9000"}}]}]}}}]}`))
+			_, _ = w.Write([]byte(strings.Replace(`{"configs":[{"active_state":{"listener":{"filter_chains":[{"filters":[{"typed_config":{"cluster":"p8080"}}]}]}}},
+			  {"warming_state":{"listener":{"filter_chains":[{"filters":[{"typed_config":{"cluster":"p9000"}}]}]}}}ERROR]}`, "ERROR", rejectedListener.Load().(string), 1)))
 		default:
 			http.NotFound(w, r)
 		}
@@ -127,6 +128,11 @@ func fakeAdmin(t *testing.T, clusters, stats func() string) string {
 	t.Cleanup(func() { _ = srv.Close() })
 	return dir
 }
+
+// rejectedListener is added to the fake admin API's listener dump (",{...}" or "").
+var rejectedListener atomic.Value
+
+func init() { rejectedListener.Store("") }
 
 func TestAdmin(t *testing.T) {
 	healthy := `{"cluster_statuses":[{"name":"p8080","host_statuses":[{"hostname":"karga-web-r2","address":{"socket_address":{"address":"10.0.0.2","port_value":8080}},
@@ -160,6 +166,12 @@ func TestAdmin(t *testing.T) {
 	if err := a.WaitReady(ctx, map[string]string{"p8080": "karga-web-r2"}, 300*time.Millisecond); err == nil {
 		t.Fatal("WaitReady should time out")
 	}
+	clusters = healthy
+	rejectedListener.Store(`,{"name":"http_10.255.255.1_80","error_state":{"details":"cannot bind '10.255.255.1:80': Cannot assign requested address"}}`)
+	if w, err := a.notReady(ctx, map[string]string{"p8080": "karga-web-r2"}); err != nil || !strings.Contains(w, "cannot bind '10.255.255.1:80'") {
+		t.Fatalf("a rejected listener must not be ready: %q %v", w, err)
+	}
+	rejectedListener.Store("")
 	clusters, total = healthy, "1"
 	if drained, err := a.WaitDrained(ctx, []string{"p8080"}, time.Second); err != nil || !drained {
 		t.Fatalf("drained: %v %v", drained, err)

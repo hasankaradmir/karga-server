@@ -326,6 +326,8 @@ type State struct {
 	Image     string
 	Listen    []string
 	AccessLog bool
+	// Pending says gateway.yaml has changes not applied.
+	Pending bool
 	// Error says why the admin API could not be read, if it could not.
 	Error string
 }
@@ -338,6 +340,9 @@ func (g *Gateway) Health(ctx context.Context) (State, error) {
 		return State{}, err
 	}
 	st := State{AccessLog: settings.AccessLog, Listen: settings.Listen}
+	if st.Pending, err = Pending(home); err != nil {
+		return st, err
+	}
 	name, err := g.Current(ctx)
 	var ws ports.WorkloadStatus
 	if err == nil {

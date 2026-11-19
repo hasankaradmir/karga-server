@@ -212,7 +212,7 @@ func (r *run) dependencies(ctx context.Context, c Change, w *resource.WorkloadSp
 			maps.Copy(want, proxyWant(r.svcs, dep.Workload, BackendAlias(dep.Workload, rev)))
 		}
 	}
-	return envoyErr(ctx, r.rt, r.proxy(), r.e.host.Proxies.WaitReady(ctx, ProxyAdminDir(r.e.home, r.req.Release, r.proxy()), want, r.req.Timeout))
+	return proxyops.EnvoyErr(ctx, r.rt, r.proxy(), r.e.host.Proxies.WaitReady(ctx, ProxyAdminDir(r.e.home, r.req.Release, r.proxy()), want, r.req.Timeout))
 }
 
 // apply creates and updates what the plan creates and updates, in order.
@@ -293,7 +293,7 @@ func (r *run) routeProxy(ctx context.Context) error {
 	if len(want) == 0 {
 		return nil
 	}
-	return envoyErr(ctx, r.rt, r.proxy(), r.e.host.Proxies.WaitReady(ctx, ProxyAdminDir(r.e.home, r.req.Release, r.proxy()), want, proxyops.ProxyReadyTimeout))
+	return proxyops.EnvoyErr(ctx, r.rt, r.proxy(), r.e.host.Proxies.WaitReady(ctx, ProxyAdminDir(r.e.home, r.req.Release, r.proxy()), want, proxyops.ProxyReadyTimeout))
 }
 
 // expose updates what the host gateway routes to the release and waits until it routes so.
@@ -307,7 +307,7 @@ func (r *run) expose(ctx context.Context) error {
 		gw := gateway.New(r.rt, r.e.host, r.e.home)
 		err = gw.Wait(ctx, r.req.Release, targets)
 		if name, nerr := gw.Current(ctx); nerr == nil {
-			err = envoyErr(ctx, r.rt, name, err)
+			err = proxyops.EnvoyErr(ctx, r.rt, name, err)
 		}
 	}
 	if err != nil {

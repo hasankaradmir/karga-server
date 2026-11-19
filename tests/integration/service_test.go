@@ -9,12 +9,15 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/packages"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
@@ -262,5 +265,86 @@ func TestGatewayHandOffWithoutDowntime(t *testing.T) {
 	_ = os.Unsetenv("KARGA_PROXY_IMAGE")
 	if err := s.Gateway.SetAccessLog(ctx, false); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestGatewaySettingsFileApply: gateway.yaml edited by hand applies with validate and apply; an
+// edit the gateway cannot serve (an address the host does not have) is not taken: the previous
+// settings keep serving. Not parallel: the settings are the host's.
+func TestGatewaySettingsFileApply(t *testing.T) {
+	ctx := context.Background()
+	name := releaseName("it-gwfile")
+	s, _ := service(t, name)
+	l, port := listener(t, gateway.ProtocolHTTP)
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+		Values: releases.Values{Sets: packages.Sets([]string{"raw=true", "route=gwfile.local", "routeListener=" + l}...)}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	orig, err := gateway.ReadSettings(sharedHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = gateway.WriteSettings(sharedHome, orig)
+		_ = s.Gateway.SetAccessLog(context.Background(), orig.AccessLog) // syncs the gateway
+	})
+	edit := func(change func(*gateway.Settings)) {
+		t.Helper()
+		next := orig
+		next.Listen = slices.Clone(orig.Listen)
+		next.Listeners = slices.Clone(orig.Listeners)
+		change(&next)
+		data, err := yaml.Marshal(next)
+		if err == nil {
+			err = os.WriteFile(filepath.Join(sharedHome, "gateway.yaml"), data, 0o600)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply := func(confirmed bool) error {
+		plan, err := s.Gateway.ValidateSettings(ctx)
+		if err != nil || len(plan.Problems) > 0 {
+			t.Fatalf("validate: %+v %v", plan, err)
+		}
+		return s.Gateway.ApplySettings(ctx, plan.Digest, confirmed)
+	}
+	get := func(path string) int {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, "http://"+net.JoinHostPort("127.0.0.1", strconv.Itoa(port))+path, nil)
+		req.Host = "gwfile.local"
+		resp, err := (&http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}).Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	edit(func(g *gateway.Settings) {
+		i := slices.IndexFunc(g.Listeners, func(x gateway.Listener) bool { return x.Name == l })
+		g.Listeners[i].Timeout = "2s"
+	})
+	if err := apply(false); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for get("/x/slow") != http.StatusGatewayTimeout {
+		if time.Now().After(deadline) {
+			t.Fatal("the applied timeout is not served")
+		}
+	}
+
+	// The host has no 10.255.255.1: Envoy cannot bind it, the gateway keeps what it served.
+	applied, _ := gateway.ReadSettings(sharedHome)
+	edit(func(g *gateway.Settings) { g.Listen = append(g.Listen, "10.255.255.1") })
+	if err := apply(true); err == nil || !strings.Contains(err.Error(), "the gateway kept the previous settings") {
+		t.Fatalf("apply of an address the host does not have: %v", err)
+	}
+	if now, _ := gateway.ReadSettings(sharedHome); !slices.Equal(now.Listen, applied.Listen) {
+		t.Fatalf("applied listen addresses: %v, want %v", now.Listen, applied.Listen)
+	}
+	if code := get("/"); code != http.StatusOK {
+		t.Fatalf("after the failed apply: %d", code)
 	}
 }

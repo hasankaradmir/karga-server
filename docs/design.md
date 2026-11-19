@@ -257,7 +257,10 @@ Services is refused.
   plan: of the two proxies the one the gateway routes to is kept.
 - **Gateway** (`karga-gateway-<hash>`, one per host, host network, found by its label
   `io.karga.component=gateway`) is configured by the host's
-  administrator in `$KARGA_HOME/gateway.yaml`: the addresses it listens on (default `127.0.0.1`) and
+  administrator in `$KARGA_HOME/gateway.yaml` (D39: edited by hand and applied with `karga gateway
+  validate|apply`, or through the gateway commands; karga runs on `gateway.applied.yaml`, the last
+  settings applied, and puts them back when the gateway does not route with new ones, including a
+  listener Envoy rejects): the addresses it listens on (default `127.0.0.1`) and
   its listeners (name, port, protocol `tcp`, `http` or `https`). Packages only name listeners. The
   configuration is rebuilt under `$KARGA_HOME/gateway.lock` from the settings, the proxies' labels and
   the releases' expose files: one Envoy listener per used listener and address; HTTP listeners with
