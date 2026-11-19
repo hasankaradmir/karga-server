@@ -6,6 +6,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Changed
+- `karga status` reports a release unhealthy (exit 6) when one of its Services is routed to no
+  backend. The roadmap lists automatic rollback and default resource limits as not planned.
 - karga-server refuses an uninstall, a volume restore, removing a gateway listener, listening on
   an address other than loopback, and an upgrade or rollback deleting volumes unless the client
   says the user agreed: another client of the API cannot skip `karga`'s question.

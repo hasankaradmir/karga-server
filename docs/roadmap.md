@@ -29,6 +29,13 @@ What karga does not do yet, what it does with known limits, and the open questio
 | Runtime-specific extensions | A namespaced block for settings outside the portable model. |
 | Parallel apply | Independent resources are applied one after the other today. |
 
+## Not planned
+
+| Feature | Why |
+|---------|-----|
+| Automatic rollback (`--atomic`) | A failed upgrade stays failed (D2): a recreated workload that does not become ready is stopped, its logs can be read, and the operator fixes it with another upgrade or `karga rollback`; `replace` avoids the outage where it applies. |
+| Default resource limits | A workload without `resources` has no memory or CPU limit; the package sets its own. |
+
 ## Known limitations
 
 - **One karga-server per host.** The gateway is shared by the host: a server whose `KARGA_HOME`
@@ -69,9 +76,6 @@ What karga does not do yet, what it does with known limits, and the open questio
 
 ## Open questions
 
-- Should a failed upgrade roll back by itself (`--atomic`)? Today a recreated workload that does
-  not become ready is stopped (its logs can be read), the release is `failed`, and the operator
-  fixes it with another upgrade or `karga rollback`; `replace` avoids the outage where it applies.
 - How lifecycle tasks run: as one-off workloads, inside an existing container, or on the host.
 - Podman through its API or through Quadlet units.
 - How packages are distributed and signed.
