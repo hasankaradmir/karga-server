@@ -21,7 +21,7 @@ state/operations/<release>.yaml            its operations, one YAML document eac
 - One process writes (one karga-server per `$KARGA_HOME`); the release lock (ADR-0015) orders the
   writes of a release, and one store-wide mutex orders the files several releases share.
 - A release keeps its newest 200 operations; operations outlive the release, like an audit log.
-- Nothing on disk is JSON: the state, the gateway settings (`gateway.yaml`), what a release exposes
+- Nothing on disk is JSON: the state, the gateway settings (`gateway-settings/*.yaml`), what a release exposes
   (`proxies/<release>/expose.yaml`), Envoy's configuration (`envoy.yaml`, `lds.yaml`, `cds.yaml`)
   and the manifest inside a volume backup are YAML. JSON stays on the wire between the CLI and the
   server, and as the canonical input of digests computed in memory.

@@ -299,6 +299,34 @@ func TestRedisLifecycle(t *testing.T) {
 	e.run("gateway", "listener", "add", "redis", "--port", strconv.Itoa(port), "--protocol", "tcp")
 	portSet := "service.listener=redis"
 
+	// The settings as a document the user keeps (D40): get, edit, diff, apply, history, rollback.
+	doc := e.run("gateway", "get")
+	if !strings.Contains(doc, "kind: Gateway") || !strings.Contains(doc, "accessLog: false") || !strings.Contains(doc, "name: redis") {
+		t.Fatalf("gateway get:\n%s", doc)
+	}
+	docFile := filepath.Join(t.TempDir(), "gateway.yaml")
+	if err := os.WriteFile(docFile, []byte("# kept in git\n"+strings.Replace(doc, "accessLog: false", "accessLog: true", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out := e.run("gateway", "diff", "-f", docFile); !strings.Contains(out, "~ accessLog: off -> on") {
+		t.Fatalf("gateway diff:\n%s", out)
+	}
+	if out := e.run("gateway", "apply", "-f", docFile); !strings.Contains(out, "gateway settings applied (revision") {
+		t.Fatalf("gateway apply:\n%s", out)
+	}
+	if data, _ := os.ReadFile(docFile); !strings.HasPrefix(string(data), "# kept in git") {
+		t.Fatal("karga must not write the user's document")
+	}
+	if out := e.run("gateway", "history"); !strings.Contains(out, "(in force)") || !strings.Contains(out, "apply") {
+		t.Fatalf("gateway history:\n%s", out)
+	}
+	if out := e.run("gateway", "rollback", "--yes"); !strings.Contains(out, "gateway settings applied") {
+		t.Fatalf("gateway rollback:\n%s", out)
+	}
+	if out := e.run("gateway", "get"); !strings.Contains(out, "accessLog: false") {
+		t.Fatalf("after the rollback:\n%s", out)
+	}
+
 	// 1. Lint and 2. install.
 	e.run("lint", "../testdata/redis")
 	if out := e.run("install", rel, "../testdata/redis", "--set", portSet); !strings.Contains(out, "installed (revision 1)") {

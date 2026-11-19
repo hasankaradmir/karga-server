@@ -12,7 +12,7 @@
   Service names as aliases on the workload's networks and forwards to the backend alias of the
   current container. Releases are isolated: a Service name resolves only on its release's networks.
 - **Gateway** settings belong to the host's administrator (`karga gateway listener add|remove`,
-  `karga gateway set listen`), stored in `$KARGA_HOME/gateway.yaml`: listen addresses (default
+  `karga gateway set listen`), stored as revisions in `$KARGA_HOME/gateway-settings/` (D40): listen addresses (default
   `127.0.0.1`) and named listeners (port and protocol `tcp`, `http` or `https`). A Service exposes a
   port on a listener by name. A package cannot open a listener, choose an address or take a port
   another release holds; an unknown listener is refused before anything changes.

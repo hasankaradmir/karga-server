@@ -120,7 +120,7 @@ Everything karga knows is in YAML files under `$KARGA_HOME/state` (directories `
 `0600`): a directory per release with its revisions and applied resources, and each release's
 operations (ADR-0017). Only karga-server writes them; proxy and gateway configuration are rebuilt
 from them and from Docker. To back up, stop karga-server and copy `$KARGA_HOME` (the state, the
-`state.key`, `gateway.yaml` and the revisions' Config and Secret files); restore by copying it back.
+`state.key`, the gateway settings in `gateway-settings/` and the revisions' Config and Secret files); restore by copying it back.
 karga-server refuses state written by a newer version.
 
 `karga volume backup <release> <volume> <file.tar.gz>` copies a volume's files through a workload

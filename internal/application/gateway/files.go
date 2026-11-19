@@ -3,12 +3,12 @@ package gateway
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -17,6 +17,7 @@ import (
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/fsutil"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // Dir holds the gateway's configuration and admin socket.
@@ -148,90 +149,183 @@ func Lock(ctx context.Context, home string) (func(), error) {
 	}
 }
 
-// The administrator's settings are in gateway.yaml, which they may edit; karga runs on
-// gateway.applied.yaml, the settings last applied successfully (D39).
-func settingsPath(home string) string { return filepath.Join(home, "gateway.yaml") }
-func appliedPath(home string) string  { return filepath.Join(home, "gateway.applied.yaml") }
+// The gateway settings are revisions karga keeps (D40): $KARGA_HOME/gateway-settings/<n>.yaml,
+// each a document (kind Gateway), and history.yaml, who applied each and how. The highest is in
+// force; the last keepRevisions are kept.
+func settingsDir(home string) string { return filepath.Join(home, "gateway-settings") }
+func historyPath(home string) string { return filepath.Join(settingsDir(home), "history.yaml") }
+func revisionPath(home string, n int) string {
+	return filepath.Join(settingsDir(home), strconv.Itoa(n)+".yaml")
+}
 
-// parseSettings reads settings as written (an unknown field is an error, so a typo is not
-// ignored), with defaults for what was never set.
-func parseSettings(data []byte) (Settings, error) {
-	var s Settings
+const keepRevisions = 10
+
+// Document header.
+const (
+	DocumentAPIVersion = resource.APIVersion
+	DocumentKind       = "Gateway"
+)
+
+type document struct {
+	APIVersion string   `yaml:"apiVersion"`
+	Kind       string   `yaml:"kind"`
+	Spec       Settings `yaml:"spec"`
+}
+
+// ParseDocument reads a gateway document as the user wrote it: an unknown field, apiVersion or
+// kind is an error (a typo is not ignored); what is not set takes its default. It does not
+// validate the values (validateSettings).
+func ParseDocument(data []byte) (Settings, error) {
+	var d document
 	if len(bytes.TrimSpace(data)) > 0 {
 		dec := yaml.NewDecoder(bytes.NewReader(data))
 		dec.KnownFields(true)
-		if err := dec.Decode(&s); err != nil {
-			return s, err
+		if err := dec.Decode(&d); err != nil {
+			return Settings{}, err
 		}
 	}
+	switch {
+	case d.APIVersion != DocumentAPIVersion:
+		return Settings{}, fmt.Errorf("apiVersion %q: want %s", d.APIVersion, DocumentAPIVersion)
+	case d.Kind != DocumentKind:
+		return Settings{}, fmt.Errorf("kind %q: want %s", d.Kind, DocumentKind)
+	}
+	return withDefaults(d.Spec), nil
+}
+
+func withDefaults(s Settings) Settings {
 	if len(s.Listen) == 0 {
 		s.Listen = []string{DefaultListen}
 	}
 	if s.Listeners == nil { // never set (an empty list is the administrator's choice)
 		s.Listeners = defaultListeners()
 	}
-	return s, nil
+	return s
 }
 
-// ReadSettings returns the settings the gateway runs on. On a host where none were applied yet,
-// they are gateway.yaml's (or the defaults), checked like an apply would.
-func ReadSettings(home string) (Settings, error) {
-	path := appliedPath(home)
-	data, err := os.ReadFile(path)
+// Document writes settings as a gateway document.
+func Document(s Settings) []byte {
+	if s.Listeners == nil {
+		s.Listeners = []Listener{}
+	}
+	data, _ := yaml.Marshal(document{APIVersion: DocumentAPIVersion, Kind: DocumentKind, Spec: s}) // plain structs
+	return data
+}
+
+// SettingsRevision is one applied revision: when, by whom, from what ("apply", "listener add pg").
+type SettingsRevision struct {
+	Revision int       `yaml:"revision"`
+	Time     time.Time `yaml:"time"`
+	Actor    string    `yaml:"actor,omitempty"`
+	Source   string    `yaml:"source"`
+}
+
+// Revisions lists the revisions kept, oldest first.
+func Revisions(home string) ([]SettingsRevision, error) {
+	data, err := os.ReadFile(historyPath(home))
 	if errors.Is(err, os.ErrNotExist) {
-		path = settingsPath(home)
-		data, err = os.ReadFile(path)
+		return nil, nil
 	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return Settings{}, err
+	if err != nil {
+		return nil, err
 	}
-	s, err := parseSettings(data)
+	var out []SettingsRevision
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("%s: %w", historyPath(home), err)
+	}
+	return out, nil
+}
+
+// RevisionSettings returns revision n (0: the one in force, or the defaults when none was
+// applied).
+func RevisionSettings(home string, n int) (Settings, int, error) {
+	if n == 0 {
+		revs, err := Revisions(home)
+		if err != nil || len(revs) == 0 {
+			return withDefaults(Settings{}), 0, err
+		}
+		n = revs[len(revs)-1].Revision
+	}
+	data, err := os.ReadFile(revisionPath(home, n))
+	if errors.Is(err, os.ErrNotExist) {
+		return Settings{}, n, fmt.Errorf("gateway settings revision %d: %w", n, ports.ErrNotFound)
+	}
+	if err != nil {
+		return Settings{}, n, err
+	}
+	s, err := ParseDocument(data)
 	if err == nil {
 		err = validateSettings(s)
 	}
 	if err != nil {
-		return s, fmt.Errorf("%s: %w", path, err)
+		return s, n, fmt.Errorf("%s: %w", revisionPath(home, n), err)
 	}
-	return s, nil
+	return s, n, nil
 }
 
-// ReadEdited returns gateway.yaml as the administrator wrote it, and the digest of its content
-// (an apply names it, so a file changed after its validation is not applied).
-func ReadEdited(home string) (Settings, string, error) {
-	data, err := os.ReadFile(settingsPath(home))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return Settings{}, "", err
-	}
-	sum := sha256.Sum256(data)
-	s, err := parseSettings(data)
-	return s, "sha256:" + hex.EncodeToString(sum[:]), err
+// ReadSettings returns the settings the gateway runs on.
+func ReadSettings(home string) (Settings, error) {
+	s, _, err := RevisionSettings(home, 0)
+	return s, err
 }
 
-// WriteSettings validates settings and stores them as the administrator's and the applied ones
-// (a karga gateway command changed them); the next Sync applies them.
+// WriteSettings validates settings and stores them as a new revision (for setup and tests; the
+// service applies through releases.Gateway).
 func WriteSettings(home string, s Settings) error {
-	if err := writeSettings(home, settingsPath(home), s); err != nil {
-		return err
-	}
-	return writeSettings(home, appliedPath(home), s)
+	_, err := WriteRevision(home, s, "", "settings")
+	return err
 }
 
-// writeApplied stores validated settings as the applied ones only.
-func writeApplied(home string, s Settings) error { return writeSettings(home, appliedPath(home), s) }
-
-func writeSettings(home, path string, s Settings) error {
+// WriteRevision validates settings and stores them as the next revision, under the gateway lock;
+// the next Sync applies them. Revisions beyond keepRevisions are pruned.
+func WriteRevision(home string, s Settings, actor, source string) (int, error) {
 	if err := validateSettings(s); err != nil {
-		return err
+		return 0, err
 	}
-	if s.Listeners == nil {
-		s.Listeners = []Listener{}
+	revs, err := Revisions(home)
+	if err != nil {
+		return 0, err
 	}
-	data, err := yaml.Marshal(s)
+	n := 1
+	if len(revs) > 0 {
+		n = revs[len(revs)-1].Revision + 1
+	}
+	if err := os.MkdirAll(settingsDir(home), 0o700); err != nil {
+		return 0, err
+	}
+	if err := writeFile(revisionPath(home, n), Document(s)); err != nil {
+		return 0, err
+	}
+	revs = append(revs, SettingsRevision{Revision: n, Time: time.Now().UTC().Truncate(time.Second), Actor: actor, Source: source})
+	for len(revs) > keepRevisions {
+		if err := os.Remove(revisionPath(home, revs[0].Revision)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return 0, err
+		}
+		revs = revs[1:]
+	}
+	return n, writeHistory(home, revs)
+}
+
+// DropRevision removes revision n, which did not serve: the one before is in force again.
+func DropRevision(home string, n int) error {
+	revs, err := Revisions(home)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(home, 0o700); err != nil {
+	revs = slices.DeleteFunc(revs, func(r SettingsRevision) bool { return r.Revision == n })
+	if err := writeHistory(home, revs); err != nil {
 		return err
 	}
-	return writeFile(path, data)
+	if err := os.Remove(revisionPath(home, n)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func writeHistory(home string, revs []SettingsRevision) error {
+	data, err := yaml.Marshal(revs)
+	if err != nil {
+		return err
+	}
+	return writeFile(historyPath(home), data)
 }

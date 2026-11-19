@@ -4,21 +4,18 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 )
 
-// SettingsPlan is what applying gateway.yaml would change (D39). Problems refuse it; Risk needs
-// the user's confirmation; Digest names the file content it was made from.
+// SettingsPlan is what applying a gateway document would change (D40). Problems refuse it; Risk
+// needs the user's confirmation; Settings are what it applies.
 type SettingsPlan struct {
 	Changes  []SettingsChange
 	Problems []string
 	Risk     string
-	Digest   string
-	// edited are the settings the plan applies.
-	edited Settings
+	Settings Settings
 }
 
 // SettingsChange is one difference: Kind "listener", "listen" or "accessLog"; Action "add",
@@ -28,39 +25,25 @@ type SettingsChange struct {
 	Fields             []string
 }
 
-// Apply stores the plan's settings as the applied ones (the next Sync uses them).
-func (p SettingsPlan) Apply(home string) error { return writeApplied(home, p.edited) }
-
-// WriteApplied stores settings as the applied ones, leaving gateway.yaml as it is.
-func WriteApplied(home string, s Settings) error { return writeApplied(home, s) }
-
-// Pending reports whether gateway.yaml differs from the applied settings.
-func Pending(home string) (bool, error) {
-	edited, _, err := ReadEdited(home)
+// PlanDocument is PlanSettings for a document as the user wrote it: one that does not parse is a
+// problem.
+func (g *Gateway) PlanDocument(ctx context.Context, content []byte) (SettingsPlan, error) {
+	edited, err := ParseDocument(content)
 	if err != nil {
-		return true, nil // a file that does not parse is a change not applied
+		return SettingsPlan{Problems: []string{err.Error()}}, nil
 	}
-	applied, err := ReadSettings(home)
-	if err != nil {
-		return false, err
-	}
-	return !reflect.DeepEqual(edited, applied), nil
+	return g.PlanSettings(ctx, edited)
 }
 
-// PlanSettings compares gateway.yaml with the applied settings, under the gateway lock: the file
-// must parse and validate, the listeners Services use must stay with their protocol, and a port
-// the gateway starts to serve must be free.
-func (g *Gateway) PlanSettings(ctx context.Context) (SettingsPlan, error) {
+// PlanSettings compares edited settings with the ones in force, under the gateway lock: they must
+// validate, the listeners Services use must stay with their protocol, and a port the gateway
+// starts to serve must be free.
+func (g *Gateway) PlanSettings(ctx context.Context, edited Settings) (SettingsPlan, error) {
 	applied, err := ReadSettings(g.home)
 	if err != nil {
 		return SettingsPlan{}, err
 	}
-	edited, digest, err := ReadEdited(g.home)
-	plan := SettingsPlan{Digest: digest, edited: edited}
-	if err != nil {
-		plan.Problems = append(plan.Problems, fmt.Sprintf("%s: %v", settingsPath(g.home), err))
-		return plan, nil
-	}
+	plan := SettingsPlan{Settings: edited}
 	if err := validateSettings(edited); err != nil {
 		_, msg, _ := strings.Cut(err.Error(), ": ") // without the "invalid: " prefix
 		plan.Problems = append(plan.Problems, strings.Split(msg, "\n")...)

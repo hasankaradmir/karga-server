@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,7 +16,6 @@ import (
 	"time"
 
 	"github.com/hasankaradmir/karga-sdk/packages"
-	"go.yaml.in/yaml/v3"
 
 	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
@@ -268,9 +266,9 @@ func TestGatewayHandOffWithoutDowntime(t *testing.T) {
 	}
 }
 
-// TestGatewaySettingsFileApply: gateway.yaml edited by hand applies with validate and apply; an
-// edit the gateway cannot serve (an address the host does not have) is not taken: the previous
-// settings keep serving. Not parallel: the settings are the host's.
+// TestGatewaySettingsFileApply: a gateway document applies as a revision; one the gateway cannot
+// serve (an address the host does not have) is dropped and the revision before keeps serving; a
+// rollback applies an earlier revision again. Not parallel: the settings are the host's.
 func TestGatewaySettingsFileApply(t *testing.T) {
 	ctx := context.Background()
 	name := releaseName("it-gwfile")
@@ -286,28 +284,15 @@ func TestGatewaySettingsFileApply(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_ = gateway.WriteSettings(sharedHome, orig)
-		_ = s.Gateway.SetAccessLog(context.Background(), orig.AccessLog) // syncs the gateway
+		_ = s.Gateway.SetAccessLog(context.Background(), !orig.AccessLog) // syncs the gateway
+		_ = s.Gateway.SetAccessLog(context.Background(), orig.AccessLog)
 	})
-	edit := func(change func(*gateway.Settings)) {
-		t.Helper()
+	doc := func(change func(*gateway.Settings)) []byte {
 		next := orig
 		next.Listen = slices.Clone(orig.Listen)
 		next.Listeners = slices.Clone(orig.Listeners)
 		change(&next)
-		data, err := yaml.Marshal(next)
-		if err == nil {
-			err = os.WriteFile(filepath.Join(sharedHome, "gateway.yaml"), data, 0o600)
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	apply := func(confirmed bool) error {
-		plan, err := s.Gateway.ValidateSettings(ctx)
-		if err != nil || len(plan.Problems) > 0 {
-			t.Fatalf("validate: %+v %v", plan, err)
-		}
-		return s.Gateway.ApplySettings(ctx, plan.Digest, confirmed)
+		return gateway.Document(next)
 	}
 	get := func(path string) int {
 		t.Helper()
@@ -321,11 +306,18 @@ func TestGatewaySettingsFileApply(t *testing.T) {
 		return resp.StatusCode
 	}
 
-	edit(func(g *gateway.Settings) {
+	before, err := s.Gateway.Export(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	timeout := doc(func(g *gateway.Settings) {
 		i := slices.IndexFunc(g.Listeners, func(x gateway.Listener) bool { return x.Name == l })
 		g.Listeners[i].Timeout = "2s"
 	})
-	if err := apply(false); err != nil {
+	if plan, err := s.Gateway.Diff(ctx, timeout); err != nil || len(plan.Problems) > 0 || len(plan.Changes) != 1 {
+		t.Fatalf("diff: %+v %v", plan, err)
+	}
+	if _, err := s.Gateway.Apply(ctx, timeout, "", false); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(15 * time.Second)
@@ -335,16 +327,21 @@ func TestGatewaySettingsFileApply(t *testing.T) {
 		}
 	}
 
-	// The host has no 10.255.255.1: Envoy cannot bind it, the gateway keeps what it served.
-	applied, _ := gateway.ReadSettings(sharedHome)
-	edit(func(g *gateway.Settings) { g.Listen = append(g.Listen, "10.255.255.1") })
-	if err := apply(true); err == nil || !strings.Contains(err.Error(), "the gateway kept the previous settings") {
+	// The host has no 10.255.255.1: Envoy cannot bind it, the gateway keeps the revision it served.
+	_, kept, _ := gateway.RevisionSettings(sharedHome, 0)
+	if _, err := s.Gateway.Apply(ctx, doc(func(g *gateway.Settings) { g.Listen = append(g.Listen, "10.255.255.1") }), "", true); err == nil ||
+		!strings.Contains(err.Error(), "the gateway kept revision "+strconv.Itoa(kept)) {
 		t.Fatalf("apply of an address the host does not have: %v", err)
-	}
-	if now, _ := gateway.ReadSettings(sharedHome); !slices.Equal(now.Listen, applied.Listen) {
-		t.Fatalf("applied listen addresses: %v, want %v", now.Listen, applied.Listen)
 	}
 	if code := get("/"); code != http.StatusOK {
 		t.Fatalf("after the failed apply: %d", code)
+	}
+
+	// A rollback to the revision before the timeout: slow requests pass again.
+	if _, err := s.Gateway.Apply(ctx, before, "rollback", true); err != nil {
+		t.Fatal(err)
+	}
+	if code := get("/x/slow"); code != http.StatusOK {
+		t.Fatalf("after the rollback: %d", code)
 	}
 }

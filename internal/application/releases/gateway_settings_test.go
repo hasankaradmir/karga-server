@@ -3,8 +3,6 @@ package releases
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -35,10 +33,10 @@ func (f *failingProxies) WaitReady(context.Context, string, map[string]string, t
 	return nil
 }
 
-// TestGatewaySettingsFile: gateway.yaml edited by hand is validated and applied by digest; a
-// failed apply keeps the previous settings, and gateway commands wait until edits are applied.
-func TestGatewaySettingsFile(t *testing.T) {
-	ctx := context.Background()
+// TestGatewayDocuments: a gateway document is diffed and applied as a revision; a failed apply
+// drops it and the revision before keeps serving; commands write revisions too.
+func TestGatewayDocuments(t *testing.T) {
+	ctx := WithActor(context.Background(), "alice")
 	home := t.TempDir()
 	store, err := filestore.Open(home)
 	if err != nil {
@@ -55,21 +53,21 @@ func TestGatewaySettingsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	port := runtimetest.FreePort(t)
-	if err := gateway.WriteSettings(home, gateway.Settings{Listen: []string{"127.0.0.1"},
-		Listeners: []gateway.Listener{{Name: "web", Port: port, Protocol: gateway.ProtocolHTTP}, {Name: "spare", Port: port + 1, Protocol: gateway.ProtocolHTTP}}}); err != nil {
+	p, spare := strconv.Itoa(port), strconv.Itoa(port+1)
+	doc := func(spec string) []byte {
+		return []byte("apiVersion: karga.io/v1alpha1\nkind: Gateway\nspec:\n" + spec)
+	}
+	listeners := func(web string) string {
+		return "  listen: [127.0.0.1]\n  listeners:\n    - {name: web, port: " + p + ", protocol: http" + web + "}\n    - {name: spare, port: " + spare + ", protocol: http}\n"
+	}
+	if _, err := svc.Gateway.Apply(ctx, doc(listeners("")), "", true); err != nil { // the defaults' websecure goes
 		t.Fatal(err)
 	}
 	if _, err := svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "site", Package: webPkg,
 		Values: Values{Sets: packages.Sets("route=site.local", "routeListener=web")}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	edit := func(yaml string) {
-		t.Helper()
-		if err := os.WriteFile(filepath.Join(home, "gateway.yaml"), []byte(yaml), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	applied := func() gateway.Settings {
+	current := func() gateway.Settings {
 		t.Helper()
 		s, err := gateway.ReadSettings(home)
 		if err != nil {
@@ -77,83 +75,85 @@ func TestGatewaySettingsFile(t *testing.T) {
 		}
 		return s
 	}
-	p := strconv.Itoa(port)
-	listeners := func(web string) string {
-		return "listen: [127.0.0.1]\nlisteners:\n  - {name: web, port: " + p + ", protocol: http" + web + "}\n  - {name: spare, port: " + strconv.Itoa(port+1) + ", protocol: http}\n"
-	}
 
-	// Problems refuse the file: a typo, a value that does not validate, a listener in use removed.
-	for yaml, want := range map[string]string{
-		"listen: [127.0.0.1]\nlistenrs: []\n":                      "field listenrs not found",
-		listeners(", timeout: soon"):                               `timeout: "soon" is not a duration`,
-		"listeners:\n  - {name: spare, port: 1, protocol: http}\n": "listener web is used by site/web",
+	// Problems refuse a document: a typo, a wrong kind, a value that does not validate, a listener
+	// in use removed.
+	for content, want := range map[string]string{
+		string(doc("  listenrs: []\n")):                                             "field listenrs not found",
+		"apiVersion: karga.io/v1alpha1\nkind: Gate\n":                               `kind "Gate"`,
+		string(doc(listeners(", timeout: soon"))):                                   `timeout: "soon" is not a duration`,
+		string(doc("  listeners:\n    - {name: spare, port: 1, protocol: http}\n")): "listener web is used by site/web",
 	} {
-		edit(yaml)
-		plan, err := svc.Gateway.ValidateSettings(ctx)
-		if err != nil || len(plan.Problems) == 0 || !strings.Contains(strings.Join(plan.Problems, "\n"), want) {
-			t.Errorf("%q: want a problem %q, got %+v %v", yaml, want, plan.Problems, err)
+		plan, err := svc.Gateway.Diff(ctx, []byte(content))
+		if err != nil || !strings.Contains(strings.Join(plan.Problems, "\n"), want) {
+			t.Errorf("%q: want a problem %q, got %+v %v", content, want, plan.Problems, err)
+		}
+		if _, err := svc.Gateway.Apply(ctx, []byte(content), "", true); !errors.Is(err, ports.ErrInvalid) {
+			t.Errorf("%q: apply: %v", content, err)
 		}
 	}
 
-	// A valid edit: the plan lists it, commands wait for it, and it applies by digest.
-	edit(listeners(", timeout: 30s"))
-	plan, err := svc.Gateway.ValidateSettings(ctx)
+	// A change: diffed, then applied as revision 2 by the actor; the same document again is a no-op.
+	plan, err := svc.Gateway.Diff(ctx, doc(listeners(", timeout: 30s")))
 	if err != nil || len(plan.Problems) != 0 || len(plan.Changes) != 1 || plan.Changes[0].Fields[0] != "timeout: - -> 30s" || plan.Risk != "" {
 		t.Fatalf("plan: %+v %v", plan, err)
 	}
-	if h, err := svc.Gateway.Health(ctx); err != nil || !h.Pending {
-		t.Fatalf("health before apply: %+v %v", h, err)
+	if rev, err := svc.Gateway.Apply(ctx, doc(listeners(", timeout: 30s")), "", false); err != nil || rev != 2 {
+		t.Fatalf("apply: %d %v", rev, err)
 	}
-	if err := svc.Gateway.SetAccessLog(ctx, true); !errors.Is(err, ports.ErrConflict) {
-		t.Fatalf("a command with edits pending: %v", err)
+	if rev, err := svc.Gateway.Apply(ctx, doc(listeners(", timeout: 30s")), "", false); err != nil || rev != 2 {
+		t.Fatalf("apply without a change: %d %v", rev, err)
 	}
-	if err := svc.Gateway.ApplySettings(ctx, "sha256:other", false); !errors.Is(err, ports.ErrConflict) {
-		t.Fatalf("apply of another digest: %v", err)
-	}
-	if err := svc.Gateway.ApplySettings(ctx, plan.Digest, false); err != nil {
-		t.Fatal(err)
-	}
-	if l := applied().Listeners[0]; l.Timeout != "30s" {
-		t.Fatalf("applied: %+v", l)
-	}
-	if h, _ := svc.Gateway.Health(ctx); h.Pending {
-		t.Fatal("pending after apply")
+	if l := current().Listeners[0]; l.Timeout != "30s" {
+		t.Fatalf("in force: %+v", l)
 	}
 
-	// The gateway does not route with the new settings: the previous ones stay.
-	edit(listeners(", timeout: 60s"))
-	plan, _ = svc.Gateway.ValidateSettings(ctx)
+	// The gateway does not route with the new settings: revision 3 is dropped, 2 keeps serving.
 	px.failures.Store(1)
-	if err := svc.Gateway.ApplySettings(ctx, plan.Digest, false); err == nil || !strings.Contains(err.Error(), "the gateway kept the previous settings") {
+	if _, err := svc.Gateway.Apply(ctx, doc(listeners(", timeout: 60s")), "", false); err == nil || !strings.Contains(err.Error(), "the gateway kept revision 2") {
 		t.Fatalf("failed apply: %v", err)
 	}
-	if l := applied().Listeners[0]; l.Timeout != "30s" {
-		t.Fatalf("applied after a failed apply: %+v", l)
-	}
-	if data, _ := os.ReadFile(filepath.Join(home, "gateway.yaml")); !strings.Contains(string(data), "60s") {
-		t.Fatalf("gateway.yaml must stay as written: %s", data)
+	if l := current().Listeners[0]; l.Timeout != "30s" {
+		t.Fatalf("in force after a failed apply: %+v", l)
 	}
 
 	// A risk (another address, a listener removed) needs the confirmation.
-	edit("listen: [127.0.0.1, 0.0.0.0]\nlisteners:\n  - {name: web, port: " + p + ", protocol: http, timeout: 30s}\n")
-	plan, _ = svc.Gateway.ValidateSettings(ctx)
+	risky := doc("  listen: [127.0.0.1, 0.0.0.0]\n  listeners:\n    - {name: web, port: " + p + ", protocol: http}\n")
+	plan, _ = svc.Gateway.Diff(ctx, risky)
 	if !strings.Contains(plan.Risk, "reachable on 0.0.0.0") || !strings.Contains(plan.Risk, "removes listener spare") {
 		t.Fatalf("risk: %q", plan.Risk)
 	}
-	if err := svc.Gateway.ApplySettings(ctx, plan.Digest, false); !errors.Is(err, ports.ErrInvalid) || !strings.Contains(err.Error(), "confirmation needed") {
+	if _, err := svc.Gateway.Apply(ctx, risky, "", false); !errors.Is(err, ports.ErrInvalid) || !strings.Contains(err.Error(), "confirmation needed") {
 		t.Fatalf("unconfirmed risk: %v", err)
 	}
-	if err := svc.Gateway.ApplySettings(ctx, plan.Digest, true); err != nil {
+	if _, err := svc.Gateway.Apply(ctx, risky, "", true); err != nil {
 		t.Fatal(err)
 	}
-	if s := applied(); len(s.Listeners) != 1 || len(s.Listen) != 2 {
-		t.Fatalf("applied: %+v", s)
-	}
-	// Applied: commands work again, and write both files.
+
+	// A command writes a revision too; the history says who and how; a revision exports as a
+	// document that applies again (a rollback).
 	if err := svc.Gateway.SetAccessLog(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if h, _ := svc.Gateway.Health(ctx); h.Pending || !h.AccessLog {
-		t.Fatalf("after a command: %+v", h)
+	revs, err := svc.Gateway.History()
+	var got []string
+	for _, r := range revs {
+		got = append(got, strconv.Itoa(r.Revision)+" "+r.Actor+" "+r.Source)
+	}
+	if err != nil || strings.Join(got, ",") != "1 alice apply,2 alice apply,3 alice apply,4 alice set access-log on" {
+		t.Fatalf("history: %v %v", got, err)
+	}
+	old, err := svc.Gateway.Export(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rev, err := svc.Gateway.Apply(ctx, old, "rollback 2", true); err != nil || rev != 5 {
+		t.Fatalf("rollback: %d %v", rev, err)
+	}
+	if s := current(); len(s.Listeners) != 2 || s.Listeners[0].Timeout != "30s" || s.AccessLog || len(s.Listen) != 1 {
+		t.Fatalf("after the rollback: %+v", s)
+	}
+	if h, _ := svc.Gateway.Health(ctx); h.Revision != 5 {
+		t.Fatalf("health revision: %d", h.Revision)
 	}
 }
