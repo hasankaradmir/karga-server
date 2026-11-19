@@ -21,7 +21,8 @@ var sample = Config{
 	TCP: []TCPListener{{Address: "127.0.0.1", Port: 5432, Cluster: "db_pg_p5432", IdleTimeout: time.Hour}},
 	HTTP: []HTTPListener{{Address: "0.0.0.0", Port: 80, Routes: []HTTPRoute{
 		{Host: "app.local", Path: "/", Cluster: "app_web_p3000"},
-		{Host: "app.local", Path: "/api", Cluster: "app_api_p8080"},
+		{Host: "app.local", Path: "/api/", To: "/", Cluster: "app_api_p8080"},
+		{Host: "app.local", Path: "/healthz", Exact: true, Cluster: "app_web_p3000"},
 		{Host: "b.local", Path: "/", Cluster: "b_web_p3000"},
 	}, Redirects: map[string]int{"secure.example": 443}}, {Address: "0.0.0.0", Port: 443, Routes: []HTTPRoute{
 		{Host: "secure.example", Path: "/", Cluster: "app_web_p3000"},

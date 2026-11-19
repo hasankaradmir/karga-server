@@ -114,7 +114,7 @@ func exposeRoutes(svcs services, paths map[Key]string) []gateway.Route {
 			if !ok {
 				continue
 			}
-			r := gateway.Route{Service: n, Port: p.Port, Listener: e.Listener, Host: e.Host, Path: e.Path}
+			r := gateway.Route{Service: n, Port: p.Port, Listener: e.Listener, Host: e.Host, Path: e.Path, PathType: e.PathType, To: e.To}
 			if port, ok := svcs.target(n, p); ok {
 				r.HealthPath = proxyops.HTTPHealthPath(svcs.wl[s.Workload], port)
 			}

@@ -115,9 +115,26 @@ resources:
                     name: app.local
                     routes:
                       - match:
-                          prefix: /api
+                          path: /healthz
+                        route:
+                          cluster: app_web_p3000
+                          retry_policy:
+                            num_retries: 2
+                            retry_on: connect-failure
+                          timeout: 0s
+                      - match:
+                          path_separated_prefix: /api
+                        request_headers_to_add:
+                          - append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                            header:
+                              key: x-forwarded-prefix
+                              value: /api
                         route:
                           cluster: app_api_p8080
+                          regex_rewrite:
+                            pattern:
+                              regex: ^/api/?(.*)
+                            substitution: /\1
                           retry_policy:
                             num_retries: 2
                             retry_on: connect-failure

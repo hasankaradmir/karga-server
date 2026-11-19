@@ -14,6 +14,7 @@ What karga does not do yet, what it does with known limits, and the open questio
 | Certificate expiry warning | `karga status` and `gateway status` show when each certificate expires and warn 14 days before; today renewal is an upgrade with the new Secret, and nothing reminds you. |
 | Repair notifications | Tell someone (a webhook) when the reconciler gives up on a resource; today `karga status` exits 6 and can be polled by a monitor. |
 | Scheduled tasks | Periodic jobs and volume backups run by karga; today a systemd timer on the host runs `karga volume backup`. |
+| Route matching | Header, method or regex matching and weighted backends; exposures match a path (`pathType` prefix or exact) and rewrite a prefix (`to`) today (D43). |
 | Gateway options | HSTS, compression, bodies over 16Mi without buffering; listeners already take a timeout, idle timeout, body limit, rate limit and PROXY protocol (D35). |
 | Log shipping | A Docker log driver per workload (journald, syslog, fluentd); today logs rotate in json-file and are read with `karga logs`. |
 | `karga doctor` | One command checking the Docker version, gateway support, `KARGA_HOME` permissions, ports 80/443 and the Envoy image. |

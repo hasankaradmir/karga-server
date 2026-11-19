@@ -6,6 +6,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- Exposure paths (D43): `pathType` `prefix` (the default) takes the path and below it by segment,
+  `exact` only the path; `to` replaces a prefix in what the Service receives (`x-forwarded-prefix`
+  tells it). **Changed:** a prefix was a plain string prefix: `/api` no longer takes `/apix`.
 - Before a gateway settings revision is applied, Envoy checks its configuration with `--mode
   validate` in a container of its own (`ProxyControl.ValidationBootstrap`); what it refuses is a
   problem of the plan, and the gateway is not touched.
