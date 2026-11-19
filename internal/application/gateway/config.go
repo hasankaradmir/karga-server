@@ -68,7 +68,7 @@ func buildConfig(settings Settings, targets []Target, mountPath string) ports.Pr
 				}
 			case !u.seen[r.Host+r.Path]:
 				u.seen[r.Host+r.Path] = true
-				u.routes = append(u.routes, ports.ProxyRoute{Host: r.Host, Path: r.Path, Cluster: cluster})
+				u.routes = append(u.routes, ports.ProxyRoute{Host: r.Host, Path: r.Path, To: r.To, Cluster: cluster})
 				if _, ok := u.certs[r.Host]; l.Protocol == ProtocolHTTPS && !ok {
 					n := mountPath + "/certs/" + certName(t.Release, l.Name, r.Host, r.CertDir)
 					u.certs[r.Host] = ports.ProxyCert{Chain: n + ".crt", Key: n + ".key"}

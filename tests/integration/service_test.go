@@ -349,3 +349,57 @@ func TestGatewaySettingsFileApply(t *testing.T) {
 		t.Fatalf("after the rollback: %d", code)
 	}
 }
+
+// TestGatewayPathRouting: "/x/*" takes /x and below it by segment (not /xy), to replaces the prefix
+// in what the service gets (with x-forwarded-prefix), and a path without * is matched exactly.
+func TestGatewayPathRouting(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	l, port := listener(t, gateway.ProtocolHTTP)
+	install := func(prefix string, sets ...string) {
+		t.Helper()
+		name := releaseName(prefix)
+		s, _ := service(t, name)
+		if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+			Values: releases.Values{Sets: packages.Sets(append([]string{"raw=true", "routeListener=" + l}, sets...)...)}}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install("it-path-a", "route=strip.local", "rawPath=/x/*", "rawTo=/")
+	install("it-path-b", "route=exact.local", "rawPath=/x/path")
+	get := func(host, path string) (int, string) {
+		t.Helper()
+		var code int
+		var body string
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(port)+path, nil)
+			req.Host = host
+			if resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req); err == nil {
+				b, _ := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				code, body = resp.StatusCode, string(b)
+			}
+			if code != http.StatusServiceUnavailable && code != 0 || time.Now().After(deadline) {
+				return code, body
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	for _, c := range []struct {
+		host, path string
+		code       int
+		body       string
+	}{
+		{"strip.local", "/x/path/a", http.StatusOK, "/path/a /x"}, // the prefix goes, the service is told it
+		{"strip.local", "/x/path", http.StatusOK, "/path /x"},
+		{"strip.local", "/xpath", http.StatusNotFound, ""}, // not below /x: the web server's
+		{"exact.local", "/x/path", http.StatusOK, "/x/path"},
+		{"exact.local", "/x/path/a", http.StatusNotFound, ""}, // exact: not below it
+	} {
+		code, body := get(c.host, c.path)
+		if code != c.code || c.body != "" && strings.TrimSpace(body) != c.body {
+			t.Errorf("%s%s: %d %q, want %d %q", c.host, c.path, code, body, c.code, c.body)
+		}
+	}
+}

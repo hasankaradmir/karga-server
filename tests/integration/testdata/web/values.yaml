@@ -26,6 +26,10 @@ echoListener: ""
 # raw=true adds a raw HTTP server on containerPort 9001 (Service web port 9001), routed at /x/ on
 # the route host: /x/slow answers after 20 seconds, /x/ws switches protocols and echoes.
 raw: false
+# rawPath and rawTo are the raw server's exposure path and to; /path... answers "<path it got>
+# <x-forwarded-prefix>".
+rawPath: /x/*
+rawTo: ""
 # envSecret, if set, is stored in Secret app-env and given to web as variable SECRET_VALUE.
 envSecret: ""
 # drain is the replace drain timeout.

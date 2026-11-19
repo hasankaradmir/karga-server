@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ import (
 	rawbufferv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/raw_buffer/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -271,8 +273,8 @@ func redirectHost(host string, port int) *routev3.VirtualHost {
 	}
 }
 
-// virtualHosts groups routes by host; within a host longer path prefixes match first.
-// timeout bounds each request (0: none).
+// virtualHosts groups routes by host. Within a host exact paths match first, then prefixes, the
+// longest first, then "/*".
 func virtualHosts(routes []HTTPRoute, timeout time.Duration) []*routev3.VirtualHost {
 	byHost := map[string][]HTTPRoute{}
 	for _, r := range routes {
@@ -282,29 +284,69 @@ func virtualHosts(routes []HTTPRoute, timeout time.Duration) []*routev3.VirtualH
 	for _, h := range slices.Sorted(maps.Keys(byHost)) {
 		rs := byHost[h]
 		slices.SortFunc(rs, func(a, b HTTPRoute) int {
-			if len(a.Path) != len(b.Path) {
-				return len(b.Path) - len(a.Path)
+			ap, aPrefix := pathPrefix(a.Path)
+			bp, bPrefix := pathPrefix(b.Path)
+			switch {
+			case aPrefix != bPrefix:
+				if aPrefix {
+					return 1
+				}
+				return -1
+			case len(ap) != len(bp):
+				return len(bp) - len(ap)
 			}
 			return strings.Compare(a.Path, b.Path)
 		})
 		vh := &routev3.VirtualHost{Name: h, Domains: []string{h, h + ":*"}}
 		for _, r := range rs {
-			vh.Routes = append(vh.Routes, &routev3.Route{
-				Match: &routev3.RouteMatch{PathSpecifier: &routev3.RouteMatch_Prefix{Prefix: r.Path}},
-				Action: &routev3.Route_Route{Route: &routev3.RouteAction{
-					ClusterSpecifier: &routev3.RouteAction_Cluster{Cluster: r.Cluster},
-					// Only connect failures are retried: the request has not reached a backend yet.
-					RetryPolicy: &routev3.RetryPolicy{RetryOn: "connect-failure", NumRetries: wrapperspb.UInt32(2)},
-					// No overall deadline unless the listener sets one (Envoy's default is 15s):
-					// uploads, reports, server-sent events and long polls run until done; the idle
-					// timeout ends idle ones.
-					Timeout: durationpb.New(timeout),
-				}},
-			})
+			action := &routev3.RouteAction{
+				ClusterSpecifier: &routev3.RouteAction_Cluster{Cluster: r.Cluster},
+				// Only connect failures are retried: the request has not reached a backend yet.
+				RetryPolicy: &routev3.RetryPolicy{RetryOn: "connect-failure", NumRetries: wrapperspb.UInt32(2)},
+				// No overall deadline unless the listener sets one (Envoy's default is 15s):
+				// uploads, reports, server-sent events and long polls run until done; the idle
+				// timeout ends idle ones.
+				Timeout: durationpb.New(timeout),
+			}
+			route := &routev3.Route{Match: pathMatch(r.Path), Action: &routev3.Route_Route{Route: action}}
+			if prefix, ok := pathPrefix(r.Path); ok && r.To != "" {
+				// prefix_rewrite would turn /x/y into //y with a by-segment match.
+				action.RegexRewrite = &matcherv3.RegexMatchAndSubstitute{
+					Pattern:      &matcherv3.RegexMatcher{Regex: "^" + regexp.QuoteMeta(prefix) + "/?(.*)"},
+					Substitution: strings.TrimSuffix(r.To, "/") + "/\\1",
+				}
+				if prefix != "" {
+					route.RequestHeadersToAdd = []*corev3.HeaderValueOption{{
+						Header:       &corev3.HeaderValue{Key: "x-forwarded-prefix", Value: prefix},
+						AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+					}}
+				}
+			}
+			vh.Routes = append(vh.Routes, route)
 		}
 		out = append(out, vh)
 	}
 	return out
+}
+
+// pathPrefix returns the prefix of a "/x/*" path ("/x"; "" for "/*"), and whether it is one.
+func pathPrefix(path string) (string, bool) {
+	if p, ok := strings.CutSuffix(path, "/*"); ok {
+		return p, true
+	}
+	return "", false
+}
+
+// pathMatch matches "/*" (everything), "/x/*" (/x and below it, by segment) or an exact path.
+func pathMatch(path string) *routev3.RouteMatch {
+	prefix, ok := pathPrefix(path)
+	switch {
+	case !ok:
+		return &routev3.RouteMatch{PathSpecifier: &routev3.RouteMatch_Path{Path: path}}
+	case prefix == "":
+		return &routev3.RouteMatch{PathSpecifier: &routev3.RouteMatch_Prefix{Prefix: "/"}}
+	}
+	return &routev3.RouteMatch{PathSpecifier: &routev3.RouteMatch_PathSeparatedPrefix{PathSeparatedPrefix: prefix}}
 }
 
 // Clusters renders cds.yaml.

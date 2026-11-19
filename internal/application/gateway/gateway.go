@@ -43,7 +43,10 @@ type Route struct {
 	Port     int    `yaml:"port"`
 	Listener string `yaml:"listener"`
 	Host     string `yaml:"host,omitempty"`
-	Path     string `yaml:"path,omitempty"`
+	// Path is "/x/*" (a prefix, by segment), "/*" or a path matched exactly; To (with a prefix)
+	// replaces it in what the service receives.
+	Path string `yaml:"path,omitempty"`
+	To   string `yaml:"to,omitempty"`
 	// TLSSecret and CertDir (its materialized directory, with tls.crt and tls.key) serve HTTPS.
 	TLSSecret string `yaml:"tlsSecret,omitempty"`
 	CertDir   string `yaml:"certDir,omitempty"`
@@ -397,6 +400,9 @@ func (g *Gateway) Routes(ctx context.Context) ([]Exposed, error) {
 			route := "tcp"
 			if r.Host != "" {
 				route = r.Host + r.Path
+				if r.To != "" {
+					route += " → " + r.To
+				}
 			}
 			out = append(out, Exposed{Listener: fmt.Sprintf("%s:%d", l.Name, l.Port), Route: route, Release: t.Release,
 				Service: fmt.Sprintf("%s:%d", r.Service, r.Port), Upstream: up})

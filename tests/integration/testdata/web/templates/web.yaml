@@ -35,9 +35,15 @@ spec:
     raw.sh: |
       #!/bin/sh
       read -r method path rest
-      while read -r line; do [ "$(printf %s "$line" | tr -d '\r')" = "" ] && break; done
+      prefix=""
+      while read -r line; do
+        line=$(printf %s "$line" | tr -d '\r')
+        [ "$line" = "" ] && break
+        case "$line" in [Xx]-[Ff]orwarded-[Pp]refix:*) prefix=${line#*: } ;; esac
+      done
       case "$path" in
-      /x/slow) sleep 20; printf 'HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nslow' ;;
+      */slow) sleep 20; printf 'HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nslow' ;;
+      */path*) body="$path $prefix"; printf 'HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s' ${#body} "$body" ;;
       *) printf 'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n'; exec cat ;;
       esac
     {{- end }}
@@ -154,7 +160,10 @@ spec:
     - port: raw
       listener: {{ .Values.routeListener }}
       host: {{ .Values.route }}
-      path: /x/
+      path: {{ .Values.rawPath }}
+      {{- if .Values.rawTo }}
+      to: {{ .Values.rawTo }}
+      {{- end }}
     {{- end }}
     {{- end }}
     {{- if .Values.echoListener }}
