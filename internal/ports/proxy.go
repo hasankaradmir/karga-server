@@ -15,8 +15,6 @@ type ProxyCluster struct {
 	Host string
 	Port int
 	DNS  bool
-	// HealthPath makes the health check an HTTP GET of that path (2xx/3xx); empty: a TCP connect.
-	HealthPath string
 	// ProxyProtocol ("v1", "v2") sends the client's address first on every upstream connection.
 	ProxyProtocol string
 }

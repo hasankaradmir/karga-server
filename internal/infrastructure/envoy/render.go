@@ -371,25 +371,9 @@ func clusterItems(c Config) ([]validated, error) {
 					HostIdentifier: &endpointv3.LbEndpoint_Endpoint{Endpoint: &endpointv3.Endpoint{Address: socketAddress(cl.Host, cl.Port)}},
 				}}}},
 			},
-			// A new cluster only takes traffic once its endpoint passed this check (warming).
-			HealthChecks: []*corev3.HealthCheck{{
-				Timeout:  durationpb.New(time.Second),
-				Interval: durationpb.New(500 * time.Millisecond),
-				// Without these Envoy checks a cluster that has no traffic yet, or a host that failed,
-				// only every 60s: a new backend whose first check failed stayed out for a minute.
-				NoTrafficInterval: durationpb.New(500 * time.Millisecond),
-				UnhealthyInterval: durationpb.New(500 * time.Millisecond),
-				// Three failed checks in a row take a backend out: one slow answer does not flap it.
-				UnhealthyThreshold: wrapperspb.UInt32(3),
-				HealthyThreshold:   wrapperspb.UInt32(1),
-				HealthChecker:      &corev3.HealthCheck_TcpHealthCheck_{TcpHealthCheck: &corev3.HealthCheck_TcpHealthCheck{}},
-			}},
-		}
-		if cl.HealthPath != "" {
-			item.HealthChecks[0].HealthChecker = &corev3.HealthCheck_HttpHealthCheck_{HttpHealthCheck: &corev3.HealthCheck_HttpHealthCheck{
-				Path:             cl.HealthPath,
-				ExpectedStatuses: []*typev3.Int64Range{{Start: 200, End: 400}},
-			}}
+			// No active health checks: karga's own probe is the only health source (D44). It sees a
+			// backend ready before Envoy routes to it, and Envoy's empty connections every 500ms made
+			// sshd (PerSourcePenalties) and fail2ban lock out every client behind the proxy's address.
 		}
 		if cl.ProxyProtocol != "" {
 			ts, err := proxyProtocolSocket(cl.ProxyProtocol)
@@ -418,8 +402,7 @@ func clusterItems(c Config) ([]validated, error) {
 	return items, nil
 }
 
-// proxyProtocolSocket sends a PROXY protocol header first on each upstream connection. Health
-// checks have no client: they send a LOCAL header, which backends accept.
+// proxyProtocolSocket sends a PROXY protocol header first on each upstream connection.
 func proxyProtocolSocket(version string) (*corev3.TransportSocket, error) {
 	v := corev3.ProxyProtocolConfig_V1
 	if version == "v2" {

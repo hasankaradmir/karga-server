@@ -51,8 +51,6 @@ type Route struct {
 	// TLSSecret and CertDir (its materialized directory, with tls.crt and tls.key) serve HTTPS.
 	TLSSecret string `yaml:"tlsSecret,omitempty"`
 	CertDir   string `yaml:"certDir,omitempty"`
-	// HealthPath is checked by HTTP instead of a TCP connect (the workload's http health check).
-	HealthPath string `yaml:"healthPath,omitempty"`
 }
 
 // key is what the route takes on its listener (resource.Exposure.RouteKey).

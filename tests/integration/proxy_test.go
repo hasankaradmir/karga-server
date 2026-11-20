@@ -336,6 +336,50 @@ func TestGatewayKeepsLongConnections(t *testing.T) {
 	}
 }
 
+// TestNoHealthCheckConnections: a tcp backend behind the release proxy and the gateway gets only
+// its clients' connections. Envoy's empty health-check connections made sshd and fail2ban lock out
+// every client behind the proxy's address (D44).
+func TestNoHealthCheckConnections(t *testing.T) {
+	t.Parallel()
+	requireLinux(t)
+	ctx := context.Background()
+	name := releaseName("it-gw-nohc")
+	s, rt := service(t, name)
+	l, echo := listener(t, gateway.ProtocolTCP)
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+		Values: releases.Values{Sets: packages.Sets("echo=true", "echoListener="+l)}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	conns := func() string {
+		t.Helper()
+		var out strings.Builder
+		cmd := []string{"sh", "-c", "cat /tmp/conns 2>/dev/null | wc -l"}
+		if _, err := rt.Exec(ctx, containerName(t, rt, name, "web"), ports.ExecOptions{Cmd: cmd, Stdout: &out, Stderr: &out}); err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(out.String())
+	}
+	time.Sleep(5 * time.Second) // Envoy's checks ran every 500ms
+	if n := conns(); n != "0" {
+		t.Fatalf("the backend got %s connections from no client", n)
+	}
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(echo), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Write([]byte("hi\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := bufio.NewReader(conn).ReadString('\n'); err != nil || got != "hi\n" {
+		t.Fatalf("echo through the gateway: %q %v", got, err)
+	}
+	_ = conn.Close()
+	if n := conns(); n != "1" {
+		t.Fatalf("the backend got %s connections for one client", n)
+	}
+}
+
 // TestGatewayConcurrentInstalls: two karga processes (two services, one KARGA_HOME) install releases
 // sharing a host port at the same time; the gateway ends up serving both.
 func TestGatewayConcurrentInstalls(t *testing.T) {

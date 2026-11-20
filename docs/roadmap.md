@@ -8,7 +8,7 @@ What karga does not do yet, what it does with known limits, and the open questio
 | Feature | Notes |
 |---------|-------|
 | Lifecycle tasks | A `Task` kind: one-off containers that run before or after an install or upgrade (database migrations), must exit 0, and stop the operation when they fail; their output is kept with the operation. Today migrations run in the application's entrypoint. |
-| Replicas | `replicas: N` for stateless workloads (no read-write volume); the release proxy balances across them. Today a workload is one container. |
+| Replicas | `replicas: N` for stateless workloads (no read-write volume); the release proxy balances across them; karga marks a replica whose health check fails unhealthy in the proxy's cluster file (no active Envoy checks, D44). Today a workload is one container. |
 | Automatic certificates | ACME for TLS routes; today certificates come from a Secret. |
 | Certificate guide | How to get and renew certificates for the gateway (e.g. certbot with a DNS challenge: the gateway holds ports 80 and 443, so an HTTP challenge on them conflicts). Today the operator gets them and renews by upgrading with the new Secret. |
 | Certificate expiry warning | `karga status` and `gateway status` show when each certificate expires and warn 14 days before; today renewal is an upgrade with the new Secret, and nothing reminds you. |

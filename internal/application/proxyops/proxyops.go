@@ -13,8 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hasankaradmir/karga-sdk/resource"
-
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -130,14 +128,6 @@ const ProxyReadyTimeout = 30 * time.Second
 
 // ProxyDrainTimeout bounds how long a replaced proxy or gateway waits for its connections to end.
 const ProxyDrainTimeout = 30 * time.Second
-
-// HTTPHealthPath is the path Envoy checks on port when the workload's health check is http there.
-func HTTPHealthPath(w *resource.WorkloadSpec, port int) string {
-	if hc := w.HealthCheck; hc != nil && hc.Type == resource.HealthHTTP && hc.Port == port {
-		return hc.Path
-	}
-	return ""
-}
 
 // EnvoyErr adds what an Envoy container logged about rejected configuration to err, so a config
 // Envoy refused (e.g. a port it cannot bind) is reported instead of only a timeout.

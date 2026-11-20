@@ -44,8 +44,7 @@ func buildConfig(settings Settings, targets []Target, mountPath string) ports.Pr
 	uses := map[string]*use{}
 	for _, t := range targets {
 		for _, p := range t.Ports {
-			cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: Cluster(t.Release, p.Service, p.Port), Host: t.IP, Port: p.Port,
-				HealthPath: healthPath(t.Routes, p)})
+			cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: Cluster(t.Release, p.Service, p.Port), Host: t.IP, Port: p.Port})
 		}
 		for _, r := range t.Routes {
 			l, ok := listenerOf(settings, r.Listener)
@@ -126,15 +125,6 @@ func redirectHosts(s Settings, uses map[string]*use, u *use) map[string]int {
 		}
 	}
 	return hosts
-}
-
-func healthPath(routes []Route, p Port) string {
-	for _, r := range routes {
-		if r.Service == p.Service && r.Port == p.Port && r.HealthPath != "" {
-			return r.HealthPath
-		}
-	}
-	return ""
 }
 
 // Want is what the gateway must route to for the given targets to be served: cluster -> endpoint,

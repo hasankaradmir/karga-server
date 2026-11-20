@@ -23,6 +23,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- One health source (D44): the release proxy and the gateway run no Envoy health checks; the
+  workload's own check is the only one. Envoy's TCP checks (an empty connection every 500ms) made
+  sshd and fail2ban lock out every client behind the proxy, so git over SSH answered `Not allowed at
+  this time`; HTTP services got the same path checked about four times a second.
 - The gateway reaches release proxies on the edge network (D42): one internal Docker bridge,
   `karga-edge`, with traffic between its containers off; each release has a fixed pair of addresses
   (`--edge-subnet`, `KARGA_EDGE_SUBNET`, default `10.213.0.0/16`). Proxies publish no port: no NAT

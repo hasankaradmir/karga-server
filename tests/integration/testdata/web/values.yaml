@@ -19,7 +19,8 @@ servicePort: 0
 second: false
 # apiDependsOn=true makes api start only once Service web is ready.
 apiDependsOn: false
-# echo=true adds a tcp echo server on containerPort 9000 (Service web port 9000); echoListener=<name>
+# echo=true adds a tcp echo server on containerPort 9000 (Service web port 9000) that counts its
+# connections in /tmp/conns; echoListener=<name>
 # exposes it on that tcp gateway listener.
 echo: false
 echoListener: ""

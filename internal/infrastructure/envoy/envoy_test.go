@@ -30,7 +30,7 @@ var sample = Config{
 		Limits: HTTPLimits{Timeout: 30 * time.Second, IdleTimeout: 10 * time.Minute, MaxBodyBytes: 1 << 20, RateRequests: 100, RatePer: time.Second}}},
 	Clusters: []Cluster{
 		{Name: "db_pg_p5432", Host: "127.0.0.1", Port: 41001, ProxyProtocol: "v2"},
-		{Name: "web-p8080", Host: "karga-web-r2", Port: 8080, DNS: true, HealthPath: "/healthz"},
+		{Name: "web-p8080", Host: "karga-web-r2", Port: 8080, DNS: true},
 	},
 }
 

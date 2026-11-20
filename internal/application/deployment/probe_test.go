@@ -14,7 +14,6 @@ import (
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
-	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -108,9 +107,5 @@ func TestProbeNeedsLinux(t *testing.T) {
 	rs[0].Spec.(*resource.WorkloadSpec).HealthCheck = &resource.HealthCheck{Type: resource.HealthTCP, Port: 6379}
 	if _, err := testEnv.Diff("cache", rs, nil, "", nil); err == nil || !strings.Contains(err.Error(), "needs Linux with a local, rootful Docker") {
 		t.Fatalf("want unreachable error, got %v", err)
-	}
-	// Behind the proxy Envoy checks the same path.
-	if got := proxyops.HTTPHealthPath(httpSpec(8080, ""), 8080); got != "/health" {
-		t.Fatalf("envoy health path: %q", got)
 	}
 }
