@@ -73,10 +73,11 @@ if [ "${KARGA_SYSTEMD:-1}" = 1 ]; then
     as_root useradd --system --gid karga --groups docker --home-dir /var/lib/karga --shell /usr/sbin/nologin karga
   fi
   sed "s#/usr/local/bin/karga-server#$bin_dir/karga-server#" "$tmp/deploy/systemd/karga-server.service" > "$tmp/karga-server.service"
+  cmp -s "$tmp/karga-server.service" /etc/systemd/system/karga-server.service || changed=1
   as_root install -m 0644 "$tmp/karga-server.service" /etc/systemd/system/karga-server.service
   as_root systemctl daemon-reload
   if systemctl is-active --quiet karga-server; then
-    # Restarting waits for running operations (up to 5 minutes); only do it for a new binary.
+    # Restarting waits for running operations (up to 5 minutes); only do it for a new binary or unit.
     [ "$changed" = 0 ] || as_root systemctl restart karga-server
     as_root systemctl enable karga-server
   else

@@ -91,6 +91,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- The first exposure on a port below 1024 (`http` 80, `https` 443) warned `could not be checked
+  (bind: permission denied)`, and another program holding the port was found only when the gateway
+  started. The service has `CAP_NET_BIND_SERVICE` now (its only capability), so the check works;
+  `install.sh` restarts the service when its unit file changed, not only its binary.
 - A recreate whose new container did not get ready said `revision N stays current`, though the
   previous container was gone and the release was down; it says `workload X is down` and gives the
   rollback with its revision (`karga rollback <release> N`; without it the rollback goes one
