@@ -31,13 +31,6 @@ metadata:
 spec:
   files:
     index.html: {{ .Values.content | quote }}
-    {{- if .Values.echo }}
-    # Counts the connections the echo server got, in /tmp/conns.
-    echo.sh: |
-      #!/bin/sh
-      echo >> /tmp/conns
-      exec cat
-    {{- end }}
     {{- if .Values.raw }}
     raw.sh: |
       #!/bin/sh
@@ -61,7 +54,7 @@ metadata:
   name: web
 spec:
   image: busybox:1.37
-  command: [sh, -c, "sleep {{ .Values.startDelay }}; {{ if .Values.echo }}nc -ll -p 9000 -e sh /www/echo.sh & {{ end }}{{ if .Values.raw }}nc -ll -p 9001 -e sh /www/raw.sh & {{ end }}exec httpd -f -p {{ .Values.listenPort }} -h /www"]
+  command: [sh, -c, "sleep {{ .Values.startDelay }}; {{ if .Values.echo }}nc -ll -p 9000 -e sh -c 'echo >> /tmp/conns; exec cat' & {{ end }}{{ if .Values.raw }}nc -ll -p 9001 -e sh /www/raw.sh & {{ end }}exec httpd -f -p {{ .Values.listenPort }} -h /www"]
   networks: [web-net]
   {{- if .Values.envSecret }}
   environmentFrom:
