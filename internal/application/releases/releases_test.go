@@ -134,10 +134,12 @@ func TestUpgradeFailRollback(t *testing.T) {
 		t.Fatalf("upgrade: %+v image %s", res, e.image())
 	}
 
-	// Failed upgrade: revision 3 failed, current stays 2, container stopped but kept.
+	// Failed upgrade: revision 3 failed, current stays 2, container stopped but kept. Revision 2's
+	// container was replaced, so the release is down and the hint says how to start it again.
 	e.rt.Health = ports.HealthUnhealthy
-	if _, err := e.upgrade("image.tag=7.0"); err == nil {
-		t.Fatal("expected failed upgrade")
+	if _, err := e.upgrade("image.tag=7.0"); err == nil || !strings.Contains(err.Error(),
+		"revision 3 failed and workload redis is down: its revision 2 container was replaced. Run 'karga rollback cache 2' to start revision 2 again") {
+		t.Fatalf("failed upgrade: %v", err)
 	}
 	rel := e.release()
 	if rel.Status != release.StatusFailed || rel.CurrentRevision != 2 {

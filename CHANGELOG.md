@@ -91,6 +91,11 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- A recreate whose new container did not get ready said `revision N stays current`, though the
+  previous container was gone and the release was down; it says `workload X is down` and gives the
+  rollback with its revision (`karga rollback <release> N`; without it the rollback goes one
+  further back). A container that keeps crashing fails the wait after 3 restarts (`keeps
+  restarting`) instead of at the timeout.
 - A container name the plan would create that another release, or something else than karga,
   holds failed the deployment half way. It is refused before anything changes, naming the release
   that holds the container.

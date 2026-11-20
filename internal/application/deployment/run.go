@@ -27,6 +27,7 @@ type run struct {
 	owned map[string]bool
 
 	disrupted bool
+	down      []string // workloads whose replaced container's successor did not get ready
 	changed   []Change // recreated workloads; changed[:waited] are ready
 	waited    int
 	proxyDone bool
@@ -127,8 +128,9 @@ func (r *run) waitPending(ctx context.Context) error {
 	if r.waited == len(r.changed) {
 		return nil
 	}
-	err := r.e.waitChanged(ctx, r.rt, r.req.Release, r.changed[r.waited:], r.req.Timeout, r.reporter(ctx))
+	down, err := r.e.waitChanged(ctx, r.rt, r.req.Release, r.changed[r.waited:], r.req.Timeout, r.reporter(ctx))
 	r.waited = len(r.changed)
+	r.down = append(r.down, down...)
 	return err
 }
 

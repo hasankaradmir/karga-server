@@ -45,6 +45,32 @@ func probedWorkload(t *testing.T, rt *fakeruntime.Runtime, name, addr string) in
 	return port
 }
 
+// crashLooping reports every workload restarting, one more restart on each look.
+type crashLooping struct {
+	*fakeruntime.Runtime
+	restarts int
+}
+
+func (r *crashLooping) GetWorkload(ctx context.Context, name string) (ports.WorkloadStatus, error) {
+	st, err := r.Runtime.GetWorkload(ctx, name)
+	r.restarts++
+	st.State, st.RestartCount, st.ExitCode = "restarting", r.restarts, 1
+	return st, err
+}
+
+func TestWaitReadyStopsOnRestarts(t *testing.T) {
+	rt := &crashLooping{Runtime: fakeruntime.New("img")}
+	probedWorkload(t, rt.Runtime, "w", "127.0.0.1:1")
+	start := time.Now()
+	_, err := testEnv.waitReady(context.Background(), rt, []readyTarget{{"w", httpSpec(1, "")}}, time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "workload w keeps restarting (3 restarts, last exit code 1)") {
+		t.Fatalf("want keeps restarting, got %v", err)
+	}
+	if waited := time.Since(start); waited > 10*time.Second {
+		t.Fatalf("waited %s for a crashing container", waited)
+	}
+}
+
 func TestWaitReadyProbes(t *testing.T) {
 	withProxySupport(t, true)
 	var status atomic.Int32

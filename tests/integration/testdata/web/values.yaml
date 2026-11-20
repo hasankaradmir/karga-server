@@ -43,3 +43,5 @@ tls:
 # health is the web workload's health check type: exec (wget in the image), tcp or http (karga checks).
 # With http, healthy=false checks a missing path.
 health: exec
+# crash=true makes workload web exit with code 3 as soon as it starts (Docker restarts it).
+crash: false

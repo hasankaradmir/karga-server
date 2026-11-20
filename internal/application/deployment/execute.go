@@ -27,8 +27,8 @@ import (
 // Errors after the pre-flight phase are *ExecError.
 func (e *Env) Execute(ctx context.Context, rt ports.Runtime, req ExecRequest) error {
 	ctx = withProgress(ctx, req.OnProgress)
-	disrupted := false
-	err := e.execute(ctx, rt, req, &disrupted)
+	disrupted, down := false, []string(nil)
+	err := e.execute(ctx, rt, req, &disrupted, &down)
 	if err == nil {
 		return nil
 	}
@@ -36,10 +36,10 @@ func (e *Env) Execute(ctx context.Context, rt ports.Runtime, req ExecRequest) er
 		// Point the gateway at what runs now; the error that got us here is the one to report.
 		_, _ = gateway.New(rt, e.host, e.home).Sync(ctx)
 	}
-	return &ExecError{Err: err, Disrupted: disrupted}
+	return &ExecError{Err: err, Disrupted: disrupted, Down: down}
 }
 
-func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, disrupted *bool) error {
+func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, disrupted *bool, down *[]string) error {
 	if req.Timeout == 0 {
 		req.Timeout = DefaultTimeout
 	}
@@ -50,7 +50,7 @@ func (e *Env) execute(ctx context.Context, rt ports.Runtime, req ExecRequest, di
 		req.ProxyUser = fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
 	}
 	r := &run{e: e, rt: rt, req: req}
-	defer func() { *disrupted = r.disrupted }()
+	defer func() { *disrupted, *down = r.disrupted, r.down }()
 	for _, phase := range []func(context.Context) error{
 		r.prepare, r.removeWorkloads, r.removeProxies, r.apply, r.waitPending, r.proxyUp, r.routeProxy, r.expose, r.retireProxy, r.deleteRemoved,
 	} {
@@ -144,8 +144,9 @@ func ownedOK(owned map[string]bool, kind, name string, err error) error {
 }
 
 // waitChanged waits for every changed workload. On failure the ones that are not ready are stopped
-// (kept for inspection) and reported as failed, so the next plan recreates them.
-func (e *Env) waitChanged(ctx context.Context, rt ports.Runtime, rel string, changed []Change, timeout time.Duration, report func(Change, string, error) error) error {
+// (kept for inspection) and reported as failed, so the next plan recreates them. It returns the
+// workloads that are down: their previous container was replaced by one now stopped.
+func (e *Env) waitChanged(ctx context.Context, rt ports.Runtime, rel string, changed []Change, timeout time.Duration, report func(Change, string, error) error) ([]string, error) {
 	targets := make([]readyTarget, len(changed))
 	for i, c := range changed {
 		w, _ := workloadOf(c)
@@ -153,9 +154,10 @@ func (e *Env) waitChanged(ctx context.Context, rt ports.Runtime, rel string, cha
 	}
 	notReady, werr := e.waitReady(ctx, rt, targets, timeout)
 	if werr == nil {
-		return nil
+		return nil, nil
 	}
 	errs := []error{werr}
+	var down []string
 	for _, c := range changed {
 		name := c.RuntimeName
 		st, err := rt.GetWorkload(ctx, name)
@@ -166,6 +168,9 @@ func (e *Env) waitChanged(ctx context.Context, rt ports.Runtime, rel string, cha
 			errs = append(errs, err)
 		}
 		_ = report(c, "wait", werr)
+		if c.Applied != nil {
+			down = append(down, c.Name)
+		}
 	}
-	return errors.Join(errs...)
+	return down, errors.Join(errs...)
 }

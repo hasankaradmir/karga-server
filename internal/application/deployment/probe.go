@@ -92,6 +92,7 @@ func (e *Env) waitReady(ctx context.Context, rt ports.Runtime, targets []readyTa
 	defer deadline.Stop()
 	pending := slices.Clone(targets)
 	probes := map[string]*probeState{}
+	restarts := map[string]int{} // each target's restart count when first seen
 	names := func(ts []readyTarget) []string {
 		var out []string
 		for _, t := range ts {
@@ -111,6 +112,13 @@ func (e *Env) waitReady(ctx context.Context, rt ports.Runtime, targets []readyTa
 			st, err := rt.GetWorkload(ctx, t.name)
 			if err != nil {
 				return names(pending), err
+			}
+			// A container that keeps crashing is not slow to start: Docker restarts it, so it is
+			// rarely seen exited, and waiting for the timeout only lengthens the outage.
+			if base, seen := restarts[t.name]; !seen {
+				restarts[t.name] = st.RestartCount
+			} else if n := st.RestartCount - base; n >= restartLimit {
+				return names(pending), fmt.Errorf("workload %s keeps restarting (%d restarts, last exit code %d)", t.name, n, st.ExitCode)
 			}
 			switch {
 			case st.State == ports.StateExited || st.State == "dead":
@@ -186,6 +194,10 @@ func (e *Env) checkProbe(ctx context.Context, st ports.WorkloadStatus, s *resour
 	}
 	return false, nil
 }
+
+// restartLimit is how many restarts while waiting make a workload fail: as many as failed probes
+// by default.
+const restartLimit = 3
 
 // ProbeRetries is how many failed probes in a row make a workload unhealthy: the health check's
 // retries, 3 by default.
