@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
@@ -77,18 +80,18 @@ func (r *run) prepare(ctx context.Context) error {
 		}
 		if w, ok := workloadOf(c); ok {
 			progress(ctx, c.Kind, c.Name, PhasePull, "image %s (%s)", w.Image, w.PullPolicy)
-			if err := r.rt.EnsureImage(ctx, w.Image, w.PullPolicy); err != nil {
+			if err := r.pull(ctx, c.Kind, c.Name, w.Image, w.PullPolicy); err != nil {
 				return fmt.Errorf("%s %q: %w", c.Kind, c.Name, err)
 			}
 		}
 		if c.Kind == KindProxy {
-			if err := r.rt.EnsureImage(ctx, c.Proxy.Image, "if-not-present"); err != nil {
+			if err := r.pull(ctx, c.Kind, c.Name, c.Proxy.Image, "if-not-present"); err != nil {
 				return fmt.Errorf("%s %q: %w", c.Kind, c.Name, err)
 			}
 		}
 	}
 	if len(r.svcs.published()) > 0 {
-		if err := r.rt.EnsureImage(ctx, r.e.host.Proxies.Container().Image, "if-not-present"); err != nil {
+		if err := r.pull(ctx, "Gateway", gateway.ContainerName, r.e.host.Proxies.Container().Image, "if-not-present"); err != nil {
 			return fmt.Errorf("gateway: %w", err)
 		}
 	}
@@ -121,6 +124,47 @@ func (r *run) removeProxies(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// pull makes image available; while Docker pulls it, every WaitEvery it reports how far it got.
+func (r *run) pull(ctx context.Context, kind, name, image, policy string) error {
+	var current, total atomic.Int64
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		start := time.Now()
+		tick := time.NewTicker(r.e.waitEvery())
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				took := time.Since(start).Round(time.Second)
+				if t := total.Load(); t > 0 {
+					progress(ctx, kind, name, PhasePull, "pulling %s: %s/%s (%s)", image, bytesOf(current.Load()), bytesOf(t), took)
+				} else {
+					progress(ctx, kind, name, PhasePull, "pulling %s (%s)", image, took)
+				}
+			}
+		}
+	})
+	err := r.rt.EnsureImage(ctx, image, policy, func(c, t int64) { current.Store(c); total.Store(t) })
+	close(done)
+	wg.Wait() // no progress event after this returns
+	return err
+}
+
+// bytesOf writes n bytes as Docker does: kB, MB or GB (powers of 1000).
+func bytesOf(n int64) string {
+	switch {
+	case n >= 1e9:
+		return fmt.Sprintf("%.1fGB", float64(n)/1e9)
+	case n >= 1e6:
+		return fmt.Sprintf("%.0fMB", float64(n)/1e6)
+	default:
+		return fmt.Sprintf("%.0fkB", float64(n)/1e3)
+	}
 }
 
 // waitPending waits for the recreated workloads not waited for yet.

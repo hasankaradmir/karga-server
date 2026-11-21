@@ -6,6 +6,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- Image pulls report progress: every two seconds `pulling <image>: 57MB/165MB (4s)`, the bytes
+  downloaded of the layers Docker reported so far, for workload, release proxy and gateway images.
+  A first install used to show nothing for as long as the pull took.
 - Exposure paths (D43): `pathType` `prefix` (the default) takes the path and below it by segment,
   `exact` only the path; `to` replaces a prefix in what the Service receives (`x-forwarded-prefix`
   tells it). **Changed:** a prefix was a plain string prefix: `/api` no longer takes `/apix`.

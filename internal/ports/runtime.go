@@ -62,8 +62,9 @@ const (
 // Create returns ErrConflict if the name exists; Delete of a missing object succeeds.
 type Runtime interface {
 	Info(ctx context.Context) (RuntimeInfo, error)
-	// EnsureImage makes ref available according to policy (always, if-not-present, never).
-	EnsureImage(ctx context.Context, ref, policy string) error
+	// EnsureImage makes ref available according to policy (always, if-not-present, never). While it
+	// pulls, progress (when not nil) gets the bytes downloaded so far of the layers seen so far.
+	EnsureImage(ctx context.Context, ref, policy string, progress func(current, total int64)) error
 
 	CreateNetwork(ctx context.Context, req NetworkRequest) error
 	DeleteNetwork(ctx context.Context, name string) error

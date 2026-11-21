@@ -51,7 +51,7 @@ func (g *Gateway) validateEnvoy(ctx context.Context, settings Settings) (string,
 	if err := syncCerts(dir, targets, false); err != nil {
 		return "", err
 	}
-	if err := rt.EnsureImage(ctx, c.Image, "if-not-present"); err != nil {
+	if err := rt.EnsureImage(ctx, c.Image, "if-not-present", nil); err != nil {
 		return "", err
 	}
 	wr := ports.WorkloadRequest{
