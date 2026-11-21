@@ -168,7 +168,7 @@ func (s *Volumes) start(ctx context.Context, rt ports.Runtime, sc scope, stopped
 			errs = append(errs, fmt.Errorf("workload %s did not get ready: %w: %w", n, ErrNotReady, err))
 			continue
 		}
-		emit(resource.KindWorkload, n, deployment.PhaseDone, "ready")
+		emit(resource.KindWorkload, n, deployment.PhaseDone, "start") // the CLI prints "start done"
 	}
 	return errors.Join(errs...)
 }

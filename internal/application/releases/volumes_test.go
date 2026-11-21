@@ -92,7 +92,7 @@ func TestVolumeRestoreStopsReaders(t *testing.T) {
 	if got := calls(e, "StopWorkload"); !slices.Equal(got, []string{"worker", "reader", "app", "db"}) {
 		t.Fatalf("stopped %v", got)
 	}
-	if !slices.Equal(res.Stopped, []string{"db", "app", "reader", "worker"}) || !slices.Contains(events, "db ready") {
+	if !slices.Equal(res.Stopped, []string{"db", "app", "reader", "worker"}) || !slices.Contains(events, "db start") {
 		t.Fatalf("result %+v events %v", res, events)
 	}
 }
