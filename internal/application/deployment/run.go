@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,10 +41,14 @@ type run struct {
 // report records the outcome of a change's step and wraps its error with the change.
 func (r *run) report(ctx context.Context, c Change, action string, err error) error {
 	st := release.Step{Kind: c.Kind, Name: c.Name, Action: action, Status: StepDone}
-	if err != nil {
+	switch {
+	case err != nil:
 		st.Status, st.Error = StepFailed, err.Error()
 		progress(ctx, c.Kind, c.Name, PhaseFailed, "%s: %v", action, err)
-	} else {
+	case r.pending(c):
+		// A recreated workload is done once it is ready: waitChanged says so.
+		progress(ctx, c.Kind, c.Name, PhaseStart, "%s started", action)
+	default:
 		progress(ctx, c.Kind, c.Name, PhaseDone, "%s", action)
 	}
 	if serr := r.req.OnStep(c, st); serr != nil {
@@ -165,6 +170,11 @@ func bytesOf(n int64) string {
 	default:
 		return fmt.Sprintf("%.0fkB", float64(n)/1e3)
 	}
+}
+
+// pending reports whether c is a recreated workload not waited for yet.
+func (r *run) pending(c Change) bool {
+	return slices.ContainsFunc(r.changed[r.waited:], func(w Change) bool { return w.Kind == c.Kind && w.Name == c.Name })
 }
 
 // waitPending waits for the recreated workloads not waited for yet.

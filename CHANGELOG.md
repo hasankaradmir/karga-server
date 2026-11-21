@@ -26,6 +26,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- A recreated workload's progress says `create started` / `update started` when its container
+  starts and `create done` / `update done` once it is ready, after the wait; `done` came before the
+  `waiting for ... to be ready` lines.
 - One health source (D44): the release proxy and the gateway run no Envoy health checks; the
   workload's own check is the only one. Envoy's TCP checks (an empty connection every 500ms) made
   sshd and fail2ban lock out every client behind the proxy, so git over SSH answered `Not allowed at

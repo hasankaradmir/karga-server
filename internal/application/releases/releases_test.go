@@ -935,3 +935,23 @@ func TestContainerNamesFollowTheDigest(t *testing.T) {
 		t.Fatalf("the repair named it %v, want %v", got, second)
 	}
 }
+
+// TestRecreateProgressOrder: a recreated workload is "started" when its container starts and
+// "done" only once it is ready, after the wait.
+func TestRecreateProgressOrder(t *testing.T) {
+	e := newEnv(t)
+	must[*Result](t)(e.install())
+	var got []string
+	_, err := e.svc.Lifecycle.Upgrade(context.Background(), UpgradeRequest{CommonOptions: common(), Name: "cache", Package: redisPkg, Values: e.opts("image.tag=7.2")},
+		func(ev deployment.Event) {
+			if ev.Kind == resource.KindWorkload && ev.Name == "redis" && (ev.Phase == deployment.PhaseStart || ev.Phase == deployment.PhaseDone) {
+				got = append(got, ev.Phase+" "+ev.Detail)
+			}
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ", ") != "start update started, done update" {
+		t.Fatalf("events: %q", got)
+	}
+}

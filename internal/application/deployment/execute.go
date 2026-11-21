@@ -153,7 +153,11 @@ func (e *Env) waitChanged(ctx context.Context, rt ports.Runtime, rel string, cha
 		targets[i] = readyTarget{c.RuntimeName, w}
 	}
 	notReady, werr := e.waitReady(ctx, rt, targets, timeout)
+	done := func(c Change) { progress(ctx, c.Kind, c.Name, PhaseDone, "%s", c.Action) }
 	if werr == nil {
+		for _, c := range changed {
+			done(c)
+		}
 		return nil, nil
 	}
 	errs := []error{werr}
@@ -162,6 +166,7 @@ func (e *Env) waitChanged(ctx context.Context, rt ports.Runtime, rel string, cha
 		name := c.RuntimeName
 		st, err := rt.GetWorkload(ctx, name)
 		if err == nil && !slices.Contains(notReady, name) && st.State == ports.StateRunning && st.Health != ports.HealthUnhealthy && st.Health != ports.HealthStarting {
+			done(c)
 			continue
 		}
 		if err := rt.StopWorkload(ctx, name, 0); err != nil && !errors.Is(err, ports.ErrNotFound) {
