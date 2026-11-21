@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 
@@ -166,13 +167,20 @@ func (b Backend) Exec(ctx context.Context, req api.ExecRequest) (int, error) {
 }
 
 // BackupVolume implements api.Backend.
-func (b Backend) BackupVolume(ctx context.Context, req api.VolumeBackupRequest, w io.Writer) error {
-	return b.volumes.Backup(wait(ctx), releases.VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Stop: req.Stop}, w)
+// shortcut: the 4.0 volume API mapped onto the old behaviour until the volume redesign lands (V3/V4).
+func (b Backend) BackupVolume(ctx context.Context, req api.VolumeBackupRequest, w io.Writer) (*api.VolumeResult, error) {
+	return nil, b.volumes.Backup(wait(ctx), releases.VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Stop: !req.Live}, w)
 }
 
 // RestoreVolume implements api.Backend.
-func (b Backend) RestoreVolume(ctx context.Context, req api.VolumeRestoreRequest, r io.Reader) error {
-	return b.volumes.Restore(wait(ctx), releases.VolumeRestoreRequest{Release: req.Release, Volume: req.Volume, Force: req.Force, Name: req.Name}, r)
+func (b Backend) RestoreVolume(ctx context.Context, req api.VolumeRestoreRequest, r io.Reader, _ func(api.Event)) (*api.VolumeResult, error) {
+	err := b.volumes.Restore(wait(ctx), releases.VolumeRestoreRequest{Release: req.Release, Volume: req.Volume, Force: req.Force, Name: req.Name}, r)
+	return &api.VolumeResult{Release: req.Release, Volume: req.Volume}, err
+}
+
+// UndoRestoreVolume implements api.Backend.
+func (b Backend) UndoRestoreVolume(context.Context, api.VolumeUndoRestoreRequest, func(api.Event)) (*api.VolumeResult, error) {
+	return nil, fmt.Errorf("undo-restore: %w", api.ErrNotFound)
 }
 
 // Reconcile implements api.Backend.
