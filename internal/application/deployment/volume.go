@@ -9,6 +9,7 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
+	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -76,6 +77,13 @@ func (e *Env) WaitReady(ctx context.Context, rt ports.Runtime, containers map[st
 	}
 	_, err := e.waitReady(ctx, rt, ts, timeout)
 	return err
+}
+
+// VolumeRequest is the Docker volume of Volume name, applied at revision.
+func VolumeRequest(release string, revision int, name string, s *resource.VolumeSpec) ports.VolumeRequest {
+	lbl := labels(release, revision, resource.KindVolume, name)
+	lbl[ports.LabelRetention] = s.Retention
+	return ports.VolumeRequest{Name: proxyops.RuntimeName(release, name), Labels: lbl, Driver: s.Driver}
 }
 
 // Mounter is an applied workload that mounts a volume, as RecreateVolume creates it again.

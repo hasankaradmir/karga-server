@@ -149,6 +149,20 @@ type Options struct {
 	Strategy      string
 	Timeout       time.Duration
 	KeepHistory   bool
+	// Restore is what a volume restore writes and how, kept until it is done so it can be resumed.
+	Restore *RestoreOptions
+}
+
+// RestoreOptions are a volume restore's choices: the backup file it was given (under KARGA_HOME
+// until the restore is done), its name, and whether it merges or keeps no restore point.
+type RestoreOptions struct {
+	Volume         string
+	From           string
+	Name           string
+	Merge          bool
+	NoRestorePoint bool
+	// Undo marks a restore of the volume's restore point (undo-restore): its file stays.
+	Undo bool
 }
 
 // Step is one runtime action of an operation.

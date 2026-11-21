@@ -78,15 +78,17 @@ type Gateway struct{ c *core }
 type core struct {
 	store ports.StateStore
 	// env plans and applies deployments on this host; gw is the host gateway.
-	env      *deployment.Env
-	gw       *gateway.Gateway
-	rt       ports.Runtime
-	home     string
-	redact   func(string) // registers secret values with the log redactor
-	log      *slog.Logger
-	now      func() time.Time
-	pid      int
-	hostname string
+	env    *deployment.Env
+	gw     *gateway.Gateway
+	rt     ports.Runtime
+	home   string
+	redact func(string) // registers secret values with the log redactor
+	log    *slog.Logger
+	now    func() time.Time
+	// freeSpace is how many bytes can still be written below a directory (statfs; tests replace it).
+	freeSpace func(dir string) (uint64, error)
+	pid       int
+	hostname  string
 	// notify is told the name of a release an install, upgrade or rollback changed.
 	notify func(name string)
 
@@ -139,6 +141,6 @@ func New(d Deps) (*Service, error) {
 		d.Notify = func(string) {}
 	}
 	c := &core{store: d.Store, env: env, gw: gateway.New(d.Runtime, d.Host, d.Home), rt: d.Runtime, home: d.Home, redact: d.Redact, log: d.Log, now: time.Now,
-		pid: os.Getpid(), hostname: hostname, notify: d.Notify}
+		freeSpace: freeSpace, pid: os.Getpid(), hostname: hostname, notify: d.Notify}
 	return &Service{Lifecycle: &Lifecycle{c}, Reads: &Reads{c}, Containers: &Containers{c}, Volumes: &Volumes{c}, Gateway: &Gateway{c}, c: c}, nil
 }

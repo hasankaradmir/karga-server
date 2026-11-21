@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/hasankaradmir/karga-sdk/packages"
@@ -267,6 +269,12 @@ func (s *Lifecycle) uninstall(ctx context.Context, rt ports.Runtime, rel release
 		return errors.Join(err, s.c.store.SaveRelease(bg, rel))
 	}
 	s.c.repairs.reset(req.Name) // what was repaired, or given up on, is no more
+	if req.DeleteVolumes {
+		// The volumes' restore points go with them.
+		if err := os.RemoveAll(filepath.Join(s.c.home, "restore-points", req.Name)); err != nil {
+			return err
+		}
+	}
 	if !req.KeepHistory {
 		return s.c.store.DeleteRelease(bg, req.Name)
 	}

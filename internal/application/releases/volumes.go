@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"go.yaml.in/yaml/v3"
@@ -287,57 +288,128 @@ func (s *Volumes) write(ctx context.Context, req VolumeBackupRequest, src mounte
 	return gz.Close()
 }
 
-// Restore writes the backup read from r into req.Volume, with the workloads mounting it, and those
-// that depend on them, stopped; they run again, ready, before it returns.
-func (s *Volumes) Restore(ctx context.Context, req VolumeRestoreRequest, r io.Reader, progress func(deployment.Event)) (res *VolumeResult, err error) {
-	res = &VolumeResult{}
-	emit := emitter(progress)
+// restoreInput is one restore: of an uploaded backup, of a restore point (undo), or of either again
+// after an interruption.
+type restoreInput struct {
+	Release, Volume, Name string
+	// From is the backup file under KARGA_HOME: removed when the restore ends, unless Undo.
+	From                         string
+	Force, Merge, NoRestorePoint bool
+	Undo                         bool
+	// pointTaken: an interrupted restore had kept the restore point already; it is not taken again
+	// from a volume that may be half written.
+	pointTaken bool
+}
+
+// restorePointPath is where a restore keeps a volume's previous files.
+func restorePointPath(home, rel, vol string) string {
+	return filepath.Join(home, "restore-points", rel, vol+".tar.gz")
+}
+
+// restorePointStep marks, in a restore's steps, that its restore point was kept.
+const restorePointStep = "restore-point"
+
+// Restore replaces req.Volume's files with the backup read from r (Merge writes it over them). The
+// workloads mounting it, and those that depend on them, are stopped meanwhile and start again, in
+// order and ready, before it returns. The volume's files are kept as its restore point first
+// (UndoRestore puts them back) unless NoRestorePoint. The backup stays under KARGA_HOME until the
+// restore ends: an interrupted one is finished when karga-server starts again.
+func (s *Volumes) Restore(ctx context.Context, req VolumeRestoreRequest, r io.Reader, progress func(deployment.Event)) (*VolumeResult, error) {
+	from, err := s.keep(r)
+	if err != nil {
+		return nil, err
+	}
 	unlock, err := s.c.locks.lock(ctx, req.Release)
+	if err != nil {
+		_ = os.Remove(from)
+		return nil, err
+	}
+	defer unlock()
+	return s.restore(ctx, restoreInput{Release: req.Release, Volume: req.Volume, Name: cmp.Or(req.Name, "the backup"), From: from,
+		Force: req.Force, Merge: req.Merge, NoRestorePoint: req.NoRestorePoint}, emitter(progress), false)
+}
+
+// UndoRestore puts back the files req.Volume had before its last restore, the way a restore does.
+// It keeps no restore point of its own, and the restore point stays.
+func (s *Volumes) UndoRestore(ctx context.Context, release, volume string, progress func(deployment.Event)) (*VolumeResult, error) {
+	unlock, err := s.c.locks.lock(ctx, release)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	ms, err := s.mounters(ctx, req.Release, req.Volume)
+	from := restorePointPath(s.c.home, release, volume)
+	if _, err := os.Stat(from); errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("volume %s of %s has no restore point (a restore keeps one): %w", volume, release, ports.ErrNotFound)
+	}
+	res, err := s.restore(ctx, restoreInput{Release: release, Volume: volume, Name: "its restore point", From: from, Force: true,
+		NoRestorePoint: true, Undo: true}, emitter(progress), false)
+	if res != nil {
+		res.RestorePoint = from
+	}
+	return res, err
+}
+
+// keep copies an uploaded backup to KARGA_HOME/restores, so a restore can be finished from it.
+func (s *Volumes) keep(r io.Reader) (string, error) {
+	dir := filepath.Join(s.c.home, "restores")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp(dir, "restore-*.tar.gz")
+	if err != nil {
+		return "", err
+	}
+	_, err = io.Copy(f, r)
+	err = errors.Join(err, f.Sync(), f.Close())
+	if err != nil {
+		_ = os.Remove(f.Name())
+		return "", fmt.Errorf("keeping the backup: %w", err)
+	}
+	return f.Name(), nil
+}
+
+// restore runs one restore of a release the caller holds; resumed finishes one an earlier process
+// left running.
+func (s *Volumes) restore(ctx context.Context, in restoreInput, emit func(kind, name, phase, detail string), resumed bool) (res *VolumeResult, err error) {
+	res = &VolumeResult{}
+	if !in.Undo {
+		defer func() { _ = os.Remove(in.From) }() // a crash leaves it for the resume
+	}
+	ms, err := s.mounters(ctx, in.Release, in.Volume)
 	if err != nil {
 		return nil, err
 	}
-	sc, err := s.scopeOf(ctx, req.Release, ms, false)
+	sc, err := s.scopeOf(ctx, in.Release, ms, false)
 	if err != nil {
 		return nil, err
 	}
-	dst := -1
-	for i, m := range ms {
-		if !m.readOnly {
-			dst = i
-			break
+	dst := slices.IndexFunc(ms, func(m mounter) bool { return !m.readOnly })
+	if dst < 0 {
+		return nil, fmt.Errorf("every workload mounts volume %q read-only; nothing can write to it", in.Volume)
+	}
+	// Everything that can be refused is, before anything changes.
+	if err := s.checkBackup(in); err != nil {
+		return nil, err
+	}
+	rel, err := s.c.store.GetRelease(ctx, in.Release)
+	if err != nil {
+		return nil, err
+	}
+	var vol ports.VolumeRequest
+	var recreate []deployment.Mounter
+	if !in.Merge {
+		if vol, recreate, err = s.recreatePlan(ctx, in.Release, in.Volume); err != nil {
+			return nil, err
 		}
 	}
-	if dst < 0 {
-		return nil, fmt.Errorf("every workload mounts volume %q read-only; nothing can write to it", req.Volume)
+	point := !in.NoRestorePoint && !in.pointTaken
+	if point {
+		if err := s.roomForRestorePoint(in.From); err != nil {
+			return nil, err
+		}
 	}
-	gz, err := gzip.NewReader(r)
-	if err != nil {
-		return nil, fmt.Errorf("%s is not a karga volume backup: %w", req.Name, err)
-	}
-	tr := tar.NewReader(gz)
-	h, err := tr.Next()
-	if err != nil || h.Name != backupManifest {
-		return nil, fmt.Errorf("%s is not a karga volume backup", req.Name)
-	}
-	var man BackupManifest
-	if err := yaml.NewDecoder(tr).Decode(&man); err != nil {
-		return nil, fmt.Errorf("%s: manifest: %w", req.Name, err)
-	}
-	if (man.Release != req.Release || man.Volume != req.Volume) && !req.Force {
-		return nil, fmt.Errorf("%s is a backup of volume %q of release %s; use --from-other-volume to restore it into %q of %s",
-			req.Name, man.Volume, man.Release, req.Volume, req.Release)
-	}
-
-	rel, err := s.c.store.GetRelease(ctx, req.Release)
-	if err != nil {
-		return nil, err
-	}
-	op, err := s.c.begin(ctx, req.Release, "volume-restore", rel.CurrentRevision, false, release.Options{})
+	op, err := s.c.begin(ctx, in.Release, "volume-restore", rel.CurrentRevision, resumed, release.Options{Restore: &release.RestoreOptions{
+		Volume: in.Volume, From: in.From, Name: in.Name, Merge: in.Merge, NoRestorePoint: in.NoRestorePoint, Undo: in.Undo}})
 	if err != nil {
 		return nil, err
 	}
@@ -350,14 +422,89 @@ func (s *Volumes) Restore(ctx context.Context, req VolumeRestoreRequest, r io.Re
 			res.Downtime = s.c.now().Sub(began)
 		}
 		if errors.Is(err, ErrNotReady) && !errors.Is(err, errWrite) {
-			err = fmt.Errorf("volume %s of %s restored, but %w", req.Volume, req.Release, err)
+			err = fmt.Errorf("volume %s of %s restored, but %w", in.Volume, in.Release, err)
 		}
 	}()
 	if res.Stopped, err = stop(ctx, rt, sc, emit); err != nil {
 		return res, err
 	}
-	target := ms[dst]
-	emit(resource.KindVolume, req.Volume, deployment.PhaseCreate, "writing "+cmp.Or(req.Name, "the backup"))
+	if point {
+		emit(resource.KindVolume, in.Volume, deployment.PhaseCreate, "keeping its files as a restore point")
+		if res.RestorePoint, err = s.saveRestorePoint(ctx, in, ms[0]); err != nil {
+			return res, err
+		}
+		op.Steps = append(op.Steps, release.Step{Kind: resource.KindVolume, Name: in.Volume, Action: restorePointStep, Status: deployment.StepDone})
+		if err := s.c.store.SaveOperationSteps(ctx, op.ID, op.Steps); err != nil {
+			return res, err
+		}
+	} else if in.pointTaken {
+		res.RestorePoint = restorePointPath(s.c.home, in.Release, in.Volume)
+	}
+	if !in.Merge {
+		if err := s.c.env.RecreateVolume(deployment.WithProgress(ctx, toEvent(emit)), rt, in.Release, vol, recreate); err != nil {
+			return res, fmt.Errorf("recreate volume %s: %w: %w", in.Volume, errWrite, err)
+		}
+	}
+	emit(resource.KindVolume, in.Volume, deployment.PhaseCreate, "writing "+in.Name)
+	if err := s.importBackup(ctx, in, ms[dst]); err != nil {
+		return res, fmt.Errorf("restore volume %s: %w: %w", in.Volume, errWrite, err)
+	}
+	return res, nil
+}
+
+// toEvent turns an emitter back into an event callback, for code that reports through a context.
+func toEvent(emit func(kind, name, phase, detail string)) func(deployment.Event) {
+	return func(e deployment.Event) { emit(e.Kind, e.Name, e.Phase, e.Detail) }
+}
+
+// checkBackup refuses a file that is not a karga volume backup, or one of another volume without Force.
+func (s *Volumes) checkBackup(in restoreInput) error {
+	f, err := os.Open(in.From)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	man, _, err := openBackup(f, in.Name)
+	if err != nil {
+		return err
+	}
+	if (man.Release != in.Release || man.Volume != in.Volume) && !in.Force {
+		return fmt.Errorf("%s is a backup of volume %q of release %s; use --from-other-volume to restore it into %q of %s: %w",
+			in.Name, man.Volume, man.Release, in.Volume, in.Release, ports.ErrInvalid)
+	}
+	return nil
+}
+
+// openBackup reads a backup's manifest and returns the reader of the files after it.
+func openBackup(r io.Reader, name string) (BackupManifest, *tar.Reader, error) {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return BackupManifest{}, nil, fmt.Errorf("%s is not a karga volume backup: %w: %w", name, ports.ErrInvalid, err)
+	}
+	tr := tar.NewReader(gz)
+	h, err := tr.Next()
+	if err != nil || h.Name != backupManifest {
+		return BackupManifest{}, nil, fmt.Errorf("%s is not a karga volume backup: %w", name, ports.ErrInvalid)
+	}
+	var man BackupManifest
+	if err := yaml.NewDecoder(tr).Decode(&man); err != nil {
+		return BackupManifest{}, nil, fmt.Errorf("%s: manifest: %w: %w", name, ports.ErrInvalid, err)
+	}
+	return man, tr, nil
+}
+
+// importBackup writes the backup's files into the volume, through dst (stopped or created). It
+// writes at the mount itself, not its parent: that works with a read-only root filesystem too.
+func (s *Volumes) importBackup(ctx context.Context, in restoreInput, dst mounter) error {
+	f, err := os.Open(in.From)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, tr, err := openBackup(f, in.Name)
+	if err != nil {
+		return err
+	}
 	pr, pw := io.Pipe()
 	converted := make(chan struct{})
 	// The conversion ends before this returns, even if the import stopped reading early.
@@ -365,20 +512,117 @@ func (s *Volumes) Restore(ctx context.Context, req VolumeRestoreRequest, r io.Re
 	go func() {
 		defer close(converted)
 		tw := tar.NewWriter(pw)
-		err := retar(tr, tw, backupRoot, path.Base(target.path))
+		err := retar(tr, tw, backupRoot, ".")
 		if err == nil {
 			err = tw.Close()
 		}
 		pw.CloseWithError(err)
 	}()
-	if err := rt.ImportPath(ctx, target.runtime, path.Dir(target.path), pr); err != nil {
+	if err := s.c.rt.ImportPath(ctx, dst.runtime, dst.path, pr); err != nil {
 		_ = pr.CloseWithError(err)
-		return res, fmt.Errorf("restore volume %s: %w: %w", req.Volume, errWrite, err)
+		return err
 	}
-	return res, nil
+	return nil
 }
 
-// errWrite marks a restore that failed writing the files: it did not restore anything to report.
+// recreatePlan is what emptying the volume recreates: its Docker volume as applied, and the
+// workloads mounting it as applied, with their revisions' files.
+func (s *Volumes) recreatePlan(ctx context.Context, rel, volume string) (ports.VolumeRequest, []deployment.Mounter, error) {
+	applied, err := s.c.store.ListResources(ctx, rel)
+	if err != nil {
+		return ports.VolumeRequest{}, nil, err
+	}
+	var vol ports.VolumeRequest
+	var out []deployment.Mounter
+	paths := map[int]map[deployment.Key]string{}
+	for _, a := range applied {
+		r, err := resource.DecodeStored(a.Spec)
+		if err != nil && (a.Kind == resource.KindVolume || a.Kind == resource.KindWorkload) {
+			return vol, nil, err
+		}
+		switch spec := r.Spec.(type) {
+		case *resource.VolumeSpec:
+			if a.Name == volume {
+				vol = deployment.VolumeRequest(rel, a.Revision, a.Name, spec)
+			}
+		case *resource.WorkloadSpec:
+			if !slices.ContainsFunc(spec.Mounts, func(m resource.Mount) bool { return m.Volume == volume }) {
+				continue
+			}
+			if paths[a.Revision] == nil {
+				if paths[a.Revision], err = s.revisionFiles(ctx, rel, a.Revision); err != nil {
+					return vol, nil, err
+				}
+			}
+			out = append(out, deployment.Mounter{Name: a.Name, Container: a.RuntimeName, Digest: a.Digest, Revision: a.Revision, Spec: spec, Paths: paths[a.Revision]})
+		}
+	}
+	return vol, out, nil
+}
+
+// revisionFiles materializes a revision's Config and Secret files again (they are its own: the
+// containers of that revision mount them) and returns where they are.
+func (s *Volumes) revisionFiles(ctx context.Context, rel string, revision int) (map[deployment.Key]string, error) {
+	rev, err := s.c.store.GetRevision(ctx, rel, revision)
+	if err != nil {
+		return nil, fmt.Errorf("revision %d: %w", revision, err)
+	}
+	rs, err := decodeManifest(rev.Manifest)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.c.restoreSecrets(rel, revision, rs); err != nil {
+		return nil, err
+	}
+	return deployment.Materialize(s.c.home, rel, revision, rs, s.c.redact)
+}
+
+// roomForRestorePoint refuses a restore whose restore point (about as large as the backup) would not
+// fit under KARGA_HOME.
+func (s *Volumes) roomForRestorePoint(from string) error {
+	st, err := os.Stat(from)
+	if err != nil {
+		return err
+	}
+	need := uint64(st.Size()) + uint64(st.Size())/10 //nolint:gosec // a file size is not negative
+	free, err := s.c.freeSpace(s.c.home)
+	if err != nil {
+		return err
+	}
+	if free < need {
+		return fmt.Errorf("not enough space under %s for a restore point (%d MB free, about %d MB needed): free some, or restore with --no-restore-point: %w",
+			s.c.home, free>>20, need>>20, ports.ErrInvalid)
+	}
+	return nil
+}
+
+// saveRestorePoint copies the volume, through src, to its restore point, replacing the last one only
+// once the copy is complete.
+func (s *Volumes) saveRestorePoint(ctx context.Context, in restoreInput, src mounter) (string, error) {
+	dst := restorePointPath(s.c.home, in.Release, in.Volume)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return "", err
+	}
+	f, err := os.OpenFile(dst+".tmp", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	err = s.write(ctx, VolumeBackupRequest{Release: in.Release, Volume: in.Volume}, src, f)
+	err = errors.Join(err, f.Sync(), f.Close())
+	if err == nil {
+		err = os.Rename(dst+".tmp", dst)
+	}
+	if err != nil {
+		_ = os.Remove(dst + ".tmp")
+		if errors.Is(err, syscall.ENOSPC) {
+			return "", fmt.Errorf("not enough space under %s for a restore point: free some, or restore with --no-restore-point: %w", s.c.home, err)
+		}
+		return "", fmt.Errorf("restore point: %w", err)
+	}
+	return dst, nil
+}
+
+// errWrite marks a restore that failed changing the volume: it did not restore anything to report.
 var errWrite = errors.New("writing the backup failed")
 
 // retar copies tar entries below from/ to below to/ (the entry from itself becomes to).

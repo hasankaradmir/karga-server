@@ -649,6 +649,32 @@ type optionsFile struct {
 	Strategy      string        `yaml:"strategy,omitempty"`
 	Timeout       time.Duration `yaml:"timeout,omitempty"`
 	KeepHistory   bool          `yaml:"keepHistory,omitempty"`
+	Restore       *restoreFile  `yaml:"restore,omitempty"`
+}
+
+type restoreFile struct {
+	Volume         string `yaml:"volume"`
+	From           string `yaml:"from"`
+	Name           string `yaml:"name,omitempty"`
+	Merge          bool   `yaml:"merge,omitempty"`
+	NoRestorePoint bool   `yaml:"noRestorePoint,omitempty"`
+	Undo           bool   `yaml:"undo,omitempty"`
+}
+
+func optionsToFile(o release.Options) optionsFile {
+	f := optionsFile{DeleteVolumes: o.DeleteVolumes, Strategy: o.Strategy, Timeout: o.Timeout, KeepHistory: o.KeepHistory}
+	if r := o.Restore; r != nil {
+		f.Restore = &restoreFile{Volume: r.Volume, From: r.From, Name: r.Name, Merge: r.Merge, NoRestorePoint: r.NoRestorePoint, Undo: r.Undo}
+	}
+	return f
+}
+
+func (f optionsFile) options() release.Options {
+	o := release.Options{DeleteVolumes: f.DeleteVolumes, Strategy: f.Strategy, Timeout: f.Timeout, KeepHistory: f.KeepHistory}
+	if r := f.Restore; r != nil {
+		o.Restore = &release.RestoreOptions{Volume: r.Volume, From: r.From, Name: r.Name, Merge: r.Merge, NoRestorePoint: r.NoRestorePoint, Undo: r.Undo}
+	}
+	return o
 }
 
 func toFile(op release.Operation) operationFile {
@@ -657,12 +683,12 @@ func toFile(op release.Operation) operationFile {
 		steps = []release.Step{}
 	}
 	return operationFile{ID: op.ID, Release: op.Release, Type: op.Type, Revision: op.Revision, Status: string(op.Status), PID: op.PID,
-		Hostname: op.Hostname, Actor: op.Actor, Options: optionsFile(op.Options), Steps: steps, Error: op.Error, Downtime: op.Downtime, StartedAt: op.StartedAt, FinishedAt: op.FinishedAt}
+		Hostname: op.Hostname, Actor: op.Actor, Options: optionsToFile(op.Options), Steps: steps, Error: op.Error, Downtime: op.Downtime, StartedAt: op.StartedAt, FinishedAt: op.FinishedAt}
 }
 
 func (f operationFile) operation() release.Operation {
 	return release.Operation{ID: f.ID, Release: f.Release, Type: f.Type, Revision: f.Revision, Status: release.OperationStatus(f.Status),
-		PID: f.PID, Hostname: f.Hostname, Actor: f.Actor, Options: release.Options(f.Options), Steps: f.Steps, Error: f.Error, Downtime: f.Downtime, StartedAt: f.StartedAt, FinishedAt: f.FinishedAt}
+		PID: f.PID, Hostname: f.Hostname, Actor: f.Actor, Options: f.Options.options(), Steps: f.Steps, Error: f.Error, Downtime: f.Downtime, StartedAt: f.StartedAt, FinishedAt: f.FinishedAt}
 }
 
 func operationsPath(rel string) string { return "operations/" + rel + ".yaml" }

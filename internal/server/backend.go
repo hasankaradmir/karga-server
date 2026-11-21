@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"time"
 
@@ -180,9 +179,9 @@ func (b Backend) RestoreVolume(ctx context.Context, req api.VolumeRestoreRequest
 }
 
 // UndoRestoreVolume implements api.Backend.
-// shortcut: no restore points until V4 of the volume redesign.
-func (b Backend) UndoRestoreVolume(context.Context, api.VolumeUndoRestoreRequest, func(api.Event)) (*api.VolumeResult, error) {
-	return nil, fmt.Errorf("undo-restore: %w", api.ErrNotFound)
+func (b Backend) UndoRestoreVolume(ctx context.Context, req api.VolumeUndoRestoreRequest, progress func(api.Event)) (*api.VolumeResult, error) {
+	res, err := b.volumes.UndoRestore(wait(ctx), req.Release, req.Volume, events(progress))
+	return wireVolume(req.Release, req.Volume, res), err
 }
 
 func wireVolume(rel, vol string, res *releases.VolumeResult) *api.VolumeResult {

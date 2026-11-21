@@ -1,0 +1,6 @@
+apiVersion: karga.io/v1alpha1
+name: volapp
+version: 0.1.0
+description: A database on a volume (read-only image), what depends on it, and a reader of the volume
+runtime:
+  supported: [docker]

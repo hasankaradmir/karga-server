@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"slices"
 	"time"
 
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
@@ -110,9 +112,30 @@ func (s *Lifecycle) resume(ctx context.Context, rel release.Release, op release.
 		_, err := s.uninstallRelease(ctx, UninstallRequest{Name: rel.Name, Force: true,
 			KeepHistory: op.Options.KeepHistory, DeleteVolumes: op.Options.DeleteVolumes})
 		return err
+	case "volume-restore":
+		return s.resumeRestore(ctx, rel, op)
 	}
 	op.Status, op.Error = release.OperationAborted, "interrupted: karga-server stopped"
 	return s.c.store.FinishOperation(ctx, op)
+}
+
+// resumeRestore finishes an interrupted volume restore from the backup it kept: stopped before it,
+// the volume may be empty or half written. Without the backup the release is paused, so that the
+// reconciler does not start its workloads on such a volume.
+func (s *Lifecycle) resumeRestore(ctx context.Context, rel release.Release, op release.Operation) error {
+	o := op.Options.Restore
+	if o != nil {
+		if _, err := os.Stat(o.From); err == nil {
+			taken := slices.ContainsFunc(op.Steps, func(st release.Step) bool { return st.Action == restorePointStep })
+			_, err := (&Volumes{s.c}).restore(ctx, restoreInput{Release: rel.Name, Volume: o.Volume, Name: o.Name, From: o.From, Force: true,
+				Merge: o.Merge, NoRestorePoint: o.NoRestorePoint, Undo: o.Undo, pointTaken: taken}, emitter(nil), true)
+			return err
+		}
+	}
+	rel.Paused, rel.UpdatedAt = true, s.c.now()
+	op.Status, op.Error = release.OperationAborted, "interrupted, and its backup is gone: the release is paused. "+
+		"Restore the volume again (or 'karga volume undo-restore'), then 'karga resume'"
+	return errors.Join(s.c.store.FinishOperation(ctx, op), s.c.store.SaveRelease(ctx, rel))
 }
 
 // redeploy deploys the revision op was deploying. Without it (stopped before it was recorded) nothing

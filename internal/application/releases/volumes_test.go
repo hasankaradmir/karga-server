@@ -1,16 +1,22 @@
 package releases
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"errors"
+	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/hasankaradmir/karga-sdk/packages"
+	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -103,5 +109,177 @@ func TestVolumeBackupNotReady(t *testing.T) {
 	}
 	if res == nil || out.Len() == 0 || len(calls(e, "StartWorkload")) != 3 {
 		t.Fatalf("result %+v, %d bytes, started %v", res, out.Len(), calls(e, "StartWorkload"))
+	}
+}
+
+// put writes files into the volume through db's container.
+func put(t *testing.T, e *env, files ...string) {
+	t.Helper()
+	var b bytes.Buffer
+	tw := tar.NewWriter(&b)
+	for _, f := range files {
+		_ = tw.WriteHeader(&tar.Header{Name: f, Mode: 0o644, Size: int64(len(f))})
+		_, _ = tw.Write([]byte(f))
+	}
+	_ = tw.Close()
+	if err := e.rt.ImportPath(context.Background(), e.rt.Containers("vol", "db")[0], "/var/lib/db", &b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// volumeFiles lists the files in the volume.
+func volumeFiles(e *env) []string {
+	return slices.Sorted(maps.Keys(e.rt.VolumeFiles["vol-data"]))
+}
+
+func liveBackup(t *testing.T, e *env) *bytes.Buffer {
+	t.Helper()
+	var b bytes.Buffer
+	if _, err := e.svc.Volumes.Backup(context.Background(), VolumeBackupRequest{Release: "vol", Volume: "data", Live: true}, &b, nil); err != nil {
+		t.Fatal(err)
+	}
+	return &b
+}
+
+// A restore replaces the volume's files: a file written after the backup is gone. The files it had
+// are its restore point, and undo-restore puts them back.
+func TestVolumeRestoreReplacesAndUndoes(t *testing.T) {
+	e := installVolApp(t)
+	ctx := context.Background()
+	put(t, e, "a")
+	backup := liveBackup(t, e)
+	put(t, e, "b")
+	res, err := e.svc.Volumes.Restore(ctx, VolumeRestoreRequest{Release: "vol", Volume: "data", Name: "b.tgz"}, backup, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := volumeFiles(e); !slices.Equal(got, []string{"a"}) {
+		t.Fatalf("after restore: %v", got)
+	}
+	if res.RestorePoint != restorePointPath(e.svc.c.home, "vol", "data") {
+		t.Fatalf("restore point %q", res.RestorePoint)
+	}
+	// The containers are the same, created again and running.
+	if st, _ := e.rt.GetWorkload(ctx, e.rt.Containers("vol", "db")[0]); st.State != ports.StateRunning {
+		t.Fatalf("db: %+v", st)
+	}
+	if left, _ := os.ReadDir(filepath.Join(e.svc.c.home, "restores")); len(left) != 0 {
+		t.Fatalf("the upload is kept after the restore: %v", left)
+	}
+	undo, err := e.svc.Volumes.UndoRestore(ctx, "vol", "data", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := volumeFiles(e); !slices.Equal(got, []string{"a", "b"}) || len(undo.Stopped) != 4 {
+		t.Fatalf("after undo: %v %+v", got, undo)
+	}
+	if _, err := os.Stat(res.RestorePoint); err != nil {
+		t.Fatalf("undo removed the restore point: %v", err)
+	}
+	if _, err := e.svc.Volumes.UndoRestore(ctx, "vol", "other", nil); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("undo without a restore point: %v", err)
+	}
+	// uninstall --delete-volumes takes the restore points with the volumes.
+	if _, err := e.svc.Lifecycle.Uninstall(ctx, UninstallRequest{Name: "vol", DeleteVolumes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(res.RestorePoint); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("restore point after uninstall --delete-volumes: %v", err)
+	}
+}
+
+func TestVolumeRestoreMergeKeepsOtherFiles(t *testing.T) {
+	e := installVolApp(t)
+	put(t, e, "a")
+	backup := liveBackup(t, e)
+	put(t, e, "b")
+	res, err := e.svc.Volumes.Restore(context.Background(), VolumeRestoreRequest{Release: "vol", Volume: "data", Merge: true, NoRestorePoint: true}, backup, nil)
+	if err != nil || !slices.Equal(volumeFiles(e), []string{"a", "b"}) || res.RestorePoint != "" || len(calls(e, "DeleteVolume")) != 0 {
+		t.Fatalf("merge: %v %v %+v", volumeFiles(e), err, res)
+	}
+	if _, err := os.Stat(restorePointPath(e.svc.c.home, "vol", "data")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("--no-restore-point kept one: %v", err)
+	}
+}
+
+// Without room for the restore point nothing is touched.
+func TestVolumeRestoreNoRoom(t *testing.T) {
+	e := installVolApp(t)
+	put(t, e, "a")
+	backup := liveBackup(t, e)
+	put(t, e, "b")
+	e.svc.c.freeSpace = func(string) (uint64, error) { return 10, nil }
+	_, err := e.svc.Volumes.Restore(context.Background(), VolumeRestoreRequest{Release: "vol", Volume: "data"}, backup, nil)
+	if !errors.Is(err, ports.ErrInvalid) || !strings.Contains(err.Error(), "--no-restore-point") {
+		t.Fatalf("error: %v", err)
+	}
+	if len(calls(e, "StopWorkload")) != 0 || !slices.Equal(volumeFiles(e), []string{"a", "b"}) {
+		t.Fatalf("touched: stopped %v, files %v", calls(e, "StopWorkload"), volumeFiles(e))
+	}
+}
+
+// A restore karga-server stopped in the middle is finished when it starts again, from the backup it
+// kept, without taking the restore point again from a volume that may be half written.
+func TestVolumeRestoreResumes(t *testing.T) {
+	e := installVolApp(t)
+	ctx := context.Background()
+	put(t, e, "a")
+	backup := liveBackup(t, e)
+	from, err := e.svc.Volumes.keep(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	point := restorePointPath(e.svc.c.home, "vol", "data")
+	if err := os.MkdirAll(filepath.Dir(point), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(point, []byte("the one taken before the crash"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// What a process stopped after the restore point and before the volume was written leaves.
+	put(t, e, "half")
+	op, err := e.svc.c.begin(ctx, "vol", "volume-restore", 1, false, release.Options{Restore: &release.RestoreOptions{Volume: "data", From: from, Name: "b.tgz"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	op.Steps = []release.Step{{Kind: resource.KindVolume, Name: "data", Action: restorePointStep, Status: deployment.StepDone}}
+	if err := e.svc.c.store.SaveOperationSteps(ctx, op.ID, op.Steps); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.Lifecycle.resumeRelease(ctx, "vol"); err != nil {
+		t.Fatal(err)
+	}
+	if got := volumeFiles(e); !slices.Equal(got, []string{"a"}) {
+		t.Fatalf("after resume: %v", got)
+	}
+	if data, _ := os.ReadFile(point); string(data) != "the one taken before the crash" {
+		t.Fatalf("the resume took the restore point again: %q", data)
+	}
+	if _, err := os.Stat(from); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the kept backup is still there: %v", err)
+	}
+	ops, _ := e.svc.c.store.ListOperations(ctx, "vol", 0, 10)
+	if ops[0].Type != "volume-restore" || ops[0].Status != release.OperationSucceeded || ops[1].Status != release.OperationAborted {
+		t.Fatalf("operations: %+v / %+v", ops[0], ops[1])
+	}
+}
+
+// Without its backup an interrupted restore cannot be finished: the release is paused, so the
+// reconciler does not start the workloads on a half-written volume.
+func TestVolumeRestoreResumeWithoutBackup(t *testing.T) {
+	e := installVolApp(t)
+	ctx := context.Background()
+	if _, err := e.svc.c.begin(ctx, "vol", "volume-restore", 1, false, release.Options{Restore: &release.RestoreOptions{Volume: "data", From: "/nonexistent"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.Lifecycle.resumeRelease(ctx, "vol"); err != nil {
+		t.Fatal(err)
+	}
+	if rel, _ := e.svc.c.store.GetRelease(ctx, "vol"); !rel.Paused {
+		t.Fatalf("release not paused: %+v", rel)
+	}
+	ops, _ := e.svc.c.store.ListOperations(ctx, "vol", 0, 1)
+	if ops[0].Status != release.OperationAborted || !strings.Contains(ops[0].Error, "undo-restore") {
+		t.Fatalf("operation: %+v", ops[0])
 	}
 }
