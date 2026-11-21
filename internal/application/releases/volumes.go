@@ -162,7 +162,8 @@ func (s *Volumes) start(ctx context.Context, rt ports.Runtime, sc scope, stopped
 		emit(resource.KindWorkload, n, deployment.PhaseStart, "starting "+sc.container[n])
 		err := rt.StartWorkload(context.WithoutCancel(ctx), sc.container[n])
 		if err == nil {
-			err = s.c.env.WaitReady(ctx, rt, map[string]*resource.WorkloadSpec{sc.container[n]: sc.spec[n]}, 0)
+			// The wait reports what it waits for, as a deployment's does.
+			err = s.c.env.WaitReady(deployment.WithProgress(ctx, toEvent(emit)), rt, map[string]*resource.WorkloadSpec{sc.container[n]: sc.spec[n]}, 0)
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("workload %s did not get ready: %w: %w", n, ErrNotReady, err))
