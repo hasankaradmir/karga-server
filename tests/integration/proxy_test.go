@@ -186,6 +186,26 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 	if !strings.Contains(logged.String(), `"GET /logged HTTP/1.1"`) {
 		t.Fatalf("request not in the gateway access log:\n%s", logged.String())
 	}
+	// A request is in the log within a second or so: Envoy flushes it every second, not every 10s.
+	req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(port)+"/flushed", nil)
+	req.Host = "a.local"
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		_ = resp.Body.Close()
+	}
+	sent := time.Now()
+	for {
+		logged.Reset()
+		if err := s.Containers.Logs(ctx, releases.LogsRequest{Gateway: true, Tail: 20}, &logged); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(logged.String(), `"GET /flushed HTTP/1.1"`) {
+			break
+		}
+		if time.Since(sent) > 3*time.Second {
+			t.Fatalf("request not in the gateway access log 3s after it")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 	if after, _ := rt.GetWorkload(ctx, gatewayName(t, rt)); after.Labels[ports.LabelManaged] == "" || before.Name != after.Name {
 		t.Fatalf("gateway changed: %+v", after)
 	}
@@ -333,6 +353,50 @@ func TestGatewayKeepsLongConnections(t *testing.T) {
 		}
 	case <-time.After(45 * time.Second):
 		t.Fatal("replace did not finish after the connection closed")
+	}
+}
+
+// TestNoHealthCheckConnections: a tcp backend behind the release proxy and the gateway gets only
+// its clients' connections. Envoy's empty health-check connections made sshd and fail2ban lock out
+// every client behind the proxy's address (D44).
+func TestNoHealthCheckConnections(t *testing.T) {
+	t.Parallel()
+	requireLinux(t)
+	ctx := context.Background()
+	name := releaseName("it-gw-nohc")
+	s, rt := service(t, name)
+	l, echo := listener(t, gateway.ProtocolTCP)
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg,
+		Values: releases.Values{Sets: packages.Sets("echo=true", "echoListener="+l)}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	conns := func() string {
+		t.Helper()
+		var out strings.Builder
+		cmd := []string{"sh", "-c", "cat /tmp/conns 2>/dev/null | wc -l"}
+		if _, err := rt.Exec(ctx, containerName(t, rt, name, "web"), ports.ExecOptions{Cmd: cmd, Stdout: &out, Stderr: &out}); err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(out.String())
+	}
+	time.Sleep(5 * time.Second) // Envoy's checks ran every 500ms
+	if n := conns(); n != "0" {
+		t.Fatalf("the backend got %s connections from no client", n)
+	}
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(echo), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Write([]byte("hi\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := bufio.NewReader(conn).ReadString('\n'); err != nil || got != "hi\n" {
+		t.Fatalf("echo through the gateway: %q %v", got, err)
+	}
+	_ = conn.Close()
+	if n := conns(); n != "1" {
+		t.Fatalf("the backend got %s connections for one client", n)
 	}
 }
 

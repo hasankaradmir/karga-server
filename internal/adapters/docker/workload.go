@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -13,8 +14,10 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
+	"github.com/containerd/errdefs/pkg/errhttp"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/jsonstream"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -24,7 +27,7 @@ import (
 
 // EnsureImage implements ports.Runtime.
 // shortcut: pulls are anonymous; private registries need credentials from the docker config.
-func (r *Runtime) EnsureImage(ctx context.Context, ref, policy string) error {
+func (r *Runtime) EnsureImage(ctx context.Context, ref, policy string, progress func(current, total int64)) error {
 	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
 	if policy != "always" {
@@ -40,7 +43,7 @@ func (r *Runtime) EnsureImage(ctx context.Context, ref, policy string) error {
 	}
 	resp, err := r.c.ImagePull(ctx, ref, client.ImagePullOptions{})
 	if err == nil {
-		err = resp.Wait(ctx)
+		err = readPull(resp.JSONMessages(ctx), progress)
 		_ = resp.Close()
 	}
 	if err == nil {
@@ -53,6 +56,53 @@ func (r *Runtime) EnsureImage(ctx context.Context, ref, policy string) error {
 	}
 	return wrap(err, "pull image "+ref)
 }
+
+// readPull reads a pull's messages to the end, as the client's Wait does (an error message becomes
+// an error of its HTTP code), and reports the bytes downloaded so far of the layers seen so far.
+func readPull(msgs iter.Seq2[jsonstream.Message, error], progress func(current, total int64)) error {
+	type layer struct{ current, total int64 }
+	layers := map[string]*layer{}
+	for m, err := range msgs {
+		if err != nil {
+			return err
+		}
+		if m.Error != nil {
+			return &pullError{msg: m.Error.Message, errdef: errhttp.ToNative(m.Error.Code)}
+		}
+		if progress == nil || m.ID == "" {
+			continue
+		}
+		l := layers[m.ID]
+		switch {
+		case m.Status == "Downloading" && m.Progress != nil && m.Progress.Total > 0:
+			if l == nil {
+				l = &layer{}
+				layers[m.ID] = l
+			}
+			l.current, l.total = m.Progress.Current, m.Progress.Total
+		case m.Status == "Download complete" && l != nil:
+			l.current = l.total
+		default:
+			continue
+		}
+		var current, total int64
+		for _, l := range layers {
+			current, total = current+l.current, total+l.total
+		}
+		progress(current, total)
+	}
+	return nil
+}
+
+// pullError is an error the daemon reported in a pull's messages, with its kind (errdefs).
+type pullError struct {
+	msg    string
+	errdef error
+}
+
+func (e *pullError) Error() string { return e.msg }
+
+func (e *pullError) Unwrap() error { return e.errdef }
 
 var restartModes = map[string]container.RestartPolicyMode{
 	"always":         container.RestartPolicyAlways,

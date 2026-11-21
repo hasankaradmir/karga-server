@@ -88,7 +88,7 @@ func Run(t *testing.T, rt ports.Runtime, cfg Config) {
 	})
 
 	t.Run("stop timeout", func(t *testing.T) {
-		must(t, rt.EnsureImage(ctx, cfg.Image, "if-not-present"))
+		must(t, rt.EnsureImage(ctx, cfg.Image, "if-not-present", nil))
 		// The sleep command ignores SIGTERM, so stopping takes the whole stop timeout.
 		req := ports.WorkloadRequest{Name: name("stop"), Labels: labels("Workload", "stop"), Image: cfg.Image,
 			Command: cfg.SleepCommand, StopTimeout: time.Second}
@@ -106,7 +106,7 @@ func Run(t *testing.T, rt ports.Runtime, cfg Config) {
 		if cfg.VolumeImage == "" {
 			t.Skip("no VolumeImage")
 		}
-		must(t, rt.EnsureImage(ctx, cfg.VolumeImage, "if-not-present"))
+		must(t, rt.EnsureImage(ctx, cfg.VolumeImage, "if-not-present", nil))
 		req := ports.WorkloadRequest{Name: name("anon"), Labels: labels("Workload", "anon"), Image: cfg.VolumeImage}
 		must(t, rt.CreateWorkload(ctx, req))
 		st, err := rt.GetWorkload(ctx, req.Name)
@@ -130,7 +130,7 @@ func Run(t *testing.T, rt ports.Runtime, cfg Config) {
 	})
 
 	t.Run("image never missing", func(t *testing.T) {
-		if err := rt.EnsureImage(ctx, "karga.invalid/missing:0", "never"); !errors.Is(err, ports.ErrImageNotFound) {
+		if err := rt.EnsureImage(ctx, "karga.invalid/missing:0", "never", nil); !errors.Is(err, ports.ErrImageNotFound) {
 			t.Fatalf("want ErrImageNotFound, got %v", err)
 		}
 	})
@@ -146,7 +146,7 @@ func Run(t *testing.T, rt ports.Runtime, cfg Config) {
 	})
 
 	t.Run("workload lifecycle", func(t *testing.T) {
-		must(t, rt.EnsureImage(ctx, cfg.Image, "if-not-present"))
+		must(t, rt.EnsureImage(ctx, cfg.Image, "if-not-present", nil))
 		netReq := ports.NetworkRequest{Name: name("wnet"), Labels: labels("Network", "wnet"), Driver: "bridge"}
 		must(t, rt.CreateNetwork(ctx, netReq))
 		t.Cleanup(func() { _ = rt.DeleteNetwork(ctx, netReq.Name) })

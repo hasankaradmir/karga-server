@@ -14,7 +14,6 @@ import (
 	"github.com/hasankaradmir/karga-sdk/resource"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
-	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -44,6 +43,32 @@ func probedWorkload(t *testing.T, rt *fakeruntime.Runtime, name, addr string) in
 		t.Fatal(err)
 	}
 	return port
+}
+
+// crashLooping reports every workload restarting, one more restart on each look.
+type crashLooping struct {
+	*fakeruntime.Runtime
+	restarts int
+}
+
+func (r *crashLooping) GetWorkload(ctx context.Context, name string) (ports.WorkloadStatus, error) {
+	st, err := r.Runtime.GetWorkload(ctx, name)
+	r.restarts++
+	st.State, st.RestartCount, st.ExitCode = "restarting", r.restarts, 1
+	return st, err
+}
+
+func TestWaitReadyStopsOnRestarts(t *testing.T) {
+	rt := &crashLooping{Runtime: fakeruntime.New("img")}
+	probedWorkload(t, rt.Runtime, "w", "127.0.0.1:1")
+	start := time.Now()
+	_, err := testEnv.waitReady(context.Background(), rt, []readyTarget{{"w", httpSpec(1, "")}}, time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "workload w keeps restarting (3 restarts, last exit code 1)") {
+		t.Fatalf("want keeps restarting, got %v", err)
+	}
+	if waited := time.Since(start); waited > 10*time.Second {
+		t.Fatalf("waited %s for a crashing container", waited)
+	}
 }
 
 func TestWaitReadyProbes(t *testing.T) {
@@ -108,9 +133,5 @@ func TestProbeNeedsLinux(t *testing.T) {
 	rs[0].Spec.(*resource.WorkloadSpec).HealthCheck = &resource.HealthCheck{Type: resource.HealthTCP, Port: 6379}
 	if _, err := testEnv.Diff("cache", rs, nil, "", nil); err == nil || !strings.Contains(err.Error(), "needs Linux with a local, rootful Docker") {
 		t.Fatalf("want unreachable error, got %v", err)
-	}
-	// Behind the proxy Envoy checks the same path.
-	if got := proxyops.HTTPHealthPath(httpSpec(8080, ""), 8080); got != "/health" {
-		t.Fatalf("envoy health path: %q", got)
 	}
 }

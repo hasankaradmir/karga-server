@@ -51,8 +51,6 @@ type Route struct {
 	// TLSSecret and CertDir (its materialized directory, with tls.crt and tls.key) serve HTTPS.
 	TLSSecret string `yaml:"tlsSecret,omitempty"`
 	CertDir   string `yaml:"certDir,omitempty"`
-	// HealthPath is checked by HTTP instead of a TCP connect (the workload's http health check).
-	HealthPath string `yaml:"healthPath,omitempty"`
 }
 
 // key is what the route takes on its listener (resource.Exposure.RouteKey).
@@ -94,7 +92,7 @@ func New(rt Runtime, host *proxyops.Host, home string) *Gateway {
 // Runtime is what the host gateway needs of a container runtime.
 type Runtime interface {
 	proxyops.Remover
-	EnsureImage(ctx context.Context, ref, policy string) error
+	EnsureImage(ctx context.Context, ref, policy string, progress func(current, total int64)) error
 	CreateWorkload(ctx context.Context, req ports.WorkloadRequest) error
 	StartWorkload(ctx context.Context, name string) error
 	ListLabeled(ctx context.Context, key string) ([]ports.Object, error)
@@ -259,7 +257,7 @@ func syncLocked(ctx context.Context, rt Runtime, h *proxyops.Host, home string) 
 		}
 	}
 	if !have {
-		if err := rt.EnsureImage(ctx, c.Image, "if-not-present"); err != nil {
+		if err := rt.EnsureImage(ctx, c.Image, "if-not-present", nil); err != nil {
 			return nil, err
 		}
 		if err := h.Proxies.WriteInstance(dir, instance(want.Name), "gateway", 0o666); err != nil {

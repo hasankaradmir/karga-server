@@ -168,6 +168,8 @@ func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 		case errors.As(err, &execErr) && !execErr.Disrupted && res.From > 0:
 			res.Status = string(in.Existing.Status)
 			hint += fmt.Sprintf("; nothing that was running changed and revision %d is still serving", res.From)
+		case execErr != nil && len(execErr.Down) > 0 && res.From > 0:
+			hint += downHint(execErr.Down, in.Name, res.From)
 		case res.From > 0:
 			hint += fmt.Sprintf("; revision %d stays current. Inspect with 'karga status %s' (and 'docker logs'), then fix and upgrade or run 'karga rollback %s'", res.From, in.Name, in.Name)
 		case s.discard(context.WithoutCancel(ctx), in.Name):
@@ -393,6 +395,16 @@ func (s *core) settle(ctx context.Context, rel release.Release, revision int, st
 }
 
 func titled(t string) string { return strings.ToUpper(t[:1]) + t[1:] }
+
+// downHint says which workloads a failed recreate left without a container, and how to bring
+// revision from back. The rollback needs the number: without it, it goes to the revision before.
+func downHint(down []string, name string, from int) string {
+	what := fmt.Sprintf("workload %s is down: its revision %d container was", down[0], from)
+	if len(down) > 1 {
+		what = fmt.Sprintf("workloads %s are down: their revision %d containers were", strings.Join(down, ", "), from)
+	}
+	return fmt.Sprintf(" and %s replaced. Run 'karga rollback %s %d' to start revision %d again", what, name, from, from)
+}
 
 // record persists one executor step: progress on the operation and the applied state of the resource.
 // A failed workload is stored with an empty digest so the next plan recreates it; a kept-previous

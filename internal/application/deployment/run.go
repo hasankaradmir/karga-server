@@ -5,7 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
@@ -27,6 +31,7 @@ type run struct {
 	owned map[string]bool
 
 	disrupted bool
+	down      []string // workloads whose replaced container's successor did not get ready
 	changed   []Change // recreated workloads; changed[:waited] are ready
 	waited    int
 	proxyDone bool
@@ -36,10 +41,14 @@ type run struct {
 // report records the outcome of a change's step and wraps its error with the change.
 func (r *run) report(ctx context.Context, c Change, action string, err error) error {
 	st := release.Step{Kind: c.Kind, Name: c.Name, Action: action, Status: StepDone}
-	if err != nil {
+	switch {
+	case err != nil:
 		st.Status, st.Error = StepFailed, err.Error()
 		progress(ctx, c.Kind, c.Name, PhaseFailed, "%s: %v", action, err)
-	} else {
+	case r.pending(c):
+		// A recreated workload is done once it is ready: waitChanged says so.
+		progress(ctx, c.Kind, c.Name, PhaseStart, "%s started", action)
+	default:
 		progress(ctx, c.Kind, c.Name, PhaseDone, "%s", action)
 	}
 	if serr := r.req.OnStep(c, st); serr != nil {
@@ -76,18 +85,18 @@ func (r *run) prepare(ctx context.Context) error {
 		}
 		if w, ok := workloadOf(c); ok {
 			progress(ctx, c.Kind, c.Name, PhasePull, "image %s (%s)", w.Image, w.PullPolicy)
-			if err := r.rt.EnsureImage(ctx, w.Image, w.PullPolicy); err != nil {
+			if err := r.pull(ctx, c.Kind, c.Name, w.Image, w.PullPolicy); err != nil {
 				return fmt.Errorf("%s %q: %w", c.Kind, c.Name, err)
 			}
 		}
 		if c.Kind == KindProxy {
-			if err := r.rt.EnsureImage(ctx, c.Proxy.Image, "if-not-present"); err != nil {
+			if err := r.pull(ctx, c.Kind, c.Name, c.Proxy.Image, "if-not-present"); err != nil {
 				return fmt.Errorf("%s %q: %w", c.Kind, c.Name, err)
 			}
 		}
 	}
 	if len(r.svcs.published()) > 0 {
-		if err := r.rt.EnsureImage(ctx, r.e.host.Proxies.Container().Image, "if-not-present"); err != nil {
+		if err := r.pull(ctx, "Gateway", gateway.ContainerName, r.e.host.Proxies.Container().Image, "if-not-present"); err != nil {
 			return fmt.Errorf("gateway: %w", err)
 		}
 	}
@@ -122,13 +131,60 @@ func (r *run) removeProxies(ctx context.Context) error {
 	return nil
 }
 
+// pull makes image available; while Docker pulls it, every WaitEvery it reports how far it got.
+func (r *run) pull(ctx context.Context, kind, name, image, policy string) error {
+	var current, total atomic.Int64
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		start := time.Now()
+		tick := time.NewTicker(r.e.waitEvery())
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				took := time.Since(start).Round(time.Second)
+				if t := total.Load(); t > 0 {
+					progress(ctx, kind, name, PhasePull, "pulling %s: %s/%s (%s)", image, bytesOf(current.Load()), bytesOf(t), took)
+				} else {
+					progress(ctx, kind, name, PhasePull, "pulling %s (%s)", image, took)
+				}
+			}
+		}
+	})
+	err := r.rt.EnsureImage(ctx, image, policy, func(c, t int64) { current.Store(c); total.Store(t) })
+	close(done)
+	wg.Wait() // no progress event after this returns
+	return err
+}
+
+// bytesOf writes n bytes as Docker does: kB, MB or GB (powers of 1000).
+func bytesOf(n int64) string {
+	switch {
+	case n >= 1e9:
+		return fmt.Sprintf("%.1fGB", float64(n)/1e9)
+	case n >= 1e6:
+		return fmt.Sprintf("%.0fMB", float64(n)/1e6)
+	default:
+		return fmt.Sprintf("%.0fkB", float64(n)/1e3)
+	}
+}
+
+// pending reports whether c is a recreated workload not waited for yet.
+func (r *run) pending(c Change) bool {
+	return slices.ContainsFunc(r.changed[r.waited:], func(w Change) bool { return w.Kind == c.Kind && w.Name == c.Name })
+}
+
 // waitPending waits for the recreated workloads not waited for yet.
 func (r *run) waitPending(ctx context.Context) error {
 	if r.waited == len(r.changed) {
 		return nil
 	}
-	err := r.e.waitChanged(ctx, r.rt, r.req.Release, r.changed[r.waited:], r.req.Timeout, r.reporter(ctx))
+	down, err := r.e.waitChanged(ctx, r.rt, r.req.Release, r.changed[r.waited:], r.req.Timeout, r.reporter(ctx))
 	r.waited = len(r.changed)
+	r.down = append(r.down, down...)
 	return err
 }
 

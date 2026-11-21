@@ -148,7 +148,7 @@ func TestSecretReadableByNonRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.EnsureImage(ctx, "busybox:1.37", "if-not-present"); err != nil {
+	if err := rt.EnsureImage(ctx, "busybox:1.37", "if-not-present", nil); err != nil {
 		t.Fatal(err)
 	}
 	name := release + "-reader"
@@ -187,7 +187,7 @@ func TestMemoryLimitIsEnforced(t *testing.T) {
 	ctx := context.Background()
 	rt := newRuntime(t)
 	name := releaseName("it-oom")
-	if err := rt.EnsureImage(ctx, "busybox:1.37", "if-not-present"); err != nil {
+	if err := rt.EnsureImage(ctx, "busybox:1.37", "if-not-present", nil); err != nil {
 		t.Fatal(err)
 	}
 	req := ports.WorkloadRequest{
@@ -228,7 +228,7 @@ func TestReadOnlyRootFilesystem(t *testing.T) {
 	ctx := context.Background()
 	rt := newRuntime(t)
 	name := releaseName("it-ro")
-	if err := rt.EnsureImage(ctx, "busybox:1.37", "if-not-present"); err != nil {
+	if err := rt.EnsureImage(ctx, "busybox:1.37", "if-not-present", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.CreateWorkload(ctx, ports.WorkloadRequest{

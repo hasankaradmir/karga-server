@@ -92,8 +92,7 @@ func proxyConfig(ctx context.Context, rt ports.Runtime, plan Plan, svcs services
 			}
 			cluster := proxyCluster(n, p.Port)
 			cfg.TCP = append(cfg.TCP, ports.ProxyTCPListener{Address: "0.0.0.0", Port: p.Port, Cluster: cluster})
-			cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: cluster, Host: alias, Port: port, DNS: true,
-				HealthPath: proxyops.HTTPHealthPath(w, port)})
+			cfg.Clusters = append(cfg.Clusters, ports.ProxyCluster{Name: cluster, Host: alias, Port: port, DNS: true})
 		}
 	}
 	return cfg
@@ -115,9 +114,6 @@ func exposeRoutes(svcs services, paths map[Key]string) []gateway.Route {
 				continue
 			}
 			r := gateway.Route{Service: n, Port: p.Port, Listener: e.Listener, Host: e.Host, Path: e.Path, PathType: e.PathType, To: e.To}
-			if port, ok := svcs.target(n, p); ok {
-				r.HealthPath = proxyops.HTTPHealthPath(svcs.wl[s.Workload], port)
-			}
 			if e.TLS != nil {
 				r.TLSSecret, r.CertDir = e.TLS.Secret, paths[Key{resource.KindSecret, e.TLS.Secret}]
 			}

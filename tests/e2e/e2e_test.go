@@ -239,7 +239,9 @@ func redis(t *testing.T, port int, command string) string {
 		if reply.Len() > 0 {
 			return reply.String()
 		}
+		// The proxy accepted but Redis did not answer: it is starting (after a restore, ~50ms).
 		lastErr = fmt.Errorf("empty reply")
+		time.Sleep(250 * time.Millisecond)
 	}
 	t.Fatalf("redis %q on port %d: %v", command, port, lastErr)
 	return ""

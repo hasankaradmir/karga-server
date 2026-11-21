@@ -144,7 +144,8 @@ Secrets (and what mounts them) once more on its next upgrade.
   add to the `karga` group only users you trust with it. The socket is local only; there is no
   remote API. karga-server runs as the unprivileged `karga` user (in the `docker` group), with
   `NoNewPrivileges`, a read-only system and no access to home directories (packages and values files
-  travel from the CLI over the socket).
+  travel from the CLI over the socket). Its only capability is `CAP_NET_BIND_SERVICE`: before the
+  gateway takes a listener's port it binds it for a moment to see that it is free, also below 1024.
 - Packages cannot open ports: workloads publish nothing, and only the gateway's listeners, which the
   host's administrator defines, are reachable from outside, on `127.0.0.1` unless `karga gateway set
   listen` says otherwise.

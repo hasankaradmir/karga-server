@@ -24,6 +24,9 @@ const (
 type ExecError struct {
 	Err       error
 	Disrupted bool
+	// Down are the workloads left without a running container: the previous one was replaced
+	// (recreate) by one that did not get ready and was stopped.
+	Down []string
 }
 
 func (e *ExecError) Error() string { return e.Err.Error() }

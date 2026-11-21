@@ -134,10 +134,12 @@ func TestUpgradeFailRollback(t *testing.T) {
 		t.Fatalf("upgrade: %+v image %s", res, e.image())
 	}
 
-	// Failed upgrade: revision 3 failed, current stays 2, container stopped but kept.
+	// Failed upgrade: revision 3 failed, current stays 2, container stopped but kept. Revision 2's
+	// container was replaced, so the release is down and the hint says how to start it again.
 	e.rt.Health = ports.HealthUnhealthy
-	if _, err := e.upgrade("image.tag=7.0"); err == nil {
-		t.Fatal("expected failed upgrade")
+	if _, err := e.upgrade("image.tag=7.0"); err == nil || !strings.Contains(err.Error(),
+		"revision 3 failed and workload redis is down: its revision 2 container was replaced. Run 'karga rollback cache 2' to start revision 2 again") {
+		t.Fatalf("failed upgrade: %v", err)
 	}
 	rel := e.release()
 	if rel.Status != release.StatusFailed || rel.CurrentRevision != 2 {
@@ -931,5 +933,25 @@ func TestContainerNamesFollowTheDigest(t *testing.T) {
 	must[*ReconcileResult](t)(e.svc.Lifecycle.Repair(ctx, "cache", true))
 	if got := e.rt.Containers("cache", "redis"); !slices.Equal(got, second) {
 		t.Fatalf("the repair named it %v, want %v", got, second)
+	}
+}
+
+// TestRecreateProgressOrder: a recreated workload is "started" when its container starts and
+// "done" only once it is ready, after the wait.
+func TestRecreateProgressOrder(t *testing.T) {
+	e := newEnv(t)
+	must[*Result](t)(e.install())
+	var got []string
+	_, err := e.svc.Lifecycle.Upgrade(context.Background(), UpgradeRequest{CommonOptions: common(), Name: "cache", Package: redisPkg, Values: e.opts("image.tag=7.2")},
+		func(ev deployment.Event) {
+			if ev.Kind == resource.KindWorkload && ev.Name == "redis" && (ev.Phase == deployment.PhaseStart || ev.Phase == deployment.PhaseDone) {
+				got = append(got, ev.Phase+" "+ev.Detail)
+			}
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ", ") != "start update started, done update" {
+		t.Fatalf("events: %q", got)
 	}
 }

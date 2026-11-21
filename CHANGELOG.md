@@ -6,6 +6,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- Image pulls report progress: every two seconds `pulling <image>: 57MB/165MB (4s)`, the bytes
+  downloaded of the layers Docker reported so far, for workload, release proxy and gateway images.
+  A first install used to show nothing for as long as the pull took.
 - Exposure paths (D43): `pathType` `prefix` (the default) takes the path and below it by segment,
   `exact` only the path; `to` replaces a prefix in what the Service receives (`x-forwarded-prefix`
   tells it). **Changed:** a prefix was a plain string prefix: `/api` no longer takes `/apix`.
@@ -23,6 +26,13 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- A recreated workload's progress says `create started` / `update started` when its container
+  starts and `create done` / `update done` once it is ready, after the wait; `done` came before the
+  `waiting for ... to be ready` lines.
+- One health source (D44): the release proxy and the gateway run no Envoy health checks; the
+  workload's own check is the only one. Envoy's TCP checks (an empty connection every 500ms) made
+  sshd and fail2ban lock out every client behind the proxy, so git over SSH answered `Not allowed at
+  this time`; HTTP services got the same path checked about four times a second.
 - The gateway reaches release proxies on the edge network (D42): one internal Docker bridge,
   `karga-edge`, with traffic between its containers off; each release has a fixed pair of addresses
   (`--edge-subnet`, `KARGA_EDGE_SUBNET`, default `10.213.0.0/16`). Proxies publish no port: no NAT
@@ -87,6 +97,17 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- A request showed up in `karga logs --gateway` up to 10 seconds late: Envoy flushed its access log
+  every 10s. It flushes every second now (`--file-flush-interval-msec 1000`).
+- The first exposure on a port below 1024 (`http` 80, `https` 443) warned `could not be checked
+  (bind: permission denied)`, and another program holding the port was found only when the gateway
+  started. The service has `CAP_NET_BIND_SERVICE` now (its only capability), so the check works;
+  `install.sh` restarts the service when its unit file changed, not only its binary.
+- A recreate whose new container did not get ready said `revision N stays current`, though the
+  previous container was gone and the release was down; it says `workload X is down` and gives the
+  rollback with its revision (`karga rollback <release> N`; without it the rollback goes one
+  further back). A container that keeps crashing fails the wait after 3 restarts (`keeps
+  restarting`) instead of at the timeout.
 - A container name the plan would create that another release, or something else than karga,
   holds failed the deployment half way. It is refused before anything changes, naming the release
   that holds the container.

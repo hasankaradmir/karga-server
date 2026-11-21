@@ -242,7 +242,7 @@ func (r *Runtime) Info(context.Context) (ports.RuntimeInfo, error) {
 }
 
 // EnsureImage implements ports.Runtime. Images under "missing/" or "karga.invalid/" cannot be pulled.
-func (r *Runtime) EnsureImage(_ context.Context, ref, policy string) error {
+func (r *Runtime) EnsureImage(_ context.Context, ref, policy string, _ func(current, total int64)) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.call("EnsureImage", ref); err != nil {

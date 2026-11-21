@@ -314,11 +314,15 @@ failure.
 
 - `exec`: Docker's healthcheck runs a command in the container.
 - `tcp` and `http`: karga checks the port from the host at the container's address, so the image
-  needs no tool. Behind the release proxy Envoy checks the same HTTP path before routing to a new
-  container.
+  needs no tool.
 
 All take `interval`, `timeout`, `retries` and `startPeriod`; failures during the start period do not
 count.
+
+The workload's health check is the only one: the release proxy and the gateway run no health checks
+of their own (D44). karga routes to a new container only once its check passed, and repairs one that
+fails later. A `tcp` check is an empty connection; services that penalize those (sshd since OpenSSH
+9.8, fail2ban) need an `http` or `exec` check.
 
 ## 10. Security model
 

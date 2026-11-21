@@ -106,3 +106,28 @@ func TestReplaceWithHTTPHealth(t *testing.T) {
 		t.Fatalf("requests failed or v2 never served: host %v, network %s", host.seen(), res)
 	}
 }
+
+// TestRecreateCrashLoop: a recreate whose new container keeps crashing fails within seconds, not
+// at the timeout, and says the release is down and which revision to roll back to.
+func TestRecreateCrashLoop(t *testing.T) {
+	t.Parallel()
+	requireLinux(t)
+	ctx := context.Background()
+	name := releaseName("it-crash")
+	s, _ := service(t, name)
+	sets := func(extra ...string) releases.Values {
+		return releases.Values{Sets: packages.Sets(append([]string{"strategy=recreate", "health=tcp"}, extra...)...)}
+	}
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: webPkg, Values: sets()}, nil); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, err := s.Lifecycle.Upgrade(ctx, releases.UpgradeRequest{CommonOptions: opts(), Name: name, Package: webPkg, Values: sets("crash=true")}, nil)
+	if err == nil || !strings.Contains(err.Error(), "keeps restarting") ||
+		!strings.Contains(err.Error(), "workload web is down: its revision 1 container was replaced. Run 'karga rollback "+name+" 1'") {
+		t.Fatalf("crashing upgrade: %v", err)
+	}
+	if waited := time.Since(start); waited > 30*time.Second {
+		t.Fatalf("the crashing upgrade took %s", waited)
+	}
+}
