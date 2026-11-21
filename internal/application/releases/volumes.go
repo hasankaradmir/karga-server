@@ -429,6 +429,10 @@ func (s *Volumes) restore(ctx context.Context, in restoreInput, emit func(kind, 
 	if res.Stopped, err = stop(ctx, rt, sc, emit); err != nil {
 		return res, err
 	}
+	if resumed {
+		// The interrupted restore had stopped them already: they are all started again, in order.
+		res.Stopped = sc.order
+	}
 	if point {
 		emit(resource.KindVolume, in.Volume, deployment.PhaseCreate, "keeping its files as a restore point")
 		if res.RestorePoint, err = s.saveRestorePoint(ctx, in, ms[0]); err != nil {

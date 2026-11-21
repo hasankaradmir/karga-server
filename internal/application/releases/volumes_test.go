@@ -246,11 +246,22 @@ func TestVolumeRestoreResumes(t *testing.T) {
 	if err := e.svc.c.store.SaveOperationSteps(ctx, op.ID, op.Steps); err != nil {
 		t.Fatal(err)
 	}
+	// The interrupted restore had stopped them all.
+	for _, n := range []string{"worker", "reader", "app", "db"} {
+		if err := e.rt.StopWorkload(ctx, e.rt.Containers("vol", n)[0], 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.rt.Calls = nil
 	if err := e.svc.Lifecycle.resumeRelease(ctx, "vol"); err != nil {
 		t.Fatal(err)
 	}
 	if got := volumeFiles(e); !slices.Equal(got, []string{"a"}) {
 		t.Fatalf("after resume: %v", got)
+	}
+	// The resume starts them again itself, in order, rather than leave them to the reconciler.
+	if got := calls(e, "StartWorkload"); !slices.Equal(got, []string{"db", "app", "reader", "worker"}) {
+		t.Fatalf("started %v", got)
 	}
 	if data, _ := os.ReadFile(point); string(data) != "the one taken before the crash" {
 		t.Fatalf("the resume took the restore point again: %q", data)
