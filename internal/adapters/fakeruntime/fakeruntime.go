@@ -46,8 +46,10 @@ type Runtime struct {
 	Capabilities []string
 	// Output is what Logs returns for a workload.
 	Output map[string]string
-	// Files holds file contents by workload and absolute path, for ExportPath and ImportPath.
-	Files map[string]map[string][]byte
+	// Files holds file contents by workload and absolute path, for ExportPath and ImportPath; files
+	// below a volume mount are in VolumeFiles, by volume and path in it, so they outlive containers.
+	Files       map[string]map[string][]byte
+	VolumeFiles map[string]map[string][]byte
 	// ExecFunc answers Exec (default: no output, exit code 0).
 	ExecFunc func(name string, opts ports.ExecOptions) int
 	// ImageVolumes are the VOLUME paths of an image: a container gets an anonymous volume (named
@@ -311,7 +313,16 @@ func (r *Runtime) DeleteVolume(_ context.Context, name string) error {
 	if err := r.call("DeleteVolume", name); err != nil {
 		return err
 	}
+	// Docker refuses to remove a volume a container (running or not) mounts.
+	for wn, w := range r.Workloads {
+		for _, m := range w.Request.Mounts {
+			if m.Type == ports.MountVolume && m.Source == name {
+				return fmt.Errorf("volume %s is in use by %s: %w", name, wn, ports.ErrConflict)
+			}
+		}
+	}
 	delete(r.Volumes, name)
+	delete(r.VolumeFiles, name)
 	return nil
 }
 
@@ -529,13 +540,14 @@ func (r *Runtime) ExportPath(_ context.Context, workload, path string, w io.Writ
 		return fmt.Errorf("workload %s: %w", workload, ports.ErrNotFound)
 	}
 	path = strings.TrimSuffix(path, "/")
+	files := r.filesOf(workload)
 	tw := tar.NewWriter(w)
-	for _, name := range slices.Sorted(maps.Keys(r.Files[workload])) {
+	for _, name := range slices.Sorted(maps.Keys(files)) {
 		rel, ok := strings.CutPrefix(name, path+"/")
 		if !ok {
 			continue
 		}
-		data := r.Files[workload][name]
+		data := files[name]
 		if err := tw.WriteHeader(&tar.Header{Name: pathpkg.Base(path) + "/" + rel, Mode: 0o644, Size: int64(len(data))}); err != nil {
 			return err
 		}
@@ -575,14 +587,51 @@ func (r *Runtime) ImportPath(_ context.Context, workload, dir string, rd io.Read
 	if _, ok := r.Workloads[workload]; !ok {
 		return fmt.Errorf("workload %s: %w", workload, ports.ErrNotFound)
 	}
+	for abs, data := range files {
+		store, key := r.fileStore(workload, abs)
+		store[key] = data
+	}
+	return nil
+}
+
+// fileStore is where the file at abs of workload lives: its volume's files when a volume is mounted
+// there, else the container's own.
+func (r *Runtime) fileStore(workload, abs string) (map[string][]byte, string) {
+	for _, m := range r.Workloads[workload].Request.Mounts {
+		if rel, ok := strings.CutPrefix(abs, strings.TrimSuffix(m.Target, "/")+"/"); ok && m.Type == ports.MountVolume {
+			if r.VolumeFiles == nil {
+				r.VolumeFiles = map[string]map[string][]byte{}
+			}
+			if r.VolumeFiles[m.Source] == nil {
+				r.VolumeFiles[m.Source] = map[string][]byte{}
+			}
+			return r.VolumeFiles[m.Source], rel
+		}
+	}
 	if r.Files == nil {
 		r.Files = map[string]map[string][]byte{}
 	}
 	if r.Files[workload] == nil {
 		r.Files[workload] = map[string][]byte{}
 	}
-	maps.Copy(r.Files[workload], files)
-	return nil
+	return r.Files[workload], abs
+}
+
+// filesOf is every file workload sees, by absolute path: its own and those of its volumes.
+func (r *Runtime) filesOf(workload string) map[string][]byte {
+	out := maps.Clone(r.Files[workload])
+	if out == nil {
+		out = map[string][]byte{}
+	}
+	for _, m := range r.Workloads[workload].Request.Mounts {
+		if m.Type != ports.MountVolume {
+			continue
+		}
+		for rel, data := range r.VolumeFiles[m.Source] {
+			out[strings.TrimSuffix(m.Target, "/")+"/"+rel] = data
+		}
+	}
+	return out
 }
 
 // ListLabeled implements ports.Runtime.

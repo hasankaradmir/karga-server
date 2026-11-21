@@ -87,6 +87,45 @@ func Run(t *testing.T, rt ports.Runtime, cfg Config) {
 		must(t, rt.DeleteVolume(ctx, req.Name))
 	})
 
+	// A volume's files outlive its containers, can be written through a container that was created
+	// but never started (even with a read-only image), and a volume a container mounts cannot be
+	// deleted. A restore that recreates a volume relies on all three.
+	t.Run("volume data", func(t *testing.T) {
+		must(t, rt.EnsureImage(ctx, cfg.Image, "if-not-present", nil))
+		vol := ports.VolumeRequest{Name: name("data"), Labels: labels("Volume", "data"), Driver: "local"}
+		must(t, rt.CreateVolume(ctx, vol))
+		t.Cleanup(func() { _ = rt.DeleteVolume(ctx, vol.Name) })
+		req := ports.WorkloadRequest{Name: name("writer"), Labels: labels("Workload", "writer"), Image: cfg.Image, Command: cfg.SleepCommand,
+			ReadOnlyRootfs: true, Mounts: []ports.Mount{{Type: ports.MountVolume, Source: vol.Name, Target: "/data"}}}
+		must(t, rt.CreateWorkload(ctx, req))
+		t.Cleanup(func() { _ = rt.DeleteWorkload(ctx, req.Name) })
+		var in bytes.Buffer
+		tw := tar.NewWriter(&in)
+		must(t, tw.WriteHeader(&tar.Header{Name: "kept.txt", Mode: 0o644, Size: 4}))
+		_, _ = tw.Write([]byte("kept"))
+		must(t, tw.Close())
+		must(t, rt.ImportPath(ctx, req.Name, "/data", &in))
+		if err := rt.DeleteVolume(ctx, vol.Name); !errors.Is(err, ports.ErrConflict) {
+			t.Fatalf("deleting a mounted volume: want ErrConflict, got %v", err)
+		}
+		must(t, rt.DeleteWorkload(ctx, req.Name))
+		req.Name = name("reader")
+		must(t, rt.CreateWorkload(ctx, req))
+		t.Cleanup(func() { _ = rt.DeleteWorkload(ctx, req.Name) })
+		var out bytes.Buffer
+		must(t, rt.ExportPath(ctx, req.Name, "/data", &out))
+		tr := tar.NewReader(&out)
+		found := false
+		for h, err := tr.Next(); err == nil; h, err = tr.Next() {
+			found = found || h.Name == "data/kept.txt"
+		}
+		if !found {
+			t.Fatal("data/kept.txt not in the volume after its first container went")
+		}
+		must(t, rt.DeleteWorkload(ctx, req.Name))
+		must(t, rt.DeleteVolume(ctx, vol.Name))
+	})
+
 	t.Run("stop timeout", func(t *testing.T) {
 		must(t, rt.EnsureImage(ctx, cfg.Image, "if-not-present", nil))
 		// The sleep command ignores SIGTERM, so stopping takes the whole stop timeout.
