@@ -51,8 +51,10 @@ func Image() string {
 // entrypoint (envoy) and the debian one accept it.
 func CommandFor(instance string) []string {
 	// No hot restart: karga replaces an Envoy by starting another, and two gateways in the host
-	// network would claim the same hot-restart socket.
-	return []string{"-c", path.Join(MountPath, instance, bootstrapFile), "--concurrency", "1", "--log-level", "warn", "--disable-hot-restart"}
+	// network would claim the same hot-restart socket. Access log lines are flushed every second
+	// (Envoy's default is 10s: karga logs --gateway showed a request up to 10s late).
+	return []string{"-c", path.Join(MountPath, instance, bootstrapFile), "--concurrency", "1", "--log-level", "warn", "--disable-hot-restart",
+		"--file-flush-interval-msec", "1000"}
 }
 
 const (

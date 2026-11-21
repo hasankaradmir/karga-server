@@ -97,6 +97,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- A request showed up in `karga logs --gateway` up to 10 seconds late: Envoy flushed its access log
+  every 10s. It flushes every second now (`--file-flush-interval-msec 1000`).
 - The first exposure on a port below 1024 (`http` 80, `https` 443) warned `could not be checked
   (bind: permission denied)`, and another program holding the port was found only when the gateway
   started. The service has `CAP_NET_BIND_SERVICE` now (its only capability), so the check works;

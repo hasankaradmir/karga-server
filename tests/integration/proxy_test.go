@@ -186,6 +186,26 @@ func TestGatewayHTTPRoutes(t *testing.T) {
 	if !strings.Contains(logged.String(), `"GET /logged HTTP/1.1"`) {
 		t.Fatalf("request not in the gateway access log:\n%s", logged.String())
 	}
+	// A request is in the log within a second or so: Envoy flushes it every second, not every 10s.
+	req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(port)+"/flushed", nil)
+	req.Host = "a.local"
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		_ = resp.Body.Close()
+	}
+	sent := time.Now()
+	for {
+		logged.Reset()
+		if err := s.Containers.Logs(ctx, releases.LogsRequest{Gateway: true, Tail: 20}, &logged); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(logged.String(), `"GET /flushed HTTP/1.1"`) {
+			break
+		}
+		if time.Since(sent) > 3*time.Second {
+			t.Fatalf("request not in the gateway access log 3s after it")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 	if after, _ := rt.GetWorkload(ctx, gatewayName(t, rt)); after.Labels[ports.LabelManaged] == "" || before.Name != after.Name {
 		t.Fatalf("gateway changed: %+v", after)
 	}
