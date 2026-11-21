@@ -19,35 +19,44 @@ func WithProgress(ctx context.Context, fn func(Event)) context.Context { return 
 // dependsOn (one of their Services), at any depth, in start order: dependencies first. Stopping
 // them goes the other way.
 func WithDependents(rs []resource.Resource, names []string) ([]string, error) {
-	ordered, err := Order(rs)
-	if err != nil {
-		return nil, err
-	}
 	target := map[string]string{} // Service -> its workload
 	for _, r := range rs {
 		if s, ok := r.Spec.(*resource.ServiceSpec); ok {
 			target[r.Metadata.Name] = s.Workload
 		}
 	}
+	// Workloads only, ordered by dependsOn alone: rs need not hold networks, volumes or files.
+	var ws []resource.Resource
+	for _, r := range rs {
+		if _, ok := r.Spec.(*resource.WorkloadSpec); ok {
+			ws = append(ws, r)
+		}
+	}
+	ordered, err := order(ws, func(r resource.Resource) []Key {
+		var deps []Key
+		for _, s := range r.Spec.(*resource.WorkloadSpec).DependsOn {
+			if w, ok := target[s]; ok {
+				deps = append(deps, Key{resource.KindWorkload, w})
+			}
+		}
+		return deps
+	})
+	if err != nil {
+		return nil, err
+	}
 	in := map[string]bool{}
 	for _, n := range names {
 		in[n] = true
 	}
-	for grew := true; grew; {
-		grew = false
-		for _, r := range rs {
-			w, ok := r.Spec.(*resource.WorkloadSpec)
-			if !ok || in[r.Metadata.Name] {
-				continue
-			}
-			if slices.ContainsFunc(w.DependsOn, func(s string) bool { return in[target[s]] }) {
-				in[r.Metadata.Name], grew = true, true
-			}
+	for _, r := range ordered { // dependencies come first, so one pass reaches every depth
+		w := r.Spec.(*resource.WorkloadSpec)
+		if slices.ContainsFunc(w.DependsOn, func(s string) bool { return in[target[s]] }) {
+			in[r.Metadata.Name] = true
 		}
 	}
 	var out []string
 	for _, r := range ordered {
-		if r.Kind == resource.KindWorkload && in[r.Metadata.Name] {
+		if in[r.Metadata.Name] {
 			out = append(out, r.Metadata.Name)
 		}
 	}

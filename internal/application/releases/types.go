@@ -93,19 +93,31 @@ type LogsRequest struct {
 	Follow bool
 }
 
-// VolumeBackupRequest copies a volume's files out, as a gzip-compressed tar. Stop stops the
-// workloads mounting it for a consistent copy; otherwise the copy is taken live.
+// VolumeBackupRequest copies a volume's files out, as a gzip-compressed tar. The workloads writing
+// to it, and those that depend on them, are stopped for a consistent copy unless Live.
 type VolumeBackupRequest struct {
 	Release, Volume string
-	Stop            bool
+	Live            bool
 }
 
 // VolumeRestoreRequest writes a backup into a volume. Force restores a backup of another volume.
+// Merge writes it over the volume's files; NoRestorePoint keeps none.
 type VolumeRestoreRequest struct {
 	Release, Volume string
-	Force           bool
+	Force, Merge    bool
+	NoRestorePoint  bool
 	// Name names the backup in messages (its file name).
 	Name string
+}
+
+// VolumeResult is what a volume backup or restore did.
+type VolumeResult struct {
+	// Stopped are the workloads stopped meanwhile, in the order they started again.
+	Stopped []string
+	// Downtime is from the first stop until the last of them was ready.
+	Downtime time.Duration
+	// RestorePoint is where a restore kept the volume's previous files.
+	RestorePoint string
 }
 
 // ResourceStatus compares one applied resource with what the runtime reports.

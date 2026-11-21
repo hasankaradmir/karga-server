@@ -19,6 +19,8 @@ var (
 	ErrLocked      = errors.New("another operation is running on this release")
 	ErrInterrupted = errors.New("a previous operation on this release was interrupted")
 	ErrExists      = release.ErrExists
+	// ErrNotReady: the operation did its work, but workloads it started again did not get ready.
+	ErrNotReady = errors.New("not ready")
 )
 
 // DefaultHistoryMax is how many revisions are kept per release unless a request says otherwise (D13).

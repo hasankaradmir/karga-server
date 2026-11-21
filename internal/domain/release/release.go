@@ -134,9 +134,11 @@ type Operation struct {
 	// Actor is who asked for it: a user of the karga CLI, or karga-server (repairs, resumes).
 	Actor string
 	// Options are the request's choices, so an interrupted operation resumes as it was asked.
-	Options    Options
-	Steps      []Step
-	Error      string
+	Options Options
+	Steps   []Step
+	Error   string
+	// Downtime is how long it kept workloads stopped (volume backups and restores).
+	Downtime   time.Duration
 	StartedAt  time.Time
 	FinishedAt time.Time
 }

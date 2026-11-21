@@ -26,6 +26,13 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- Volume backups stop the workloads writing to the volume by default (`live` copies while they run),
+  and backups and restores stop what depends on them through `dependsOn` too, dependents first. They
+  start again in dependency order, each once those before it are ready, and the operation returns
+  when all are ready: before, a restore came back while its workloads were still starting. One that
+  does not get ready fails it with `not_ready`; a backup's file is sent all the same. The downtime is
+  reported and kept with the operation. A restore stops the volume's read-only readers too; a backup
+  does not.
 - A recreated workload's progress says `create started` / `update started` when its container
   starts and `create done` / `update done` once it is ready, after the wait; `done` came before the
   `waiting for ... to be ready` lines.

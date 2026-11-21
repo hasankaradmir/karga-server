@@ -639,6 +639,7 @@ type operationFile struct {
 	Options    optionsFile    `yaml:"options,omitempty"`
 	Steps      []release.Step `yaml:"steps"`
 	Error      string         `yaml:"error,omitempty"`
+	Downtime   time.Duration  `yaml:"downtime,omitempty"`
 	StartedAt  time.Time      `yaml:"startedAt"`
 	FinishedAt time.Time      `yaml:"finishedAt,omitempty"`
 }
@@ -656,12 +657,12 @@ func toFile(op release.Operation) operationFile {
 		steps = []release.Step{}
 	}
 	return operationFile{ID: op.ID, Release: op.Release, Type: op.Type, Revision: op.Revision, Status: string(op.Status), PID: op.PID,
-		Hostname: op.Hostname, Actor: op.Actor, Options: optionsFile(op.Options), Steps: steps, Error: op.Error, StartedAt: op.StartedAt, FinishedAt: op.FinishedAt}
+		Hostname: op.Hostname, Actor: op.Actor, Options: optionsFile(op.Options), Steps: steps, Error: op.Error, Downtime: op.Downtime, StartedAt: op.StartedAt, FinishedAt: op.FinishedAt}
 }
 
 func (f operationFile) operation() release.Operation {
 	return release.Operation{ID: f.ID, Release: f.Release, Type: f.Type, Revision: f.Revision, Status: release.OperationStatus(f.Status),
-		PID: f.PID, Hostname: f.Hostname, Actor: f.Actor, Options: release.Options(f.Options), Steps: f.Steps, Error: f.Error, StartedAt: f.StartedAt, FinishedAt: f.FinishedAt}
+		PID: f.PID, Hostname: f.Hostname, Actor: f.Actor, Options: release.Options(f.Options), Steps: f.Steps, Error: f.Error, Downtime: f.Downtime, StartedAt: f.StartedAt, FinishedAt: f.FinishedAt}
 }
 
 func operationsPath(rel string) string { return "operations/" + rel + ".yaml" }
@@ -784,7 +785,7 @@ func (s *Store) BeginOperation(_ context.Context, op release.Operation, onRunnin
 // FinishOperation implements ports.StateStore.
 func (s *Store) FinishOperation(_ context.Context, op release.Operation) error {
 	return s.updateOperation(op.ID, func(o *release.Operation) {
-		o.Status, o.Steps, o.Error, o.Revision, o.FinishedAt = op.Status, op.Steps, op.Error, op.Revision, time.Now()
+		o.Status, o.Steps, o.Error, o.Revision, o.Downtime, o.FinishedAt = op.Status, op.Steps, op.Error, op.Revision, op.Downtime, time.Now()
 	})
 }
 

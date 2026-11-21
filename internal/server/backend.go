@@ -167,20 +167,29 @@ func (b Backend) Exec(ctx context.Context, req api.ExecRequest) (int, error) {
 }
 
 // BackupVolume implements api.Backend.
-// shortcut: the 4.0 volume API mapped onto the old behaviour until the volume redesign lands (V3/V4).
 func (b Backend) BackupVolume(ctx context.Context, req api.VolumeBackupRequest, w io.Writer) (*api.VolumeResult, error) {
-	return nil, b.volumes.Backup(wait(ctx), releases.VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Stop: !req.Live}, w)
+	res, err := b.volumes.Backup(wait(ctx), releases.VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Live: req.Live}, w, nil)
+	return wireVolume(req.Release, req.Volume, res), err
 }
 
 // RestoreVolume implements api.Backend.
-func (b Backend) RestoreVolume(ctx context.Context, req api.VolumeRestoreRequest, r io.Reader, _ func(api.Event)) (*api.VolumeResult, error) {
-	err := b.volumes.Restore(wait(ctx), releases.VolumeRestoreRequest{Release: req.Release, Volume: req.Volume, Force: req.Force, Name: req.Name}, r)
-	return &api.VolumeResult{Release: req.Release, Volume: req.Volume}, err
+func (b Backend) RestoreVolume(ctx context.Context, req api.VolumeRestoreRequest, r io.Reader, progress func(api.Event)) (*api.VolumeResult, error) {
+	res, err := b.volumes.Restore(wait(ctx), releases.VolumeRestoreRequest{Release: req.Release, Volume: req.Volume, Force: req.Force,
+		Merge: req.Merge, NoRestorePoint: req.NoRestorePoint, Name: req.Name}, r, events(progress))
+	return wireVolume(req.Release, req.Volume, res), err
 }
 
 // UndoRestoreVolume implements api.Backend.
+// shortcut: no restore points until V4 of the volume redesign.
 func (b Backend) UndoRestoreVolume(context.Context, api.VolumeUndoRestoreRequest, func(api.Event)) (*api.VolumeResult, error) {
 	return nil, fmt.Errorf("undo-restore: %w", api.ErrNotFound)
+}
+
+func wireVolume(rel, vol string, res *releases.VolumeResult) *api.VolumeResult {
+	if res == nil {
+		return nil
+	}
+	return &api.VolumeResult{Release: rel, Volume: vol, Stopped: res.Stopped, Downtime: api.Duration(res.Downtime), RestorePoint: res.RestorePoint}
 }
 
 // Reconcile implements api.Backend.
@@ -207,7 +216,7 @@ func (b Backend) Events(ctx context.Context, req api.EventsRequest) ([]api.Opera
 	ops, err := b.reads.Operations(ctx, req.Name, req.AfterID, req.Limit)
 	return wireAll(ops, func(o release.Operation) api.Operation {
 		return api.Operation{ID: o.ID, Release: o.Release, Type: o.Type, Revision: o.Revision, Status: string(o.Status),
-			Actor: o.Actor, Steps: wireAll(o.Steps, wireStep), Error: o.Error, StartedAt: o.StartedAt, FinishedAt: o.FinishedAt}
+			Actor: o.Actor, Steps: wireAll(o.Steps, wireStep), Error: o.Error, Downtime: api.Duration(o.Downtime), StartedAt: o.StartedAt, FinishedAt: o.FinishedAt}
 	}), err
 }
 

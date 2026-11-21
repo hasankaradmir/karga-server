@@ -1,0 +1,2 @@
+# healthy=false gives db a health check that fails.
+healthy: true
