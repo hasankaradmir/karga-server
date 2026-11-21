@@ -349,7 +349,7 @@ func TestRedisLifecycle(t *testing.T) {
 	// 3b. Volume backup and restore: the key comes back after the data is wiped.
 	backup := filepath.Join(t.TempDir(), "redis-data.tar.gz")
 	redis(t, port, "SAVE")
-	if out := e.run("volume", "backup", rel, "redis-data", backup, "--stop"); !strings.Contains(out, "written to") {
+	if out := e.run("volume", "backup", rel, "redis-data", backup); !strings.Contains(out, "written to") {
 		t.Fatalf("volume backup:\n%s", out)
 	}
 	redis(t, port, "FLUSHALL")
