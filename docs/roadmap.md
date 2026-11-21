@@ -13,7 +13,8 @@ What karga does not do yet, what it does with known limits, and the open questio
 | Certificate guide | How to get and renew certificates for the gateway (e.g. certbot with a DNS challenge: the gateway holds ports 80 and 443, so an HTTP challenge on them conflicts). Today the operator gets them and renews by upgrading with the new Secret. |
 | Certificate expiry warning | `karga status` and `gateway status` show when each certificate expires and warn 14 days before; today renewal is an upgrade with the new Secret, and nothing reminds you. |
 | Repair notifications | Tell someone (a webhook) when the reconciler gives up on a resource; today `karga status` exits 6 and can be polled by a monitor. |
-| Scheduled tasks | Periodic jobs and volume backups run by karga; today a systemd timer on the host runs `karga volume backup`. |
+| Scheduled tasks | Periodic jobs and volume backups run by karga, with retention (count, age, size); today a systemd timer on the host runs `karga volume backup`. |
+| Volume backup hooks | A package declares how to take a consistent backup of a volume without stopping its workloads (a command run in the workload before and after the copy, or the database's own dump), as Velero's hooks do; today a consistent backup stops them (D45). |
 | Route matching | Header, method or regex matching and weighted backends; exposures match a path (`pathType` prefix or exact) and rewrite a prefix (`to`) today (D43). |
 | Gateway options | HSTS, compression, bodies over 16Mi without buffering; listeners already take a timeout, idle timeout, body limit, rate limit and PROXY protocol (D35). |
 | Log shipping | A Docker log driver per workload (journald, syslog, fluentd); today logs rotate in json-file and are read with `karga logs`. |
@@ -56,9 +57,10 @@ What karga does not do yet, what it does with known limits, and the open questio
   the release's networks that caches the proxy's address beyond the 30s drain of a replaced proxy
   loses its connection.
 - **Replace** needs a health check and read-only volumes; stateful workloads are recreated.
-- **Volume backups** go through a workload that mounts the volume; a live backup is not consistent
-  for databases (use `--stop` or the database's own dump). Restore overwrites files with the same
-  names and keeps the others.
+- **Volume backups** go through a workload that mounts the volume. A consistent one stops the
+  volume's writers and what depends on them (D45); `--live` is not consistent for databases. There
+  are no backup hooks (a database's dump without stopping it), snapshots, schedules or history yet;
+  a volume has one restore point.
 - **Anonymous volumes** (image `VOLUME` paths no Volume covers) move to the new container on
   upgrades, but `uninstall` deletes them and `volume backup` cannot reach them; karga warns.
 - **Backups** of the state are copies of `$KARGA_HOME` with the server stopped; copy `state.key`

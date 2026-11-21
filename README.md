@@ -129,10 +129,12 @@ from them and from Docker. To back up, stop karga-server and copy `$KARGA_HOME` 
 karga-server refuses state written by a newer version.
 
 `karga volume backup <release> <volume> <file.tar.gz>` copies a volume's files through a workload
-that mounts it (no helper container). It runs live by default; `--stop` stops the workloads
-mounting the volume for a consistent copy (for databases prefer it, or the database's own dump).
-`karga volume restore` stops them, writes the files back (overwriting files of the same name,
-keeping others) and starts them again.
+that mounts it (no helper container). It stops the workloads writing to the volume, and those that
+depend on them, for a consistent copy, and starts them again in order once they are ready
+(`--live` copies while they run). `karga volume restore` replaces the volume's files (`--merge`
+writes over them): it keeps the current ones as the volume's restore point under
+`$KARGA_HOME/restore-points`, which `karga volume undo-restore` puts back, and an interrupted
+restore is finished when karga-server starts again. Both report how long the workloads were down.
 
 `$KARGA_HOME/state.key` keys the database's digests of secret values. Back it up with the database
 if you can keep both safe; restored without it, karga creates a new key and applies each release's
