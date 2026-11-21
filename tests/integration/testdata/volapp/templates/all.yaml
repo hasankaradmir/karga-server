@@ -1,0 +1,46 @@
+apiVersion: karga.io/v1alpha1
+kind: Network
+metadata: {name: net}
+---
+apiVersion: karga.io/v1alpha1
+kind: Volume
+metadata: {name: data}
+---
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: db}
+spec:
+  image: busybox:1.37
+  command: [sleep, "3600"]
+  stopTimeout: 1s
+  networks: [net]
+  ports: [{name: db, containerPort: 5432}]
+  mounts: [{volume: data, mountPath: /var/lib/db}]
+  security: {readOnlyRootFilesystem: true}
+  healthCheck: {type: exec, command: ["true"], interval: 1s, retries: 2}
+---
+apiVersion: karga.io/v1alpha1
+kind: Service
+metadata: {name: db}
+spec:
+  workload: db
+  ports: [{name: db, port: 5432}]
+---
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: app}
+spec:
+  image: busybox:1.37
+  command: [sleep, "3600"]
+  stopTimeout: 1s
+  networks: [net]
+  dependsOn: [db]
+---
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: reader}
+spec:
+  image: busybox:1.37
+  command: [sleep, "3600"]
+  stopTimeout: 1s
+  mounts: [{volume: data, mountPath: /srv, readOnly: true}]

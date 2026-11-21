@@ -166,13 +166,29 @@ func (b Backend) Exec(ctx context.Context, req api.ExecRequest) (int, error) {
 }
 
 // BackupVolume implements api.Backend.
-func (b Backend) BackupVolume(ctx context.Context, req api.VolumeBackupRequest, w io.Writer) error {
-	return b.volumes.Backup(wait(ctx), releases.VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Stop: req.Stop}, w)
+func (b Backend) BackupVolume(ctx context.Context, req api.VolumeBackupRequest, w io.Writer) (*api.VolumeResult, error) {
+	res, err := b.volumes.Backup(wait(ctx), releases.VolumeBackupRequest{Release: req.Release, Volume: req.Volume, Live: req.Live}, w, nil)
+	return wireVolume(req.Release, req.Volume, res), err
 }
 
 // RestoreVolume implements api.Backend.
-func (b Backend) RestoreVolume(ctx context.Context, req api.VolumeRestoreRequest, r io.Reader) error {
-	return b.volumes.Restore(wait(ctx), releases.VolumeRestoreRequest{Release: req.Release, Volume: req.Volume, Force: req.Force, Name: req.Name}, r)
+func (b Backend) RestoreVolume(ctx context.Context, req api.VolumeRestoreRequest, r io.Reader, progress func(api.Event)) (*api.VolumeResult, error) {
+	res, err := b.volumes.Restore(wait(ctx), releases.VolumeRestoreRequest{Release: req.Release, Volume: req.Volume, Force: req.Force,
+		Merge: req.Merge, NoRestorePoint: req.NoRestorePoint, Name: req.Name}, r, events(progress))
+	return wireVolume(req.Release, req.Volume, res), err
+}
+
+// UndoRestoreVolume implements api.Backend.
+func (b Backend) UndoRestoreVolume(ctx context.Context, req api.VolumeUndoRestoreRequest, progress func(api.Event)) (*api.VolumeResult, error) {
+	res, err := b.volumes.UndoRestore(wait(ctx), req.Release, req.Volume, events(progress))
+	return wireVolume(req.Release, req.Volume, res), err
+}
+
+func wireVolume(rel, vol string, res *releases.VolumeResult) *api.VolumeResult {
+	if res == nil {
+		return nil
+	}
+	return &api.VolumeResult{Release: rel, Volume: vol, Stopped: res.Stopped, Downtime: api.Duration(res.Downtime), RestorePoint: res.RestorePoint}
 }
 
 // Reconcile implements api.Backend.
@@ -199,7 +215,7 @@ func (b Backend) Events(ctx context.Context, req api.EventsRequest) ([]api.Opera
 	ops, err := b.reads.Operations(ctx, req.Name, req.AfterID, req.Limit)
 	return wireAll(ops, func(o release.Operation) api.Operation {
 		return api.Operation{ID: o.ID, Release: o.Release, Type: o.Type, Revision: o.Revision, Status: string(o.Status),
-			Actor: o.Actor, Steps: wireAll(o.Steps, wireStep), Error: o.Error, StartedAt: o.StartedAt, FinishedAt: o.FinishedAt}
+			Actor: o.Actor, Steps: wireAll(o.Steps, wireStep), Error: o.Error, Downtime: api.Duration(o.Downtime), StartedAt: o.StartedAt, FinishedAt: o.FinishedAt}
 	}), err
 }
 

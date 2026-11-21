@@ -164,8 +164,9 @@ only with `--force`. Operations do
 not depend on their client's connection. When karga-server starts it resumes the operations it
 left running, with the options recorded on the operation (`--delete-volumes`, `--strategy`,
 `--timeout`, `--keep-history`): install, upgrade and rollback deploy their recorded revision again
-(the plan skips what is done; no new revision), uninstall runs again, others are aborted
-(ADR-0015). The finishing operation is recorded as `resume`. A failed apply
+(the plan skips what is done; no new revision), uninstall runs again, a volume restore runs again
+from the backup it kept under `$KARGA_HOME/restores` (without taking its restore point again; if
+the backup is gone, the release is paused), others are aborted (ADR-0015). The finishing operation is recorded as `resume`. A failed apply
 marks the revision failed; an install that failed before creating anything removes the release; if nothing that was running changed (an image that cannot be pulled, an
 unhealthy new container in a replace), the release keeps its status. Rollback re-applies a stored
 revision as a new revision. `--history-max` (default 10) prunes old revisions.
@@ -229,6 +230,22 @@ The state records each container's name; karga finds the containers of a release
 container stopped next to the old one, for its logs; the next deployment removes it. The release
 proxy is named the same way (`<release>-karga-proxy-<hash>`, D37); Networks and Volumes
 (`<release>-<name>`) keep fixed names.
+
+### Volume backup and restore (D45)
+
+Both copy files through a workload that mounts the volume (`ExportPath`/`ImportPath`, no helper
+container), and stop for the time of it the volume's writers (a backup; a restore stops its readers
+too) and what depends on them through `dependsOn`, read from the current revision, dependents first.
+They start them again in dependency order, each once ready (the deployment's wait), and record the
+downtime on the operation. A backup copies to a temporary file, starts the workloads, then sends
+it, with its result in a trailer; workloads that do not get ready fail it with `not_ready`, the
+file complete. A restore checks the backup, the revision files it needs and the room for a restore
+point, keeps the upload under `$KARGA_HOME/restores`, stops the workloads, copies the volume to its
+restore point (`$KARGA_HOME/restore-points/<release>/<volume>.tar.gz`), then empties the volume by
+removing the containers mounting it (Docker keeps a mounted volume), removing and creating it again
+and creating the same containers (name, labels, revision, anonymous volumes) without starting them,
+writes the backup at the mount through one of them and starts them in order. `merge` skips emptying
+it; `undo-restore` restores the restore point the same way.
 
 ## 8. Traffic: Services, the release proxy and the gateway (ADR-0011)
 

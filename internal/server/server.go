@@ -64,6 +64,8 @@ func classify(err error) error {
 	case errors.Is(err, releases.ErrLocked), errors.Is(err, releases.ErrInterrupted), errors.Is(err, releases.ErrExists),
 		errors.Is(err, ports.ErrPortInUse), errors.Is(err, ports.ErrConflict):
 		return api.ErrConflict
+	case errors.Is(err, releases.ErrNotReady):
+		return api.ErrNotReady
 	}
 	return nil
 }

@@ -26,6 +26,22 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- A volume restore replaces the volume's files: it removes the containers mounting it, removes and
+  creates the volume again, writes the backup and creates the same containers (name, labels,
+  revision, anonymous volumes). Before, it wrote over the files and kept those the backup did not
+  have; `merge` still does that. The volume's files are kept first as its restore point
+  (`$KARGA_HOME/restore-points/<release>/<volume>.tar.gz`, one per volume), which `undo-restore`
+  puts back; a restore without room for it changes nothing and says so (`noRestorePoint` skips it).
+  The backup stays under `$KARGA_HOME/restores` until the restore ends, so one karga-server stopped
+  in the middle is finished when it starts again; without it the release is paused.
+  `uninstall --delete-volumes` removes the restore points too.
+- Volume backups stop the workloads writing to the volume by default (`live` copies while they run),
+  and backups and restores stop what depends on them through `dependsOn` too, dependents first. They
+  start again in dependency order, each once those before it are ready, and the operation returns
+  when all are ready: before, a restore came back while its workloads were still starting. One that
+  does not get ready fails it with `not_ready`; a backup's file is sent all the same. The downtime is
+  reported and kept with the operation. A restore stops the volume's read-only readers too; a backup
+  does not.
 - A recreated workload's progress says `create started` / `update started` when its container
   starts and `create done` / `update done` once it is ready, after the wait; `done` came before the
   `waiting for ... to be ready` lines.

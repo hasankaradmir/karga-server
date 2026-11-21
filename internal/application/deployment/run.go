@@ -298,9 +298,7 @@ func (r *run) applyOne(ctx context.Context, c Change) error {
 		err = ownedOK(r.owned, ports.ObjectNetwork, name,
 			r.rt.CreateNetwork(ctx, ports.NetworkRequest{Name: name, Labels: lbl, Driver: s.Driver, Internal: s.Internal}))
 	case *resource.VolumeSpec:
-		lbl[ports.LabelRetention] = s.Retention
-		err = ownedOK(r.owned, ports.ObjectVolume, name,
-			r.rt.CreateVolume(ctx, ports.VolumeRequest{Name: name, Labels: lbl, Driver: s.Driver}))
+		err = ownedOK(r.owned, ports.ObjectVolume, name, r.rt.CreateVolume(ctx, VolumeRequest(r.req.Release, r.req.Revision, c.Name, s)))
 	case *resource.WorkloadSpec:
 		lbl[ports.LabelDigest] = c.Digest
 		if c.Action == ActionUpdate && c.Strategy == resource.StrategyReplace {

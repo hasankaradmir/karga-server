@@ -1,0 +1,63 @@
+apiVersion: karga.io/v1alpha1
+kind: Network
+metadata: {name: net}
+---
+apiVersion: karga.io/v1alpha1
+kind: Volume
+metadata: {name: data}
+---
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: db}
+spec:
+  image: busybox:1.37
+  networks: [net]
+  ports: [{name: db, containerPort: 5432}]
+  mounts: [{volume: data, mountPath: /var/lib/db}]
+  healthCheck:
+    type: exec
+    command: [{{ if .Values.healthy }}"true"{{ else }}"false"{{ end }}]
+---
+apiVersion: karga.io/v1alpha1
+kind: Service
+metadata: {name: db}
+spec:
+  workload: db
+  ports: [{name: db, port: 5432}]
+---
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: app}
+spec:
+  image: busybox:1.37
+  networks: [net]
+  dependsOn: [db]
+  ports: [{name: http, containerPort: 8080}]
+---
+apiVersion: karga.io/v1alpha1
+kind: Service
+metadata: {name: app}
+spec:
+  workload: app
+  ports: [{name: http, port: 8080}]
+---
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: worker}
+spec:
+  image: busybox:1.37
+  networks: [net]
+  dependsOn: [app]
+---
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: reader}
+spec:
+  image: busybox:1.37
+  mounts: [{volume: data, mountPath: /srv, readOnly: true}]
+---
+apiVersion: karga.io/v1alpha1
+kind: Workload
+metadata: {name: other}
+spec:
+  image: busybox:1.37

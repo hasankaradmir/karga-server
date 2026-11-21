@@ -65,3 +65,56 @@ func TestAnonymousVolumeKeptAcrossUpgrade(t *testing.T) {
 	}
 	_ = rt.DeleteVolume(ctx, vol)
 }
+
+// On Docker: a backup stops the database and what depends on it, not the volume's reader; a
+// restore replaces the volume's files (a file written after the backup goes), through a container
+// with a read-only image, and undo-restore brings the files back.
+func TestVolumeRestoreReplacesOnDocker(t *testing.T) {
+	t.Parallel()
+	requireLinux(t)
+	ctx := context.Background()
+	name := releaseName("it-vol")
+	s, rt := service(t, name)
+	if _, err := s.Lifecycle.Install(ctx, releases.InstallRequest{CommonOptions: opts(), Name: name, Package: "testdata/volapp"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	sh := func(workload, cmd string) string {
+		t.Helper()
+		var out bytes.Buffer
+		code, err := rt.Exec(ctx, containerName(t, rt, name, workload), ports.ExecOptions{Cmd: []string{"sh", "-c", cmd}, Stdout: &out, Stderr: &out})
+		if err != nil || code != 0 {
+			t.Fatalf("%s: %s: %d %v %s", workload, cmd, code, err, out.String())
+		}
+		return strings.Join(strings.Fields(out.String()), " ")
+	}
+	sh("db", "echo a > /var/lib/db/a")
+
+	var backup bytes.Buffer
+	res, err := s.Volumes.Backup(ctx, releases.VolumeBackupRequest{Release: name, Volume: "data"}, &backup, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(res.Stopped, ",") != "db,app" || res.Downtime <= 0 {
+		t.Fatalf("backup: %+v", res)
+	}
+	sh("db", "echo b > /var/lib/db/b")
+	rres, err := s.Volumes.Restore(ctx, releases.VolumeRestoreRequest{Release: name, Volume: "data", Name: "backup"}, &backup, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sh("db", "ls /var/lib/db"); got != "a" {
+		t.Fatalf("after restore: %q", got)
+	}
+	if got := sh("reader", "ls /srv"); got != "a" {
+		t.Fatalf("the reader sees %q", got)
+	}
+	if strings.Join(rres.Stopped, ",") != "db,app,reader" || rres.RestorePoint == "" {
+		t.Fatalf("restore: %+v", rres)
+	}
+	if _, err := s.Volumes.UndoRestore(ctx, name, "data", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := sh("db", "ls /var/lib/db"); got != "a b" {
+		t.Fatalf("after undo: %q", got)
+	}
+}
