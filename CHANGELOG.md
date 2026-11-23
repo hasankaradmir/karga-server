@@ -6,6 +6,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- `Lifecycle.RepairEmptyVolumes` (API 4.1 `ReconcileRequest.EmptyVolumes`, `karga reconcile
+  --empty-volumes`): a repair that creates the release's missing Volumes, empty.
 - Image pulls report progress: every two seconds `pulling <image>: 57MB/165MB (4s)`, the bytes
   downloaded of the layers Docker reported so far, for workload, release proxy and gateway images.
   A first install used to show nothing for as long as the pull took.
@@ -113,6 +115,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- A repair created a Volume missing in Docker again, empty, and started its workloads on it,
+  recorded as a successful reconcile: a database removed by hand, or a `$KARGA_HOME` restored on
+  another host, came back empty with no warning. A repair no longer creates a missing Volume: it
+  fails, saying how to go on, and what mounts the volume waits (D46).
 - A volume restore checked only the start of the backup: a file cut short was found only after the
   volume had been emptied. A restore that failed writing the volume started its workloads on it
   anyway, empty or half written. The backup is read
