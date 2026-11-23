@@ -55,8 +55,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      # The e2e tests drive the karga CLI, built from its repository: the tag in the repository
-      # variable KARGA_CLI_REF (set it to the CLI release this server is tested with), else master.
+      # The e2e tests drive the karga CLI, built from its repository's master. The repository
+      # variable KARGA_CLI_REF pins another ref; it must use the same API major as this server.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: hasankaradmir/karga-cli

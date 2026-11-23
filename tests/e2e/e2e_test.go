@@ -111,11 +111,13 @@ func (e *env) start() {
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		if out, err := e.try("version"); err == nil && !strings.Contains(out, "not running") {
+		out, err := e.try("version")
+		if err == nil && !strings.Contains(out, "not running") {
 			return
 		}
 		if time.Now().After(deadline) {
-			e.t.Fatal("karga-server did not start")
+			// The last CLI output names the cause, such as an API version mismatch.
+			e.t.Fatalf("karga-server did not start; last `karga version`: %v\n%s", err, out)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
