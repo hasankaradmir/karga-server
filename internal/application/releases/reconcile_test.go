@@ -91,6 +91,36 @@ func TestReconcileRepairs(t *testing.T) {
 	}
 }
 
+// A Volume missing in the runtime (removed, or a state restored on another host) is not created
+// empty by a repair: its files are gone, and its workloads would start on nothing. The repair fails
+// and says how to go on; --empty-volumes creates it.
+func TestReconcileDoesNotCreateAMissingVolume(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	must[*Result](t)(e.install())
+	if err := e.rt.DeleteWorkload(ctx, e.rt.Name("cache-redis")); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.rt.DeleteVolume(ctx, "cache-redis-data"); err != nil {
+		t.Fatal(err)
+	}
+	res := must[*ReconcileResult](t)(e.svc.Lifecycle.Repair(ctx, "cache", true))
+	if actionsOf(res) != "create:Volume/redis-data:failed" || !strings.Contains(res.Actions[0].Error, "'karga reconcile cache --empty-volumes'") {
+		t.Fatalf("repair: %s %+v", actionsOf(res), res.Actions)
+	}
+	if _, ok := e.rt.Volumes["cache-redis-data"]; ok || e.rt.Workload("cache-redis") != nil {
+		t.Fatal("the volume or its workload was created")
+	}
+	st := must[*StatusReport](t)(e.svc.Reads.Status(ctx, "cache"))
+	if st.Reconcile == nil || st.Reconcile.Status != string(release.OperationFailed) {
+		t.Fatalf("status: %+v", st.Reconcile)
+	}
+	res = must[*ReconcileResult](t)(e.svc.Lifecycle.RepairEmptyVolumes(ctx, "cache"))
+	if !strings.Contains(actionsOf(res), "create:Volume/redis-data:done") || !strings.Contains(actionsOf(res), "create:Workload/redis:done") {
+		t.Fatalf("--empty-volumes: %s", actionsOf(res))
+	}
+}
+
 func TestReconcileLeavesAlone(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

@@ -193,7 +193,13 @@ func wireVolume(rel, vol string, res *releases.VolumeResult) *api.VolumeResult {
 
 // Reconcile implements api.Backend.
 func (b Backend) Reconcile(ctx context.Context, req api.ReconcileRequest) (*api.ReconcileResult, error) {
-	res, err := b.lifecycle.Repair(wait(ctx), req.Name, req.Force)
+	var res *releases.ReconcileResult
+	var err error
+	if req.EmptyVolumes {
+		res, err = b.lifecycle.RepairEmptyVolumes(wait(ctx), req.Name)
+	} else {
+		res, err = b.lifecycle.Repair(wait(ctx), req.Name, req.Force)
+	}
 	if res == nil {
 		return nil, err
 	}

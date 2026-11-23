@@ -59,11 +59,14 @@ reconciler`, the queue and the loop; `releases.Lifecycle.Repair`, the repairs) b
 - *Scope:* deployed releases that are not paused and have no operation running. A failed release is
   the user's (D2). Within the server a per-release mutex serializes commands and repairs: a command
   waits for a repair; a repair skips a busy release.
-- *Repairs:* missing workloads, proxies, networks and volumes and containers whose `io.karga.digest`
+- *Repairs:* missing workloads, proxies and networks and containers whose `io.karga.digest`
   label differs from the applied digest (changed outside karga) are created from the current revision
   through the usual plan and executor, creates only, without a new revision; stopped containers are
   started; unhealthy ones (Docker's check, or karga's tcp/http check failing `retries` times) are
-  restarted; the gateway is synced if something is exposed. A repair waits at most a minute for what
+  restarted; the gateway is synced if something is exposed. A missing Volume is not created: its
+  files are gone, and its workloads would start on nothing (D46). The repair fails saying so, and
+  what is missing waits until `karga reconcile --empty-volumes` (`RepairEmptyVolumes`) or an
+  upgrade creates it. A repair waits at most a minute for what
   it recreated, so one release that does not come up holds up the others no longer than that.
 - *Backoff:* per resource, 10 s doubling to 5 min; after 5 failures in 10 minutes it gives up until
   the user acts on the release or runs `karga reconcile`.

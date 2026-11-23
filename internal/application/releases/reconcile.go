@@ -176,8 +176,19 @@ type planned struct {
 }
 
 // Repair brings release name's runtime back to its current revision. force forgets earlier
-// failures first (karga reconcile).
+// failures first (karga reconcile). A Volume missing in the runtime is not created: its files are
+// gone, and its workloads would start empty (RepairEmptyVolumes does).
 func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*ReconcileResult, error) {
+	return s.repair(ctx, name, force, false)
+}
+
+// RepairEmptyVolumes is a forced Repair that also creates the missing Volumes, empty (karga
+// reconcile --empty-volumes).
+func (s *Lifecycle) RepairEmptyVolumes(ctx context.Context, name string) (*ReconcileResult, error) {
+	return s.repair(ctx, name, true, true)
+}
+
+func (s *Lifecycle) repair(ctx context.Context, name string, force, emptyVolumes bool) (*ReconcileResult, error) {
 	// What is observed below is acted on: nothing else may change the release meanwhile. A busy
 	// release is skipped; the command working on it leaves it as it should be.
 	unlock, err := s.c.locks.tryLock(name)
@@ -210,7 +221,7 @@ func (s *Lifecycle) Repair(ctx context.Context, name string, force bool) (*Recon
 	if err != nil {
 		return nil, err
 	}
-	todo := s.diagnose(ctx, name, applied, present)
+	todo := s.diagnose(ctx, name, applied, present, emptyVolumes)
 	res.GaveUp = s.c.repairs.gaveUp(name, s.c.now())
 	if len(todo) == 0 {
 		return res, nil
@@ -249,9 +260,9 @@ func (s *Lifecycle) skipReason(ctx context.Context, rel release.Release) (string
 
 // diagnose compares what release name should run with what the runtime has and returns the repairs
 // to make now: what is missing is recreated, a stopped or unhealthy container restarted, the
-// gateway synced if an exposure has none. Repairs waiting out their backoff, or given up on, are
-// left out.
-func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present []release.AppliedResource) []planned {
+// gateway synced if an exposure has none. A missing Volume is not, unless emptyVolumes: its repair
+// fails, and what is missing waits. Repairs waiting out their backoff, or given up on, are left out.
+func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present []release.AppliedResource, emptyVolumes bool) []planned {
 	now := s.c.now()
 	var todo []planned
 	add := func(p planned) {
@@ -260,11 +271,20 @@ func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present 
 			todo = append(todo, p)
 		}
 	}
+	var create, lost []planned
 	for _, a := range applied {
 		if !slices.ContainsFunc(present, func(p release.AppliedResource) bool { return p.Kind == a.Kind && p.Name == a.Name }) {
-			add(planned{key: name + "/plan", action: "create"})
-			break
+			if a.Kind == resource.KindVolume && !emptyVolumes {
+				lost = append(lost, planned{key: name + "/" + a.Kind + "/" + a.Name, kind: a.Kind, name: a.Name, action: "create"})
+			}
+			create = []planned{{key: name + "/plan", action: "create"}}
 		}
+	}
+	if len(lost) > 0 {
+		create = lost // its workloads (gone with it: Docker keeps a volume in use) wait for the user
+	}
+	for _, p := range create {
+		add(p)
 	}
 	exposed := false
 	for _, a := range present {
@@ -352,6 +372,11 @@ func (s *Lifecycle) act(ctx context.Context, op *release.Operation, rel release.
 			_, err := s.c.gw.Sync(ctx)
 			step(p, err)
 		case "create":
+			if p.kind == resource.KindVolume {
+				step(p, fmt.Errorf("volume %s is missing in Docker, so its files are gone; karga does not create it empty on its own. "+
+					"'karga reconcile %s --empty-volumes' creates it, then 'karga volume restore %s %s <backup>' puts a backup back", p.name, rel.Name, rel.Name, p.name))
+				continue
+			}
 			steps, err := s.recreate(ctx, rt, op, rel, present)
 			res.Actions = append(res.Actions, steps...)
 			if err != nil {
