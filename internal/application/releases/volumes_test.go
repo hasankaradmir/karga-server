@@ -112,6 +112,25 @@ func TestVolumeBackupNotReady(t *testing.T) {
 	}
 }
 
+// A client that goes away mid-copy (Ctrl-C) stops the copy, not the start of the workloads: they
+// run again, ready, in order.
+func TestVolumeBackupStoppedByTheClientStartsTheWorkloads(t *testing.T) {
+	e := installVolApp(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := e.svc.Volumes.Backup(ctx, VolumeBackupRequest{Release: "vol", Volume: "data"}, &bytes.Buffer{}, func(ev deployment.Event) {
+		if ev.Detail == "copying" {
+			cancel()
+		}
+	})
+	if errors.Is(err, ErrNotReady) {
+		t.Fatalf("error: %v", err)
+	}
+	if got := calls(e, "StartWorkload"); !slices.Equal(got, []string{"db", "app", "worker"}) {
+		t.Fatalf("started %v", got)
+	}
+}
+
 // put writes files into the volume through db's container.
 func put(t *testing.T, e *env, files ...string) {
 	t.Helper()
