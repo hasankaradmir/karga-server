@@ -426,7 +426,10 @@ func (r *Runtime) DeleteWorkload(_ context.Context, name string) error {
 }
 
 // GetWorkload implements ports.Runtime.
-func (r *Runtime) GetWorkload(_ context.Context, name string) (ports.WorkloadStatus, error) {
+func (r *Runtime) GetWorkload(ctx context.Context, name string) (ports.WorkloadStatus, error) {
+	if err := ctx.Err(); err != nil { // as Docker's client: a stopped caller gets no answer
+		return ports.WorkloadStatus{}, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.Fail["GetWorkload:"+name]; err != nil {

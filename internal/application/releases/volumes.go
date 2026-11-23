@@ -255,7 +255,8 @@ func (s *Volumes) stopped(ctx context.Context, req VolumeBackupRequest, w io.Wri
 		emit(resource.KindVolume, req.Volume, deployment.PhaseCreate, "copying")
 		err = s.write(ctx, req, ms[0], w)
 	}
-	err = errors.Join(err, s.start(ctx, rt, sc, res.Stopped, emit))
+	// The workloads run again also when the client went away mid-copy (Ctrl-C): that stops the copy only.
+	err = errors.Join(err, s.start(context.WithoutCancel(ctx), rt, sc, res.Stopped, emit))
 	if len(res.Stopped) > 0 {
 		res.Downtime = s.c.now().Sub(began)
 	}
