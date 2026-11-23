@@ -419,11 +419,15 @@ func (s *Volumes) restore(ctx context.Context, in restoreInput, emit func(kind, 
 	rt := s.c.rt
 	began := s.c.now()
 	defer func() {
+		if errors.Is(err, errWrite) {
+			err = s.keepStopped(ctx, rel, in, res, err)
+			return
+		}
 		err = errors.Join(err, s.start(ctx, rt, sc, res.Stopped, emit))
 		if len(res.Stopped) > 0 {
 			res.Downtime = s.c.now().Sub(began)
 		}
-		if errors.Is(err, ErrNotReady) && !errors.Is(err, errWrite) {
+		if errors.Is(err, ErrNotReady) {
 			err = fmt.Errorf("volume %s of %s restored, but %w", in.Volume, in.Release, err)
 		}
 	}()
@@ -470,6 +474,16 @@ func (s *Volumes) checkBackup(in restoreInput) error {
 		return err
 	}
 	defer func() { _ = f.Close() }()
+	// Read to the end before the volume is emptied: a file cut short fails its gzip check here.
+	if gz, err := gzip.NewReader(f); err == nil {
+		_, err = io.Copy(io.Discard, gz)
+		if err != nil {
+			return fmt.Errorf("%s is cut short or damaged: %w: %w", in.Name, ports.ErrInvalid, err)
+		}
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
 	man, _, err := openBackup(f, in.Name)
 	if err != nil {
 		return err
@@ -626,6 +640,20 @@ func (s *Volumes) saveRestorePoint(ctx context.Context, in restoreInput, src mou
 		return "", fmt.Errorf("restore point: %w", err)
 	}
 	return dst, nil
+}
+
+// keepStopped handles a restore that failed writing the volume, err: the volume may be empty or half
+// written, so its workloads stay stopped and the release is paused, which keeps the reconciler from
+// starting them, as an interrupted restore that cannot be finished does (resumeRestore).
+func (s *Volumes) keepStopped(ctx context.Context, rel release.Release, in restoreInput, res *VolumeResult, err error) error {
+	rel.Paused, rel.UpdatedAt = true, s.c.now()
+	again := "restore it again"
+	if res.RestorePoint != "" || in.Undo {
+		again += fmt.Sprintf(" (or 'karga volume undo-restore %s %s')", in.Release, in.Volume)
+	}
+	err = fmt.Errorf("%w; volume %s may be empty or half written, so %s stay stopped and %s is paused: %s, then 'karga resume %s'",
+		err, in.Volume, strings.Join(res.Stopped, ", "), in.Release, again, in.Release)
+	return errors.Join(err, s.c.store.SaveRelease(context.WithoutCancel(ctx), rel))
 }
 
 // errWrite marks a restore that failed changing the volume: it did not restore anything to report.

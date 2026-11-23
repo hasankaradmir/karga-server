@@ -237,6 +237,47 @@ func TestVolumeRestoreNoRoom(t *testing.T) {
 	}
 }
 
+// A backup cut short is refused before anything changes: its gzip check fails at the end.
+func TestVolumeRestoreRefusesABackupCutShort(t *testing.T) {
+	e := installVolApp(t)
+	put(t, e, "a")
+	backup := liveBackup(t, e).Bytes()
+	_, err := e.svc.Volumes.Restore(context.Background(), VolumeRestoreRequest{Release: "vol", Volume: "data", Name: "b.tgz"},
+		bytes.NewReader(backup[:len(backup)-8]), nil)
+	if !errors.Is(err, ports.ErrInvalid) || !strings.Contains(err.Error(), "b.tgz is cut short or damaged") {
+		t.Fatalf("error: %v", err)
+	}
+	if len(calls(e, "StopWorkload")) != 0 || !slices.Equal(volumeFiles(e), []string{"a"}) {
+		t.Fatalf("touched: stopped %v, files %v", calls(e, "StopWorkload"), volumeFiles(e))
+	}
+}
+
+// A restore that fails writing the volume leaves its workloads stopped and the release paused: the
+// volume may be empty or half written, and the reconciler must not start them on it.
+func TestVolumeRestoreWriteFailureKeepsTheWorkloadsStopped(t *testing.T) {
+	e := installVolApp(t)
+	ctx := context.Background()
+	put(t, e, "a")
+	backup := liveBackup(t, e)
+	e.rt.Fail = map[string]error{"ImportPath:vol-db": errors.New("no space left on device")}
+	_, err := e.svc.Volumes.Restore(ctx, VolumeRestoreRequest{Release: "vol", Volume: "data", Name: "b.tgz"}, backup, nil)
+	if err == nil || !strings.Contains(err.Error(), "no space left on device") ||
+		!strings.Contains(err.Error(), "db, app, reader, worker stay stopped and vol is paused") ||
+		!strings.Contains(err.Error(), "'karga volume undo-restore vol data'") {
+		t.Fatalf("error: %v", err)
+	}
+	if got := calls(e, "StartWorkload"); len(got) != 0 {
+		t.Fatalf("started %v", got)
+	}
+	if rel, _ := e.svc.c.store.GetRelease(ctx, "vol"); !rel.Paused {
+		t.Fatalf("release not paused: %+v", rel)
+	}
+	ops, _ := e.svc.c.store.ListOperations(ctx, "vol", 0, 1)
+	if ops[0].Type != "volume-restore" || ops[0].Status != release.OperationFailed {
+		t.Fatalf("operation: %+v", ops[0])
+	}
+}
+
 // A restore karga-server stopped in the middle is finished when it starts again, from the backup it
 // kept, without taking the restore point again from a volume that may be half written.
 func TestVolumeRestoreResumes(t *testing.T) {

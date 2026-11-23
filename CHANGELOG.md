@@ -113,6 +113,11 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- A volume restore checked only the start of the backup: a file cut short was found only after the
+  volume had been emptied. A restore that failed writing the volume started its workloads on it
+  anyway, empty or half written. The backup is read
+  to its end (its gzip check) before anything changes; a failed write leaves the workloads stopped
+  and the release paused, as an interrupted restore without its backup is.
 - A volume backup the client stopped mid-copy (Ctrl-C) did not start its workloads again (`not
   ready: context canceled`): they stayed down until the reconciler repaired them, and for good in a
   paused release. The copy stops; the workloads start again, in order, ready.
