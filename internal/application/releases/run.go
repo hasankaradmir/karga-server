@@ -413,7 +413,7 @@ func (s *core) record(ctx context.Context, op *release.Operation, in deployInput
 	ctx = context.WithoutCancel(ctx)
 	op.Steps = append(op.Steps, st)
 	s.log.Debug("step", "operation_id", op.ID, "release", in.Name, "resource", c.Kind+"/"+c.Name, "action", st.Action, "status", st.Status)
-	if err := s.store.SaveOperationSteps(ctx, op.ID, op.Steps); err != nil {
+	if err := s.store.SaveOperationSteps(ctx, op.Release, op.ID, op.Steps); err != nil {
 		return err
 	}
 	runtimeName := c.RuntimeName

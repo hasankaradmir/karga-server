@@ -355,10 +355,15 @@ func (s *Store) GetRelease(_ context.Context, name string) (release.Release, err
 	if err := s.readYAML(releaseDir(name)+"/release.yaml", &f); err != nil {
 		return release.Release{}, notFound(err, "release "+name)
 	}
+	// A file cut short (a disk error, a hand edit) parses, with fields left empty.
+	if f.Name != name || f.Status == "" {
+		return release.Release{}, fmt.Errorf("%s is incomplete (name %q, status %q)", s.path(releaseDir(name)+"/release.yaml"), f.Name, f.Status)
+	}
 	return f.release(), nil
 }
 
-// ListReleases implements ports.StateStore. Releases come sorted by name.
+// ListReleases implements ports.StateStore. Releases come sorted by name. One whose file cannot be
+// read is listed as unreadable (GetRelease says why), so that it does not stop the others.
 func (s *Store) ListReleases(ctx context.Context) ([]release.Release, error) {
 	names, err := s.dirs("releases")
 	if err != nil {
@@ -371,7 +376,7 @@ func (s *Store) ListReleases(ctx context.Context) ([]release.Release, error) {
 			continue // revisions written by a transaction that did not reach its release file
 		}
 		if err != nil {
-			return nil, err
+			r = release.Release{Name: n, Status: release.StatusUnreadable}
 		}
 		out = append(out, r)
 	}
@@ -732,31 +737,28 @@ func (s *Store) saveOperations(rel string, ops []release.Operation) error {
 	return s.commit(operationsPath(rel), buf.Bytes())
 }
 
-// updateOperation changes the operation id of rel with fn.
-func (s *Store) updateOperation(id int64, fn func(*release.Operation)) error {
+// updateOperation changes the operation id of rel with fn. Only rel's file is read: another
+// release's, even unreadable, does not stand in the way.
+func (s *Store) updateOperation(rel string, id int64, fn func(*release.Operation)) error {
+	if err := checkRelease(rel); err != nil {
+		return err
+	}
 	if s.tx != nil {
 		return errors.New("operations cannot change inside InTx")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rels, err := s.list("operations")
+	ops, err := s.operations(rel)
 	if err != nil {
 		return err
 	}
-	for _, f := range rels {
-		rel := strings.TrimSuffix(f, ".yaml")
-		ops, err := s.operations(rel)
-		if err != nil {
-			return err
-		}
-		for i := range ops {
-			if ops[i].ID == id {
-				fn(&ops[i])
-				return s.saveOperations(rel, ops)
-			}
+	for i := range ops {
+		if ops[i].ID == id {
+			fn(&ops[i])
+			return s.saveOperations(rel, ops)
 		}
 	}
-	return fmt.Errorf("operation %d: %w", id, ports.ErrNotFound)
+	return fmt.Errorf("operation %d of %s: %w", id, rel, ports.ErrNotFound)
 }
 
 // BeginOperation implements ports.StateStore.
@@ -810,14 +812,14 @@ func (s *Store) BeginOperation(_ context.Context, op release.Operation, onRunnin
 
 // FinishOperation implements ports.StateStore.
 func (s *Store) FinishOperation(_ context.Context, op release.Operation) error {
-	return s.updateOperation(op.ID, func(o *release.Operation) {
+	return s.updateOperation(op.Release, op.ID, func(o *release.Operation) {
 		o.Status, o.Steps, o.Error, o.Revision, o.Downtime, o.FinishedAt = op.Status, op.Steps, op.Error, op.Revision, op.Downtime, time.Now()
 	})
 }
 
 // SaveOperationSteps implements ports.StateStore.
-func (s *Store) SaveOperationSteps(_ context.Context, id int64, steps []release.Step) error {
-	return s.updateOperation(id, func(o *release.Operation) { o.Steps = steps })
+func (s *Store) SaveOperationSteps(_ context.Context, rel string, id int64, steps []release.Step) error {
+	return s.updateOperation(rel, id, func(o *release.Operation) { o.Steps = steps })
 }
 
 // RunningOperation implements ports.StateStore.
@@ -858,6 +860,9 @@ func (s *Store) ListOperations(_ context.Context, rel string, afterID int64, lim
 	var out []release.Operation
 	for _, f := range files {
 		ops, err := s.operations(strings.TrimSuffix(f, ".yaml"))
+		if err != nil && rel == "" {
+			continue // every release's: an unreadable file hides its own only ('karga events <release>' says why)
+		}
 		if err != nil {
 			return nil, err
 		}

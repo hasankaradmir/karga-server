@@ -23,7 +23,7 @@ func TestOperationsRecordNoSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	op.ID = id
-	if err := s.SaveOperationSteps(ctx, id, []release.Step{{Kind: "Workload", Name: "db", Error: "start: password hunter2 refused"}}); err != nil {
+	if err := s.SaveOperationSteps(ctx, "db", id, []release.Step{{Kind: "Workload", Name: "db", Error: "start: password hunter2 refused"}}); err != nil {
 		t.Fatal(err)
 	}
 	op.Status, op.Error = release.OperationFailed, "connect with hunter2: refused"

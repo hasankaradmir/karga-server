@@ -20,6 +20,8 @@ const (
 	StatusFailed       Status = "failed"
 	StatusUninstalling Status = "uninstalling"
 	StatusUninstalled  Status = "uninstalled"
+	// StatusUnreadable is not stored: a release whose state file cannot be read is listed with it.
+	StatusUnreadable Status = "unreadable"
 )
 
 var transitions = map[Status][]Status{

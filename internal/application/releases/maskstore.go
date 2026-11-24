@@ -37,8 +37,8 @@ func (m maskingStore) FinishOperation(ctx context.Context, op release.Operation)
 	return m.StateStore.FinishOperation(ctx, m.masked(op))
 }
 
-func (m maskingStore) SaveOperationSteps(ctx context.Context, id int64, steps []release.Step) error {
-	return m.StateStore.SaveOperationSteps(ctx, id, m.steps(steps))
+func (m maskingStore) SaveOperationSteps(ctx context.Context, rel string, id int64, steps []release.Step) error {
+	return m.StateStore.SaveOperationSteps(ctx, rel, id, m.steps(steps))
 }
 
 func (m maskingStore) InTx(ctx context.Context, fn func(ports.StateStore) error) error {
