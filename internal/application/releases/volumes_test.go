@@ -303,7 +303,7 @@ func TestVolumeRestoreResumes(t *testing.T) {
 		t.Fatal(err)
 	}
 	op.Steps = []release.Step{{Kind: resource.KindVolume, Name: "data", Action: restorePointStep, Status: deployment.StepDone}}
-	if err := e.svc.c.store.SaveOperationSteps(ctx, op.ID, op.Steps); err != nil {
+	if err := e.svc.c.store.SaveOperationSteps(ctx, op.Release, op.ID, op.Steps); err != nil {
 		t.Fatal(err)
 	}
 	// The interrupted restore had stopped them all.

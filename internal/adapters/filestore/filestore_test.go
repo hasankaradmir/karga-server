@@ -89,7 +89,7 @@ func TestOperationsArePruned(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := s.FinishOperation(ctx, release.Operation{ID: id, Status: release.OperationSucceeded}); err != nil {
+		if err := s.FinishOperation(ctx, release.Operation{ID: id, Release: "web", Status: release.OperationSucceeded}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -195,5 +195,63 @@ func TestOpenRemovesTemporaryFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(left); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("temporary file left: %v", err)
+	}
+}
+
+// A release whose files cannot be read stops only itself: the others are listed, and their
+// operations recorded (D-04).
+func TestUnreadableReleaseStopsOnlyItself(t *testing.T) {
+	home := t.TempDir()
+	s, err := Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, n := range []string{"aaa", "bbb", "ccc"} {
+		if err := s.SaveRelease(ctx, release.Release{Name: n, CurrentRevision: 1, Status: release.StatusDeployed}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.BeginOperation(ctx, release.Operation{Release: n, Type: "install"}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(name, data string) {
+		if err := os.WriteFile(filepath.Join(home, "state", name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("releases/aaa/release.yaml", "id: [\nbad: {\n")        // not YAML
+	write("releases/ccc/release.yaml", "name: ccc\npackage: re") // cut short: parses, fields empty
+	write("operations/aaa.yaml", "id: [\nbad: {\n")
+
+	rels, err := s.ListReleases(ctx)
+	if err != nil || len(rels) != 3 || rels[0].Status != release.StatusUnreadable || rels[1].Status != release.StatusDeployed ||
+		rels[2].Status != release.StatusUnreadable {
+		t.Fatalf("list: %+v %v", rels, err)
+	}
+	if _, err := s.GetRelease(ctx, "aaa"); err == nil || !strings.Contains(err.Error(), "aaa/release.yaml") {
+		t.Fatalf("aaa: %v", err)
+	}
+	if _, err := s.GetRelease(ctx, "ccc"); err == nil || !strings.Contains(err.Error(), "ccc/release.yaml is incomplete") {
+		t.Fatalf("ccc: %v", err)
+	}
+	// bbb's operation goes on as if aaa's file were fine.
+	op, err := s.RunningOperation(ctx, "bbb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveOperationSteps(ctx, "bbb", op.ID, []release.Step{{Kind: "Workload", Name: "web", Action: "create"}}); err != nil {
+		t.Fatal(err)
+	}
+	op.Status = release.OperationSucceeded
+	if err := s.FinishOperation(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.ListOperations(ctx, "", 0, 0)
+	if err != nil || len(all) != 2 || all[1].Release != "bbb" || all[1].Status != release.OperationSucceeded {
+		t.Fatalf("every release's operations: %+v %v", all, err)
+	}
+	if _, err := s.ListOperations(ctx, "aaa", 0, 0); err == nil || !strings.Contains(err.Error(), "operations/aaa.yaml") {
+		t.Fatalf("aaa's operations: %v", err)
 	}
 }

@@ -159,7 +159,10 @@ The state is YAML files under `$KARGA_HOME/state` (ADR-0017), mode 0600 in 0700 
 | `operations/<r>.yaml` | the release's newest 200 operations with their steps, PID, hostname and user |
 
 Files are replaced atomically; a transaction writes the release file last, so a crash leaves at
-most unreferenced files. `version.yaml` holds the format version; a newer one is refused.
+most unreferenced files. `version.yaml` holds the format version; a newer one is refused. A release
+file that cannot be read, or lacks its name or status (cut short by a disk error or a hand edit),
+stops only its release: it is listed as `unreadable` (its status says why), the reconciler leaves
+it alone, and an operation reads and writes only its own release's file.
 
 Every mutating command records an operation first. One karga-server runs per home and only it runs
 operations, so an operation found running after a restart is interrupted: it is resumed, or aborted

@@ -115,6 +115,12 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- One release's unreadable state file stopped the others: `karga list`, the reconciler (no release
+  was repaired), the resume at start and the secret masking failed for every release, and an
+  operation of another release could not record its steps or its end (left `running`). It stops
+  only its own release now, listed as `unreadable`; `SaveOperationSteps` takes the release, so an
+  operation reads and writes only its own file. A release file cut short (parsed with empty fields)
+  is unreadable too, rather than a release with no status.
 - The reconcile queue could hand a release out twice when a notification came just as its
   debounce ended: one needless repair.
 - Built with go.opentelemetry.io/otel 1.47.0, which the Docker client uses (GO-2026-6974).

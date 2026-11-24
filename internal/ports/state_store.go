@@ -39,7 +39,7 @@ type StateStore interface {
 	// FinishOperation stores the final status, steps and error of an operation.
 	FinishOperation(ctx context.Context, op release.Operation) error
 	// SaveOperationSteps records progress so an interrupted operation shows how far it got.
-	SaveOperationSteps(ctx context.Context, id int64, steps []release.Step) error
+	SaveOperationSteps(ctx context.Context, rel string, id int64, steps []release.Step) error
 	// RunningOperation returns the running operation of a release, or ErrNotFound.
 	RunningOperation(ctx context.Context, rel string) (release.Operation, error)
 	// ListOperations returns the operations of a release (all releases for ""), newest first: at most

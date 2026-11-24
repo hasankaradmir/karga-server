@@ -134,7 +134,7 @@ func operations(t *testing.T, s ports.StateStore) {
 	op := release.Operation{Release: "web", Type: "install", Revision: 1, PID: 42, Hostname: "h", Actor: "alice", Options: opts, StartedAt: time.Now()}
 	id, err := s.BeginOperation(ctx, op, nil)
 	must(t, err)
-	must(t, s.SaveOperationSteps(ctx, id, []release.Step{{Kind: "Workload", Name: "redis", Action: "create", Status: "done"}}))
+	must(t, s.SaveOperationSteps(ctx, "web", id, []release.Step{{Kind: "Workload", Name: "redis", Action: "create", Status: "done"}}))
 
 	running, err := s.RunningOperation(ctx, "web")
 	must(t, err)

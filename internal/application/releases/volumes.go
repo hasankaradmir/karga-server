@@ -444,7 +444,7 @@ func (s *Volumes) restore(ctx context.Context, in restoreInput, emit func(kind, 
 			return res, err
 		}
 		op.Steps = append(op.Steps, release.Step{Kind: resource.KindVolume, Name: in.Volume, Action: restorePointStep, Status: deployment.StepDone})
-		if err := s.c.store.SaveOperationSteps(ctx, op.ID, op.Steps); err != nil {
+		if err := s.c.store.SaveOperationSteps(ctx, op.Release, op.ID, op.Steps); err != nil {
 			return res, err
 		}
 	} else if in.pointTaken {
