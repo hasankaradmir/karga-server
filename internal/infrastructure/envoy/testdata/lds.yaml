@@ -29,6 +29,8 @@ resources:
           - name: envoy.filters.network.http_connection_manager
             typed_config:
               '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              common_http_protocol_options:
+                idle_timeout: 3600s
               http_filters:
                 - name: envoy.filters.http.buffer
                   typed_config:
@@ -53,8 +55,14 @@ resources:
                     '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
               merge_slashes: true
               normalize_path: true
+              request_headers_timeout: 10s
               route_config:
                 name: http_0.0.0.0_443
+                request_headers_to_add:
+                  - append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                    header:
+                      key: x-forwarded-for
+                      value: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
                 virtual_hosts:
                   - domains:
                       - secure.example
@@ -84,11 +92,14 @@ resources:
                     filename: /etc/karga-proxy/certs/app_443_secure.example.crt
                   private_key:
                     filename: /etc/karga-proxy/certs/app_443_secure.example.key
+              tls_params:
+                tls_minimum_protocol_version: TLSv1_2
     listener_filters:
       - name: envoy.filters.listener.tls_inspector
         typed_config:
           '@type': type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
     name: http_0.0.0.0_443
+    per_connection_buffer_limit_bytes: 32768
   - '@type': type.googleapis.com/envoy.config.listener.v3.Listener
     address:
       socket_address:
@@ -100,14 +111,22 @@ resources:
           - name: envoy.filters.network.http_connection_manager
             typed_config:
               '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              common_http_protocol_options:
+                idle_timeout: 3600s
               http_filters:
                 - name: envoy.filters.http.router
                   typed_config:
                     '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
               merge_slashes: true
               normalize_path: true
+              request_headers_timeout: 10s
               route_config:
                 name: http_0.0.0.0_80
+                request_headers_to_add:
+                  - append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                    header:
+                      key: x-forwarded-for
+                      value: '%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%'
                 virtual_hosts:
                   - domains:
                       - app.local
@@ -175,3 +194,4 @@ resources:
                 - upgrade_type: websocket
               use_remote_address: true
     name: http_0.0.0.0_80
+    per_connection_buffer_limit_bytes: 32768
