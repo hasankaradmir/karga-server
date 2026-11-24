@@ -92,7 +92,8 @@ interruption. `KARGA_PROXY_IMAGE` overrides the image.
   of another protocol, or that another release holds is refused before anything changes. HTTP and
   HTTPS listeners select a Service by `Host` header and path (`pathType` prefix, by segment, or exact; `to`
   replaces a prefix in what the Service gets), so several releases share them;
-  the backend receives the client address in `x-forwarded-for`. A tcp listener belongs to one Service.
+  the backend receives the client address in `x-forwarded-for` (only that address: one a client
+  sends is replaced, so behind a CDN or load balancer it is theirs). A tcp listener belongs to one Service.
   Listeners nobody uses are not opened. karga creates the gateway when a Service is exposed and
   removes it with the last one. `karga gateway status` shows whether it is ready and what it serves.
   `karga gateway set access-log on` logs every request (see `karga logs --gateway`).

@@ -308,7 +308,10 @@ Services is refused.
   (`gateway.Check`) refuses exposures on unknown listeners or listeners of another protocol, tcp
   listeners, hosts and paths or certificates another release holds, and listeners a host process holds.
   HTTP routes have no overall deadline (uploads, server-sent events and long polls run until done)
-  and pass WebSocket upgrades through; a stream idle for 5 minutes is closed. Only connect
+  and pass WebSocket upgrades through; a stream idle for 5 minutes is closed. Against slow clients
+  (Envoy's edge guidance) request headers must arrive within 10s, an idle connection closes after
+  an hour and a connection buffers at most 32 KiB beyond a body limit; https is TLS 1.2 or newer.
+  `x-forwarded-for` is set to the client address alone, dropping what the client sent. Only connect
   failures are retried. A listener's options (the administrator's, in the gateway settings) change that:
   a route timeout, the idle timeout (HTTP stream or `tcp_proxy`), a body limit (the `buffer`
   filter, at most 16Mi as it holds the body in memory), a rate limit (`local_ratelimit`, one token
@@ -354,7 +357,8 @@ fails later. A `tcp` check is an empty connection; services that penalize those 
 - Containers are never privileged and run with `no-new-privileges` by default; the `security` block
   adds a read-only root filesystem, capability changes and a user. A package may add only Docker's
   default capabilities unless the administrator allows more (`--allow-capabilities`). The gateway
-  runs as root with only `NET_BIND_SERVICE` and `DAC_OVERRIDE`.
+  runs as root with only `NET_BIND_SERVICE` and `DAC_OVERRIDE`; release proxies drop every
+  capability and run with `no-new-privileges`.
 - Packages cannot open ports: workloads publish nothing, release proxies publish only loopback
   upstreams, and the gateway serves only the listeners the administrator defines, on `127.0.0.1`
   unless told otherwise.

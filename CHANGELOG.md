@@ -115,6 +115,16 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- The gateway took a client's `x-forwarded-for` and appended the real address: an application
+  reading the first address saw one the client chose, past IP allowlists and rate limits. It is set
+  to the client address alone.
+- The gateway had no defense against slow clients: one client holding thousands of connections
+  open could make every release unreachable. Request headers must arrive within 10s, an idle
+  connection closes after an hour, and a connection buffers at most 32 KiB (Envoy's edge guidance).
+  HTTPS is pinned to TLS 1.2 or newer.
+- Release proxies ran with Docker's default capabilities; they drop all and run with
+  `no-new-privileges`, as the gateway does. Each proxy is recreated once on its release's next
+  deployment.
 - An operation whose end could not be written (a full disk) stayed `running`: once there was room
   again, every command on the release said it was interrupted and asked for `--force`, and the
   reconciler skipped it, until karga-server restarted. The end is kept and written before the

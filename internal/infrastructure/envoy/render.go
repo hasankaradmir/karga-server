@@ -136,6 +136,16 @@ func listenerItems(c Config) ([]validated, error) {
 // StreamIdleTimeout closes an HTTP stream (a request, a WebSocket) that sends nothing either way.
 const StreamIdleTimeout = 5 * time.Minute
 
+// Limits against slow or idle clients (SI-05), after Envoy's edge proxy guidance: a client must send
+// its request headers within RequestHeadersTimeout, a connection without requests is closed after
+// ConnectionIdleTimeout, and a connection buffers at most ConnectionBufferBytes (a listener's body
+// limit buffers more for its requests).
+const (
+	RequestHeadersTimeout = 10 * time.Second
+	ConnectionIdleTimeout = time.Hour
+	ConnectionBufferBytes = 32 << 10
+)
+
 // httpFilters are the listener's limits (a body limit, a rate limit) followed by the router.
 func httpFilters(name string, lim HTTPLimits) ([]*hcmv3.HttpFilter, error) {
 	var items []struct {
@@ -179,8 +189,12 @@ func hcm(name string, filters []*hcmv3.HttpFilter, idle time.Duration, hosts []*
 	return &hcmv3.HttpConnectionManager{
 		StatPrefix: name,
 		AccessLog:  logs,
-		// The gateway sees the real client address and passes it on in x-forwarded-for.
-		UseRemoteAddress: wrapperspb.Bool(true),
+		// The gateway sees the real client address and passes it on in x-forwarded-for, which
+		// the route configuration sets to that address alone: what a client sent there is dropped
+		// (SI-06), so a backend reading its first address gets the client's, not a forged one.
+		UseRemoteAddress:          wrapperspb.Bool(true),
+		RequestHeadersTimeout:     durationpb.New(RequestHeadersTimeout),
+		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(ConnectionIdleTimeout)},
 		// Routes of different releases differ by path prefix: /a/../b or //b must not reach b's
 		// routes in another form than a plain /b would.
 		NormalizePath: wrapperspb.Bool(true),
@@ -193,6 +207,10 @@ func hcm(name string, filters []*hcmv3.HttpFilter, idle time.Duration, hosts []*
 		HttpFilters:       filters,
 		RouteSpecifier: &hcmv3.HttpConnectionManager_RouteConfig{RouteConfig: &routev3.RouteConfiguration{
 			Name: name, VirtualHosts: hosts,
+			RequestHeadersToAdd: []*corev3.HeaderValueOption{{
+				Header:       &corev3.HeaderValue{Key: "x-forwarded-for", Value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"},
+				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			}},
 		}},
 	}
 }
@@ -210,16 +228,21 @@ func httpListener(l HTTPListener, logs []*accesslogv3.AccessLog) (*listenerv3.Li
 		for _, h := range slices.Sorted(maps.Keys(l.Redirects)) {
 			hosts = append(hosts, redirectHost(h, l.Redirects[h]))
 		}
-		return filterListener(name, l.Address, l.Port, "envoy.filters.network.http_connection_manager", hcm(name, filters, l.Limits.IdleTimeout, hosts, logs))
+		lis, err := filterListener(name, l.Address, l.Port, "envoy.filters.network.http_connection_manager", hcm(name, filters, l.Limits.IdleTimeout, hosts, logs))
+		if lis != nil {
+			lis.PerConnectionBufferLimitBytes = wrapperspb.UInt32(ConnectionBufferBytes)
+		}
+		return lis, err
 	}
 	inspector, err := pack(&tlsinspectorv3.TlsInspector{})
 	if err != nil {
 		return nil, err
 	}
 	lis := &listenerv3.Listener{
-		Name:            name,
-		Address:         socketAddress(l.Address, l.Port),
-		EnableReusePort: wrapperspb.Bool(true),
+		Name:                          name,
+		Address:                       socketAddress(l.Address, l.Port),
+		EnableReusePort:               wrapperspb.Bool(true),
+		PerConnectionBufferLimitBytes: wrapperspb.UInt32(ConnectionBufferBytes),
 		ListenerFilters: []*listenerv3.ListenerFilter{{
 			Name: "envoy.filters.listener.tls_inspector", ConfigType: &listenerv3.ListenerFilter_TypedConfig{TypedConfig: inspector},
 		}},
@@ -233,6 +256,7 @@ func httpListener(l HTTPListener, logs []*accesslogv3.AccessLog) (*listenerv3.Li
 		}
 		cert := l.Certs[host]
 		tlsCtx, err := pack(&tlsv3.DownstreamTlsContext{CommonTlsContext: &tlsv3.CommonTlsContext{
+			TlsParams: &tlsv3.TlsParameters{TlsMinimumProtocolVersion: tlsv3.TlsParameters_TLSv1_2},
 			TlsCertificates: []*tlsv3.TlsCertificate{{
 				CertificateChain: &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: cert.Chain}},
 				PrivateKey:       &corev3.DataSource{Specifier: &corev3.DataSource_Filename{Filename: cert.Key}},

@@ -128,19 +128,22 @@ func exposeRoutes(svcs services, paths map[Key]string) []gateway.Route {
 // others are connected with their own aliases (connectProxy).
 func (e *Env) proxyRequest(rel, name string, revision int, spec ProxySpec, dir, user, edgeIP string) (ports.WorkloadRequest, error) {
 	wr := ports.WorkloadRequest{
-		Name:          name,
-		Labels:        labels(rel, revision, KindProxy, ProxyResource),
-		Image:         spec.Image,
-		Command:       e.host.Proxies.Command(proxyInstance(rel, name)),
-		User:          user,
-		Sysctls:       map[string]string{"net.ipv4.ip_unprivileged_port_start": "0"},
-		RestartPolicy: "always",
-		Mounts:        []ports.Mount{{Type: ports.MountBind, Source: dir, Target: e.host.Proxies.Container().MountPath}},
-		MemoryBytes:   e.host.Proxies.Container().MemoryBytes,
-		MilliCPU:      e.host.Proxies.Container().MilliCPU,
-		PidsLimit:     e.host.Proxies.Container().Pids,
-		LogMaxSize:    resource.DefaultLogMaxSize,
-		LogMaxFiles:   resource.DefaultLogMaxFiles,
+		Name:    name,
+		Labels:  labels(rel, revision, KindProxy, ProxyResource),
+		Image:   spec.Image,
+		Command: e.host.Proxies.Command(proxyInstance(rel, name)),
+		User:    user,
+		Sysctls: map[string]string{"net.ipv4.ip_unprivileged_port_start": "0"},
+		// It binds its ports through the sysctl above and needs no capability (SI-13).
+		CapDrop:         []string{"ALL"},
+		NoNewPrivileges: true,
+		RestartPolicy:   "always",
+		Mounts:          []ports.Mount{{Type: ports.MountBind, Source: dir, Target: e.host.Proxies.Container().MountPath}},
+		MemoryBytes:     e.host.Proxies.Container().MemoryBytes,
+		MilliCPU:        e.host.Proxies.Container().MilliCPU,
+		PidsLimit:       e.host.Proxies.Container().Pids,
+		LogMaxSize:      resource.DefaultLogMaxSize,
+		LogMaxFiles:     resource.DefaultLogMaxFiles,
 	}
 	if nets := sortedNetworks(spec); len(nets) > 0 {
 		wr.Networks, wr.Aliases = []string{proxyops.RuntimeName(rel, nets[0])}, spec.Networks[nets[0]]
