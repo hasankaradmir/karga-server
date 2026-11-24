@@ -114,6 +114,8 @@ type RuntimeEvent struct {
 	Release   string
 	Container string
 	Action    string
+	// Err, in the last event of a stream, is why it broke.
+	Err error
 }
 
 // RuntimeInfo describes the runtime and what it supports.

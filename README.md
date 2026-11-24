@@ -53,10 +53,13 @@ $ karga version                          # the CLI's and the server's version an
   operations may take to finish on stop; keep the unit's `TimeoutStopSec` above it), `--edge-subnet`
   (or `KARGA_EDGE_SUBNET`; default `10.213.0.0/16`: the range of the `karga-edge` network the
   gateway reaches release proxies on; pick one no other network of the host uses; it cannot change
-  while proxies use it), `--version`. It logs text to stderr (the journal),
-  with every secret value it knows masked. One server owns a `KARGA_HOME`.
+  while proxies use it), `--log-format` (`text`, the default, or `json`), `--log-level` (`debug`,
+  `info`, the default, `warn` or `error`), `--version`. It logs to stderr (the journal), with every
+  secret value it knows masked: each operation's start and its end with status and duration (a
+  failed one at `warn`, with its error: `journalctl -u karga-server -p warning` finds them). It
+  waits up to 30 seconds for Docker to answer when it starts. One server owns a `KARGA_HOME`.
 - **Compatibility:** the CLI and the server work together when they speak the same major API
-  version (`2.x`), whatever their release versions; otherwise every command says which one to
+  version (`4.x`), whatever their release versions; otherwise every command says which one to
   upgrade.
 - **Operations** run in the server: a client that goes away (Ctrl-C) does not stop them. Operations
   on one release run one after the other, from planning to the end. On `systemctl stop` the server

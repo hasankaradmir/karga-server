@@ -1,9 +1,13 @@
 package reconciler
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,5 +115,30 @@ func TestQueueKeepsEveryRelease(t *testing.T) {
 		if c != 1 {
 			t.Fatalf("%s came out %d times", n, c)
 		}
+	}
+}
+
+// brokenStream is an event stream that breaks at once, saying why.
+type brokenStream struct{}
+
+func (brokenStream) Events(context.Context) (<-chan ports.RuntimeEvent, error) {
+	c := make(chan ports.RuntimeEvent, 1)
+	c <- ports.RuntimeEvent{Err: errors.New("unexpected EOF")}
+	close(c)
+	return c, nil
+}
+
+// A broken event stream is logged with its reason; the loop reconnects.
+func TestBrokenEventStreamIsLogged(t *testing.T) {
+	var buf bytes.Buffer
+	l := New(NewQueue(time.Hour), nil, nil, brokenStream{}, Options{Log: slog.New(slog.NewTextHandler(&buf, nil))})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { l.watch(ctx); close(done) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+	if out := buf.String(); !strings.Contains(out, `msg="reconcile: runtime events stopped" error="unexpected EOF"`) {
+		t.Fatalf("log:\n%s", out)
 	}
 }

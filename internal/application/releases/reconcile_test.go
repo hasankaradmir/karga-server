@@ -1,8 +1,10 @@
 package releases
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -243,5 +245,27 @@ func TestUnrecordedEndIsWrittenLater(t *testing.T) {
 	ops := must[[]release.Operation](t)(e.svc.Reads.Operations(ctx, "cache", 0, 3))
 	if ops[0].Status != release.OperationSucceeded || ops[1].Status != release.OperationSucceeded || ops[1].Revision != 2 {
 		t.Fatalf("operations: %+v / %+v", ops[0], ops[1])
+	}
+}
+
+// Every operation's end is logged, with its status and duration; a failed one at WARN with its
+// error, so failed deployments show in the journal.
+func TestOperationEndIsLogged(t *testing.T) {
+	e := newEnv(t)
+	var buf bytes.Buffer
+	e.svc.c.log = slog.New(slog.NewTextHandler(&buf, nil))
+	must[*Result](t)(e.install())
+	if out := buf.String(); !strings.Contains(out, `level=INFO msg="operation finished"`) || !strings.Contains(out, "type=install") ||
+		!strings.Contains(out, "status=succeeded") || !strings.Contains(out, "duration=") {
+		t.Fatalf("install:\n%s", out)
+	}
+	buf.Reset()
+	e.rt.Health = ports.HealthUnhealthy
+	if _, err := e.upgrade("image.tag=7.2"); err == nil {
+		t.Fatal("expected a failed upgrade")
+	}
+	if out := buf.String(); !strings.Contains(out, `level=WARN msg="operation finished"`) || !strings.Contains(out, "status=failed") ||
+		!strings.Contains(out, "error=") {
+		t.Fatalf("failed upgrade:\n%s", out)
 	}
 }

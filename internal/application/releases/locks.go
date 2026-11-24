@@ -159,6 +159,13 @@ func (s *core) finish(ctx context.Context, op release.Operation, err error) {
 	if err != nil {
 		op.Status, op.Error = release.OperationFailed, err.Error()
 	}
+	attrs := []any{"operation_id", op.ID, "release", op.Release, "type", op.Type, "revision", op.Revision, "status", op.Status,
+		"duration", s.now().Sub(op.StartedAt).Round(time.Millisecond).String()} // "10.8s" in JSON too
+	if err != nil {
+		s.log.Warn("operation finished", append(attrs, "error", err)...)
+	} else {
+		s.log.Info("operation finished", attrs...)
+	}
 	if ferr := s.store.FinishOperation(ctx, op); ferr != nil {
 		s.log.Error("record operation result", "release", op.Release, "error", ferr)
 		s.unrecorded.Store(op.Release, op) // not left running: written before the release's next operation
