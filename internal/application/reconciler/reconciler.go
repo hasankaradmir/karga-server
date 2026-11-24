@@ -222,6 +222,9 @@ func (l *Loop) watch(ctx context.Context) {
 			l.log.Warn("reconcile: runtime events", "error", err)
 		} else {
 			for e := range events {
+				if e.Err != nil && ctx.Err() == nil {
+					l.log.Warn("reconcile: runtime events stopped", "error", e.Err)
+				}
 				if e.Release != "" && e.Action != "start" {
 					l.q.Notify(e.Release)
 				}

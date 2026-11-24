@@ -6,6 +6,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- The log has each operation's end (`operation finished`, with status and duration; a failed one at
+  `warn`, with its error), and why Docker's event stream broke. `--log-format json` and
+  `--log-level`. Docker must answer within 30 seconds at start; a daemon that hangs no longer holds
+  karga-server's start for ever.
 - `Lifecycle.RepairEmptyVolumes` (API 4.1 `ReconcileRequest.EmptyVolumes`, `karga reconcile
   --empty-volumes`): a repair that creates the release's missing Volumes, empty.
 - Image pulls report progress: every two seconds `pulling <image>: 57MB/165MB (4s)`, the bytes

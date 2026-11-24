@@ -532,7 +532,11 @@ func (r *Runtime) Events(ctx context.Context) (<-chan ports.RuntimeEvent, error)
 			case <-ctx.Done():
 				return
 			case err := <-res.Err:
-				_ = err // the stream broke; the caller reconnects
+				// The stream broke (Docker restarted, ...): say why; the caller reconnects.
+				select {
+				case out <- ports.RuntimeEvent{Err: err}:
+				case <-ctx.Done():
+				}
 				return
 			case m, ok := <-res.Messages:
 				if !ok {

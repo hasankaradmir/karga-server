@@ -39,6 +39,8 @@ func run() error {
 	allowCaps := flag.String("allow-capabilities", "", "comma-separated Linux capabilities packages may add beyond Docker's default set, e.g. NET_ADMIN (ALL: any; each one gives containers power over the host)")
 	grace := flag.Duration("shutdown-grace", 5*time.Minute, "how long running operations may take to finish when the server stops (keep the systemd unit's TimeoutStopSec above it)")
 	edge := flag.String("edge-subnet", envOr("KARGA_EDGE_SUBNET", proxyops.DefaultEdgeSubnet), "address range of the network the gateway reaches release proxies on (IPv4, /16 to /28; it cannot change once proxies use it)")
+	logFormat := flag.String("log-format", "text", "log format: text or json")
+	logLevel := flag.String("log-level", "info", "lowest level logged: debug, info, warn or error")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -54,7 +56,11 @@ func run() error {
 		return err
 	}
 	redactor := logging.NewRedactor()
-	log, err := logging.New(os.Stderr, "text", slog.LevelInfo, redactor)
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
+		return fmt.Errorf("--log-level: %w", err)
+	}
+	log, err := logging.New(os.Stderr, *logFormat, level, redactor)
 	if err != nil {
 		return err
 	}

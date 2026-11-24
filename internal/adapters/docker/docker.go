@@ -40,7 +40,10 @@ func New(ctx context.Context) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
-	if _, err := c.Ping(ctx, client.PingOptions{}); err != nil {
+	// A daemon that accepts the connection but does not answer must not hold the start for ever.
+	pctx, cancel := context.WithTimeout(ctx, pingTimeout)
+	defer cancel()
+	if _, err := c.Ping(pctx, client.PingOptions{}); err != nil {
 		_ = c.Close()
 		return nil, unreachable(c.DaemonHost(), contextName, err)
 	}
@@ -55,6 +58,7 @@ func (r *Runtime) Close() error { return r.c.Close() }
 const (
 	callTimeout = 2 * time.Minute
 	pullTimeout = 30 * time.Minute
+	pingTimeout = 30 * time.Second
 )
 
 // unreachable explains a failed connection in terms of what the user can change.
