@@ -59,8 +59,15 @@ func (q *Queue) Notify(name string) {
 		t.Reset(q.debounce)
 		return
 	}
-	q.pending[name] = time.AfterFunc(q.debounce, func() {
+	var t *time.Timer
+	t = time.AfterFunc(q.debounce, func() {
 		q.mu.Lock()
+		// A Notify that held the lock as t fired reset it, so t fires again: its first run took
+		// the name already.
+		if q.pending[name] != t {
+			q.mu.Unlock()
+			return
+		}
 		delete(q.pending, name)
 		q.ready[name] = true
 		q.mu.Unlock()
@@ -69,6 +76,7 @@ func (q *Queue) Notify(name string) {
 		default: // already signalled: the loop takes every ready name at once
 		}
 	})
+	q.pending[name] = t
 }
 
 // take returns the releases ready to reconcile, sorted, and empties the set.
