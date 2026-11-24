@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/hasankaradmir/karga-server/internal/application/deployment"
@@ -94,6 +95,9 @@ type core struct {
 
 	repairs repairs
 	locks   opLocks
+	// unrecorded holds, by release, an operation whose end could not be written (a full disk), to
+	// write before the release's next operation.
+	unrecorded sync.Map
 }
 
 // Deps are what the release service is made of.

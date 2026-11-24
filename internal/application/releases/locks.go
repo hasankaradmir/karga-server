@@ -114,6 +114,7 @@ func describe(op release.Operation) string {
 // begin records a running operation; the caller holds the release's lock. An interrupted operation
 // is only overridden with force (D15).
 func (s *core) begin(ctx context.Context, rel, typ string, revision int, force bool, opts release.Options) (release.Operation, error) {
+	s.recordUnfinished(ctx, rel)
 	op := release.Operation{Release: rel, Type: typ, Revision: revision, Status: release.OperationRunning,
 		PID: s.pid, Hostname: s.hostname, Actor: actorOf(ctx), Options: opts, StartedAt: s.now()}
 	id, err := s.store.BeginOperation(ctx, op, func(running release.Operation) error {
@@ -160,5 +161,19 @@ func (s *core) finish(ctx context.Context, op release.Operation, err error) {
 	}
 	if ferr := s.store.FinishOperation(ctx, op); ferr != nil {
 		s.log.Error("record operation result", "release", op.Release, "error", ferr)
+		s.unrecorded.Store(op.Release, op) // not left running: written before the release's next operation
 	}
+}
+
+// recordUnfinished writes the end of rel's operation finish could not, if any: once there is room again, the
+// release is not taken for interrupted.
+func (s *core) recordUnfinished(ctx context.Context, rel string) {
+	v, ok := s.unrecorded.Load(rel)
+	if !ok {
+		return
+	}
+	if err := s.store.FinishOperation(context.WithoutCancel(ctx), v.(release.Operation)); err != nil {
+		return // still no room: the operation that follows says so
+	}
+	s.unrecorded.Delete(rel) // the release's lock is held: no other end of it is stored meanwhile
 }
