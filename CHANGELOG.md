@@ -115,6 +115,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- The reconcile queue could hand a release out twice when a notification came just as its
+  debounce ended: one needless repair.
 - Built with go.opentelemetry.io/otel 1.47.0, which the Docker client uses (GO-2026-6974).
 - A repair created a Volume missing in Docker again, empty, and started its workloads on it,
   recorded as a successful reconcile: a database removed by hand, or a `$KARGA_HOME` restored on

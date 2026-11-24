@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -67,9 +68,29 @@ func TestEventTriggersRepair(t *testing.T) {
 	}
 }
 
-// The queue holds each release once and never drops one, however many wait.
-func TestQueueKeepsEveryRelease(t *testing.T) {
+// A Notify that held the lock while the release's timer fired resets a timer whose run is waiting
+// for the lock: the timer fires again, and that second run must not hand the release out twice.
+func TestQueueResetAfterFiringDeliversOnce(t *testing.T) {
 	q := NewQueue(time.Millisecond)
+	q.Notify("a")
+	q.mu.Lock()
+	time.Sleep(20 * time.Millisecond)           // the timer fires; its run waits for the lock
+	q.pending["a"].Reset(50 * time.Millisecond) // what Notify does when it finds "a" pending
+	q.mu.Unlock()
+	<-q.wake
+	if got := q.take(); !slices.Equal(got, []string{"a"}) {
+		t.Fatalf("first: %v", got)
+	}
+	time.Sleep(100 * time.Millisecond) // past the reset
+	if got := q.take(); len(got) != 0 {
+		t.Fatalf("handed out again: %v", got)
+	}
+}
+
+// The queue holds each release once and never drops one, however many wait. The debounce outlasts
+// the notifications: a second Notify after the release came out queues it again, rightly.
+func TestQueueKeepsEveryRelease(t *testing.T) {
+	q := NewQueue(100 * time.Millisecond)
 	for i := range 300 {
 		q.Notify(fmt.Sprintf("r%d", i))
 		q.Notify(fmt.Sprintf("r%d", i)) // twice: once in the queue
