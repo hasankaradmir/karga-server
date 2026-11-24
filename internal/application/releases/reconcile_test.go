@@ -210,3 +210,38 @@ func TestNextRepair(t *testing.T) {
 		t.Fatalf("a successful repair waits for nothing: %v", at)
 	}
 }
+
+// fullDisk fails to record an operation's end while full is set.
+type fullDisk struct {
+	ports.StateStore
+	full *bool
+}
+
+func (f fullDisk) FinishOperation(ctx context.Context, op release.Operation) error {
+	if *f.full {
+		return errors.New("write operations/cache.yaml: no space left on device")
+	}
+	return f.StateStore.FinishOperation(ctx, op)
+}
+
+// An operation whose end could not be written (a full disk) is not taken for interrupted once there
+// is room: its end is written before the release's next operation, without --force or a restart.
+func TestUnrecordedEndIsWrittenLater(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	must[*Result](t)(e.install())
+	full := true
+	e.svc.c.store = fullDisk{e.svc.c.store, &full}
+	must[*Result](t)(e.upgrade("config.maxmemory=64mb"))
+	if _, err := e.svc.c.store.RunningOperation(ctx, "cache"); err != nil {
+		t.Fatalf("the upgrade's end was written: %v", err)
+	}
+	full = false
+	if _, err := e.upgrade("config.maxmemory=32mb"); err != nil {
+		t.Fatalf("after room came back: %v", err)
+	}
+	ops := must[[]release.Operation](t)(e.svc.Reads.Operations(ctx, "cache", 0, 3))
+	if ops[0].Status != release.OperationSucceeded || ops[1].Status != release.OperationSucceeded || ops[1].Revision != 2 {
+		t.Fatalf("operations: %+v / %+v", ops[0], ops[1])
+	}
+}

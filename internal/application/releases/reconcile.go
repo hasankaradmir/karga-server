@@ -243,6 +243,7 @@ func (s *Lifecycle) repair(ctx context.Context, name string, force, emptyVolumes
 // skipReason says why rel is not repaired now ("" if it is): paused, not deployed, or an
 // operation running on it.
 func (s *Lifecycle) skipReason(ctx context.Context, rel release.Release) (string, error) {
+	s.c.recordUnfinished(ctx, rel.Name)
 	why := ""
 	switch {
 	case rel.Paused:

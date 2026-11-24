@@ -115,6 +115,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- An operation whose end could not be written (a full disk) stayed `running`: once there was room
+  again, every command on the release said it was interrupted and asked for `--force`, and the
+  reconciler skipped it, until karga-server restarted. The end is kept and written before the
+  release's next operation or repair.
 - One release's unreadable state file stopped the others: `karga list`, the reconciler (no release
   was repaired), the resume at start and the secret masking failed for every release, and an
   operation of another release could not record its steps or its end (left `running`). It stops
