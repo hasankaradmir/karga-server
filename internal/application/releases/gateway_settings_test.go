@@ -3,8 +3,11 @@ package releases
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -166,5 +169,31 @@ func TestGatewayDocuments(t *testing.T) {
 	}
 	if h, _ := svc.Gateway.Health(ctx); h.Revision != 5 {
 		t.Fatalf("health revision: %d", h.Revision)
+	}
+}
+
+// Changes to the gateway settings made at once all land: each reads the settings under the
+// gateway lock, so none writes a revision without another's change (SA-08).
+func TestConcurrentGatewayChangesAllLand(t *testing.T) {
+	e := newEnv(t)
+	var wg sync.WaitGroup
+	errs := make([]error, 8)
+	for i := range errs {
+		wg.Go(func() {
+			errs[i] = e.svc.Gateway.AddListener(context.Background(), gateway.Listener{Name: fmt.Sprintf("tcp%d", i), Port: 7000 + i, Protocol: "tcp"})
+		})
+	}
+	wg.Wait()
+	settings, _, err := e.svc.Gateway.Settings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("listener %d: %v", i, err)
+		}
+		if !slices.ContainsFunc(settings.Listeners, func(l gateway.Listener) bool { return l.Name == fmt.Sprintf("tcp%d", i) }) {
+			t.Fatalf("listener tcp%d was lost: %+v", i, settings.Listeners)
+		}
 	}
 }

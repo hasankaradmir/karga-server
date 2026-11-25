@@ -294,6 +294,10 @@ func TestGatewayRejectionIsReported(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "cannot bind '0.0.0.0:80'") || strings.Contains(err.Error(), "starting") {
 		t.Fatalf("want the gateway's rejection in the error, got %v", err)
 	}
+	// What the gateway refused is taken back, not applied again by every later sync (SA-10).
+	if _, err := os.Stat(filepath.Join(ProxyDir(r.home, r.req.Release), "expose.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the refused exposure stays: %v", err)
+	}
 }
 
 func TestGatewayGoesWithTheLastRelease(t *testing.T) {

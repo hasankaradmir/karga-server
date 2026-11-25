@@ -1,9 +1,12 @@
 package deployment
 
 import (
+	"log/slog"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
+	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
 // Env is what deployments need from where they run: the host's proxies, network and runtime
@@ -16,6 +19,7 @@ type Env struct {
 	redact      func(string)
 	allowedCaps []string
 	poll, every time.Duration
+	log         *slog.Logger
 }
 
 // EnvConfig configures NewEnv.
@@ -33,6 +37,8 @@ type EnvConfig struct {
 	// PollInterval is how often a wait checks workload status (default 500ms); WaitEvery how often a
 	// long wait reports that it still waits (default 2s).
 	PollInterval, WaitEvery time.Duration
+	// Log receives what the gateway leaves out (nil: nothing).
+	Log *slog.Logger
 }
 
 // NewEnv returns the deployment environment of host.
@@ -41,7 +47,12 @@ func NewEnv(host *proxyops.Host, c EnvConfig) *Env {
 		c.Redact = func(string) {}
 	}
 	return &Env{host: host, key: c.DigestKey, home: c.Home, redact: c.Redact, allowedCaps: c.AllowedCaps,
-		poll: or(c.PollInterval, 500*time.Millisecond), every: or(c.WaitEvery, 2*time.Second)}
+		poll: or(c.PollInterval, 500*time.Millisecond), every: or(c.WaitEvery, 2*time.Second), log: c.Log}
+}
+
+// gateway is the host gateway, logging to the environment's log.
+func (e *Env) gateway(rt ports.Runtime) *gateway.Gateway {
+	return gateway.New(rt, e.host, e.home).WithLog(e.log)
 }
 
 // Host is the host the deployments run on.

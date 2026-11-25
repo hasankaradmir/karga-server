@@ -356,12 +356,16 @@ func (r *run) expose(ctx context.Context) error {
 		return nil
 	}
 	progress(ctx, "Gateway", gateway.ContainerName, PhaseSwitch, "updating the host gateway")
-	targets, err := gateway.New(r.rt, r.e.host, r.e.home).Expose(ctx, r.req.Release, r.proxy(), r.req.Resources, exposeRoutes(r.svcs, r.paths))
+	gw := r.e.gateway(r.rt)
+	targets, undo, err := gw.Expose(ctx, r.req.Release, r.proxy(), r.req.Resources, exposeRoutes(r.svcs, r.paths))
 	if err == nil {
-		gw := gateway.New(r.rt, r.e.host, r.e.home)
 		err = gw.Wait(ctx, r.req.Release, targets)
 		if name, nerr := gw.Current(ctx); nerr == nil {
 			err = proxyops.EnvoyErr(ctx, r.rt, name, err)
+		}
+		if err != nil {
+			// What the gateway refused does not stay to be applied again by every later sync.
+			err = errors.Join(err, undo(context.WithoutCancel(ctx)))
 		}
 	}
 	if err != nil {

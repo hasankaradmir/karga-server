@@ -34,7 +34,7 @@ func (e *Env) Execute(ctx context.Context, rt ports.Runtime, req ExecRequest) er
 	}
 	if disrupted && e.host.Supported() {
 		// Point the gateway at what runs now; the error that got us here is the one to report.
-		_, _ = gateway.New(rt, e.host, e.home).Sync(ctx)
+		_, _ = e.gateway(rt).Sync(ctx)
 	}
 	return &ExecError{Err: err, Disrupted: disrupted, Down: down}
 }

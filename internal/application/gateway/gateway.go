@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -82,11 +83,26 @@ type Gateway struct {
 	rt   Runtime
 	host *proxyops.Host
 	home string
+	log  *slog.Logger
 }
 
 // New returns the host gateway on rt; home is $KARGA_HOME.
 func New(rt Runtime, host *proxyops.Host, home string) *Gateway {
 	return &Gateway{rt: rt, host: host, home: home}
+}
+
+// WithLog makes g log the releases it leaves out (their files cannot be read).
+func (g *Gateway) WithLog(log *slog.Logger) *Gateway {
+	g.log = log
+	return g
+}
+
+// leftOut reports a release the gateway leaves out: one release's broken files do not stop the
+// others' routes.
+func (g *Gateway) leftOut(rel string, err error) {
+	if g.log != nil {
+		g.log.Warn("gateway: release left out", "release", rel, "error", err)
+	}
 }
 
 // Runtime is what the host gateway needs of a container runtime.
@@ -100,7 +116,8 @@ type Runtime interface {
 }
 
 // findTargets lists every release proxy that publishes upstream ports, with its release's routes.
-func findTargets(ctx context.Context, rt Runtime, home string) ([]Target, error) {
+func (g *Gateway) findTargets(ctx context.Context) ([]Target, error) {
+	rt, home := g.rt, g.home
 	objs, err := rt.ListLabeled(ctx, LabelEdgeIP)
 	if err != nil {
 		return nil, err
@@ -112,7 +129,8 @@ func findTargets(ctx context.Context, rt Runtime, home string) ([]Target, error)
 		rel := o.Labels[ports.LabelRelease]
 		proxy, routes, err := readExpose(home, rel)
 		if err != nil {
-			return nil, err
+			g.leftOut(rel, err)
+			continue
 		}
 		t := Target{Release: rel, Container: o.Name, IP: o.Labels[LabelEdgeIP], Routes: routes}
 		for _, r := range routes {
@@ -138,33 +156,62 @@ func findTargets(ctx context.Context, rt Runtime, home string) ([]Target, error)
 // Sync rewrites the gateway from the settings and every release's proxy, and creates or removes
 // the gateway container as needed. It returns the targets it routes to.
 func (g *Gateway) Sync(ctx context.Context) ([]Target, error) {
-	rt, h, home := g.rt, g.host, g.home
-	unlock, err := Lock(ctx, home)
+	unlock, err := Lock(ctx, g.home)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	return syncLocked(ctx, rt, h, home)
+	return g.syncLocked(ctx, "")
+}
+
+// SyncLocked is Sync for a caller that holds the gateway lock (Lock).
+func (g *Gateway) SyncLocked(ctx context.Context) ([]Target, error) {
+	return g.syncLocked(ctx, "")
 }
 
 // Expose records what release rel exposes and syncs the gateway, checking again under the gateway
 // lock that no other release took the same listeners, hosts or paths since the pre-flight.
-// proxy is the release proxy container the gateway sends the release's traffic to.
-func (g *Gateway) Expose(ctx context.Context, rel, proxy string, rs []resource.Resource, routes []Route) ([]Target, error) {
-	rt, h, home := g.rt, g.host, g.home
-	unlock, err := Lock(ctx, home)
+// proxy is the release proxy container the gateway sends the release's traffic to. Undo puts back
+// what the release exposed before and syncs again, for a gateway that did not route with it.
+func (g *Gateway) Expose(ctx context.Context, rel, proxy string, rs []resource.Resource, routes []Route) (targets []Target, undo func(context.Context) error, err error) {
+	unlock, err := Lock(ctx, g.home)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer unlock()
 	// Preflight reported the warnings; this check runs again under the lock only for the errors.
 	if _, err := g.Check(ctx, rel, rs); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if err := writeExpose(home, rel, proxy, routes); err != nil {
-		return nil, err
+	before, err := os.ReadFile(exposeFile(g.home, rel))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
 	}
-	return syncLocked(ctx, rt, h, home)
+	undo = func(ctx context.Context) error {
+		unlock, err := Lock(ctx, g.home)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		if before == nil {
+			err = os.Remove(exposeFile(g.home, rel))
+		} else {
+			err = writeFile(exposeFile(g.home, rel), before)
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		_, err = g.syncLocked(ctx, "")
+		return err
+	}
+	if err := writeExpose(g.home, rel, proxy, routes); err != nil {
+		return nil, nil, err
+	}
+	targets, err = g.syncLocked(ctx, rel)
+	if err != nil {
+		err = errors.Join(err, undo(context.WithoutCancel(ctx)))
+	}
+	return targets, undo, err
 }
 
 // gateways returns the gateway containers on the host (more than one while one replaces another).
@@ -193,11 +240,22 @@ func (g *Gateway) Current(ctx context.Context) (string, error) {
 	return gws[0].Name, nil
 }
 
-func syncLocked(ctx context.Context, rt Runtime, h *proxyops.Host, home string) ([]Target, error) {
+func (g *Gateway) syncLocked(ctx context.Context, self string) ([]Target, error) {
+	rt, h, home := g.rt, g.host, g.home
 	c := h.Proxies.Container()
-	targets, err := findTargets(ctx, rt, home)
+	targets, err := g.findTargets(ctx)
 	if err != nil {
 		return nil, err
+	}
+	// Another release's certificate that cannot be read leaves its routes out; self's fails.
+	for i := range targets {
+		if err := readableCerts(targets[i]); err != nil {
+			if targets[i].Release == self {
+				return nil, err
+			}
+			g.leftOut(targets[i].Release, err)
+			targets[i].Routes, targets[i].Ports = nil, nil
+		}
 	}
 	dir := Dir(home)
 	exposed := slices.ContainsFunc(targets, func(t Target) bool { return len(t.Routes) > 0 })
@@ -384,12 +442,12 @@ type Exposed struct {
 
 // Routes lists what the gateway serves, as computed from the release proxies.
 func (g *Gateway) Routes(ctx context.Context) ([]Exposed, error) {
-	rt, home := g.rt, g.home
+	home := g.home
 	settings, err := ReadSettings(home)
 	if err != nil {
 		return nil, err
 	}
-	targets, err := findTargets(ctx, rt, home)
+	targets, err := g.findTargets(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -426,8 +484,7 @@ func (g *Gateway) Routes(ctx context.Context) ([]Exposed, error) {
 
 // Users returns, per listener, the release/service names that expose something on it.
 func (g *Gateway) Users(ctx context.Context) (map[string][]string, error) {
-	rt, home := g.rt, g.home
-	targets, err := findTargets(ctx, rt, home)
+	targets, err := g.findTargets(ctx)
 	if err != nil {
 		return nil, err
 	}

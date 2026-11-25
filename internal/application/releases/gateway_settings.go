@@ -84,22 +84,22 @@ func (s *Gateway) RemoveListener(ctx context.Context, name string) error {
 }
 
 // updateGateway changes the settings in force and applies them as a new revision (source says
-// what changed them for the history). The command asked for its own confirmation (Risk).
+// what changed them). The settings are read under the gateway lock, so two changes at once do not
+// lose one another.
 func (s *Gateway) updateGateway(ctx context.Context, source string, change func(*gateway.Settings, map[string][]string) error) error {
-	settings, err := gateway.ReadSettings(s.c.home)
-	if err != nil {
-		return err
-	}
-	settings.Listen = slices.Clone(settings.Listen)
-	settings.Listeners = slices.Clone(settings.Listeners)
-	users, err := s.c.gw.Users(ctx)
-	if err != nil {
-		return err
-	}
-	if err := change(&settings, users); err != nil {
-		return err
-	}
-	_, err = s.applySettings(ctx, settings, source, true)
+	_, err := s.applySettings(ctx, source, true, func() (gateway.Settings, error) {
+		settings, err := gateway.ReadSettings(s.c.home)
+		if err != nil {
+			return settings, err
+		}
+		settings.Listen = slices.Clone(settings.Listen)
+		settings.Listeners = slices.Clone(settings.Listeners)
+		users, err := s.c.gw.Users(ctx)
+		if err != nil {
+			return settings, err
+		}
+		return settings, change(&settings, users)
+	})
 	return err
 }
 
@@ -122,7 +122,7 @@ func (s *Gateway) Apply(ctx context.Context, content []byte, source string, conf
 	if source == "" {
 		source = "apply"
 	}
-	return s.applySettings(ctx, settings, source, confirmed)
+	return s.applySettings(ctx, source, confirmed, func() (gateway.Settings, error) { return settings, nil })
 }
 
 // Export returns revision n of the settings as a document (0: the one in force).
@@ -137,39 +137,37 @@ func (s *Gateway) Export(n int) ([]byte, error) {
 // History lists the settings revisions kept, oldest first.
 func (s *Gateway) History() ([]gateway.SettingsRevision, error) { return gateway.Revisions(s.c.home) }
 
-// applySettings applies settings as the next revision: settings with problems, or with a risk
-// not confirmed, are refused; settings that change nothing write no revision. If the gateway does
-// not route with them, the revision is dropped and the one before keeps serving. It returns the
-// revision in force.
-func (s *Gateway) applySettings(ctx context.Context, settings gateway.Settings, source string, confirmed bool) (int, error) {
-	var rev, prev int
-	changed := false
-	err := func() error {
-		unlock, err := gateway.Lock(ctx, s.c.home)
-		if err != nil {
-			return err
-		}
-		defer unlock()
-		plan, err := s.c.gw.PlanSettings(ctx, settings)
-		switch {
-		case err != nil:
-			return err
-		case len(plan.Problems) > 0:
-			return fmt.Errorf("%w: gateway settings: %s", ports.ErrInvalid, strings.Join(plan.Problems, "; "))
-		case plan.Risk != "" && !confirmed:
-			return fmt.Errorf("%w: confirmation needed: %s", ports.ErrInvalid, plan.Risk)
-		}
-		if _, prev, err = gateway.RevisionSettings(s.c.home, 0); err != nil {
-			return err
-		}
-		if len(plan.Changes) == 0 {
-			return nil
-		}
-		changed = true
-		rev, err = gateway.WriteRevision(s.c.home, settings, actorOf(ctx), source)
-		return err
-	}()
-	if err != nil || !changed {
+// applySettings applies the settings next returns as the next revision: settings with problems,
+// or with a risk not confirmed, are refused; settings that change nothing write no revision. If
+// the gateway does not route with them, the revision is dropped and the one before keeps serving.
+// It returns the revision in force. All of it, next included, runs under the gateway lock.
+func (s *Gateway) applySettings(ctx context.Context, source string, confirmed bool, next func() (gateway.Settings, error)) (int, error) {
+	unlock, err := gateway.Lock(ctx, s.c.home)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	_, prev, err := gateway.RevisionSettings(s.c.home, 0)
+	if err != nil {
+		return 0, err
+	}
+	settings, err := next()
+	if err != nil {
+		return prev, err
+	}
+	plan, err := s.c.gw.PlanSettings(ctx, settings)
+	switch {
+	case err != nil:
+		return prev, err
+	case len(plan.Problems) > 0:
+		return prev, fmt.Errorf("%w: gateway settings: %s", ports.ErrInvalid, strings.Join(plan.Problems, "; "))
+	case plan.Risk != "" && !confirmed:
+		return prev, fmt.Errorf("%w: confirmation needed: %s", ports.ErrInvalid, plan.Risk)
+	case len(plan.Changes) == 0:
+		return prev, nil
+	}
+	rev, err := gateway.WriteRevision(s.c.home, settings, actorOf(ctx), source)
+	if err != nil {
 		return prev, err
 	}
 	if err := s.applyOrRevert(ctx, prev, func() error { return gateway.DropRevision(s.c.home, rev) }); err != nil {
@@ -179,7 +177,8 @@ func (s *Gateway) applySettings(ctx context.Context, settings gateway.Settings, 
 }
 
 // applyOrRevert syncs a running gateway with the settings in force and waits until it routes; on
-// failure revert drops the new revision and the gateway is synced with revision prev again.
+// failure revert drops the new revision and the gateway is synced with revision prev again. The
+// caller holds the gateway lock.
 func (s *Gateway) applyOrRevert(ctx context.Context, prev int, revert func() error) error {
 	name, err := s.c.gw.Current(ctx)
 	if errors.Is(err, ports.ErrNotFound) {
@@ -187,7 +186,7 @@ func (s *Gateway) applyOrRevert(ctx context.Context, prev int, revert func() err
 	}
 	if err == nil {
 		var targets []gateway.Target
-		if targets, err = s.c.gw.Sync(ctx); err == nil {
+		if targets, err = s.c.gw.SyncLocked(ctx); err == nil {
 			err = s.c.gw.Wait(ctx, "", targets)
 		}
 	}
@@ -198,7 +197,7 @@ func (s *Gateway) applyOrRevert(ctx context.Context, prev int, revert func() err
 	if rerr := revert(); rerr != nil {
 		return errors.Join(err, rerr)
 	}
-	targets, serr := s.c.gw.Sync(ctx)
+	targets, serr := s.c.gw.SyncLocked(ctx)
 	if serr == nil {
 		serr = s.c.gw.Wait(ctx, "", targets)
 	}

@@ -69,6 +69,21 @@ func writeExpose(home, rel, proxy string, routes []Route) error {
 
 // syncCerts copies the certificates of the targets' HTTPS routes into the gateway directory and
 // removes the ones no longer used. Files are 0600; the gateway reads them as root.
+// readableCerts checks that t's TLS certificates can be read (syncCerts copies them).
+func readableCerts(t Target) error {
+	for _, r := range t.Routes {
+		if r.TLSSecret == "" {
+			continue
+		}
+		for _, key := range []string{resource.TLSCertKey, resource.TLSKeyKey} {
+			if _, err := os.Stat(filepath.Join(r.CertDir, key)); err != nil {
+				return fmt.Errorf("%s/%s: certificate for %s: %w", t.Release, r.Service, r.Host, err)
+			}
+		}
+	}
+	return nil
+}
+
 func syncCerts(dir string, targets []Target, prune bool) error {
 	certs := filepath.Join(dir, "certs")
 	want := map[string]bool{}
