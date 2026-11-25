@@ -119,6 +119,9 @@ func (s *Reads) Status(ctx context.Context, name string) (*StatusReport, error) 
 	rep.Reconcile = &ReconcileStatus{GaveUp: s.c.repairs.gaveUp(name, s.c.now())}
 	if ops, err := s.c.store.ListOperations(ctx, name, 0, 50); err == nil {
 		for _, op := range ops {
+			if op.StartedAt.Before(rel.CreatedAt) {
+				break // an earlier release of the name (the operations stay after an uninstall)
+			}
 			if op.Type == ReconcileOperation && op.Status != release.OperationRunning {
 				rep.Reconcile.Last, rep.Reconcile.Status, rep.Reconcile.Error = op.FinishedAt, string(op.Status), op.Error
 				break

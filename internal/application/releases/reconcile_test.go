@@ -309,3 +309,29 @@ func TestReconcileBacksOffACrashLoop(t *testing.T) {
 		t.Fatalf("later failure: %s", actionsOf(res))
 	}
 }
+
+// The status of a release installed again shows its own repairs, not those of the release the name
+// had before: the operations stay after an uninstall, for karga events (B6).
+func TestStatusShowsOnlyThisInstallsRepairs(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	must[*Result](t)(e.install())
+	if err := e.rt.StopWorkload(ctx, e.rt.Name("cache-redis"), 0); err != nil {
+		t.Fatal(err)
+	}
+	must[*ReconcileResult](t)(e.svc.Lifecycle.Repair(ctx, "cache", true))
+	if st := must[*StatusReport](t)(e.svc.Reads.Status(ctx, "cache")); st.Reconcile.Last.IsZero() {
+		t.Fatal("the repair is not shown")
+	}
+	if _, err := e.svc.Lifecycle.Uninstall(ctx, UninstallRequest{Name: "cache"}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond) // the new release is created after the old one's operations
+	must[*Result](t)(e.install())
+	if st := must[*StatusReport](t)(e.svc.Reads.Status(ctx, "cache")); !st.Reconcile.Last.IsZero() {
+		t.Fatalf("the old release's repair is shown: %+v", st.Reconcile)
+	}
+	if ops := must[[]release.Operation](t)(e.svc.Reads.Operations(ctx, "cache", 0, 10)); len(ops) < 4 {
+		t.Fatalf("the old operations went: %d", len(ops))
+	}
+}
