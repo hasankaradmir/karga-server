@@ -41,6 +41,7 @@ func (s *Lifecycle) Resume(ctx context.Context) <-chan struct{} {
 	if rels, err := s.c.store.ListReleases(ctx); err != nil {
 		s.c.log.Error("resume: list releases", "error", err)
 	} else {
+		s.closeOrphans(ctx, rels)
 		for _, rel := range rels {
 			if _, err := s.c.store.RunningOperation(ctx, rel.Name); err != nil {
 				continue // nothing to resume (or it cannot be read: the command that meets it says so)
@@ -61,6 +62,29 @@ func (s *Lifecycle) Resume(ctx context.Context) <-chan struct{} {
 		}
 	}()
 	return done
+}
+
+// closeOrphans ends the operations left running on releases that are gone: an uninstall stopped
+// after it removed its release had done its work; anything else is aborted. Without it, a new
+// install of the name would take the release for interrupted.
+func (s *Lifecycle) closeOrphans(ctx context.Context, rels []release.Release) {
+	ops, err := s.c.store.ListOperations(ctx, "", 0, 1000)
+	if err != nil {
+		s.c.log.Error("resume: list operations", "error", err)
+		return
+	}
+	for _, op := range ops {
+		if op.Status != release.OperationRunning || slices.ContainsFunc(rels, func(r release.Release) bool { return r.Name == op.Release }) {
+			continue
+		}
+		op.Status, op.Error = release.OperationAborted, "interrupted: karga-server stopped, and the release is gone"
+		if op.Type == release.OpUninstall {
+			op.Status, op.Error = release.OperationSucceeded, ""
+		}
+		if err := s.c.store.FinishOperation(ctx, op); err != nil {
+			s.c.log.Error("resume: close the operation of a release that is gone", "release", op.Release, "error", err)
+		}
+	}
 }
 
 // resumeHeld resumes release name, whose lock the caller holds, once the runtime answers: a resume
@@ -139,7 +163,7 @@ func (s *Lifecycle) resumeRestore(ctx context.Context, rel release.Release, op r
 }
 
 // redeploy deploys the revision op was deploying. Without it (stopped before it was recorded) nothing
-// had changed: the release goes back to its current revision.
+// had changed: the release keeps the status it had, recorded with the revision it did not reach.
 func (s *Lifecycle) redeploy(ctx context.Context, rel release.Release, op release.Operation) error {
 	rev, err := s.c.store.GetRevision(ctx, rel.Name, op.Revision)
 	if errors.Is(err, ports.ErrNotFound) {
@@ -151,7 +175,10 @@ func (s *Lifecycle) redeploy(ctx context.Context, rel release.Release, op releas
 			s.c.discard(ctx, rel.Name)
 			return nil
 		}
-		rel.Status, rel.UpdatedAt = release.StatusDeployed, s.c.now()
+		if !slices.Contains(inProgress, rel.Status) {
+			return nil // a failed release stays failed: the reconciler leaves it to the user
+		}
+		rel.Status, rel.UpdatedAt = release.StatusDeployed, s.c.now() // its current revision runs
 		return s.c.store.SaveRelease(ctx, rel)
 	}
 	if err != nil {
@@ -171,9 +198,10 @@ func (s *Lifecycle) redeploy(ctx context.Context, rel release.Release, op releas
 	p := pkgOf(rev)
 	_, err = s.c.deploy(ctx, deployInput{
 		// The request's own choices: a volume it was not allowed to delete is not deleted now either.
-		CommonOptions: CommonOptions{DeleteVolumes: op.Options.DeleteVolumes, Timeout: op.Options.Timeout, Force: true},
-		Strategy:      op.Options.Strategy,
-		Name:          rel.Name, Type: op.Type, Description: rev.Description, resumed: true,
+		CommonOptions: CommonOptions{DeleteVolumes: op.Options.DeleteVolumes, Timeout: op.Options.Timeout, Force: true,
+			HistoryMax: op.Options.HistoryMax},
+		Strategy: op.Options.Strategy,
+		Name:     rel.Name, Type: op.Type, Description: rev.Description, resumed: true,
 		Package: p, PackageDigest: rev.PackageDigest, Overrides: rev.Values, Values: rev.ValuesAll,
 		Resources: rs, Revision: rev.Number, Existing: &rel, Notes: rev.Notes,
 	})

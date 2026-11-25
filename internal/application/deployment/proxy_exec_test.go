@@ -304,6 +304,9 @@ func TestGatewayGoesWithTheLastRelease(t *testing.T) {
 	if err := envAt(r.home).Delete(context.Background(), r.rt, "cache", false); err != nil {
 		t.Fatal(err)
 	}
+	if err := envAt(r.home).SyncGateway(context.Background(), r.rt); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := r.rt.Lookup(gateway.ContainerName); ok {
 		t.Fatal("gateway still exists")
 	}

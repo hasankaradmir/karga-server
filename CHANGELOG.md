@@ -119,6 +119,16 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- An uninstall removed the release's files though a container that mounts them could not be
+  removed, and failed when the gateway could not drop its routes. Files go last, after the
+  containers, so a failed uninstall can be run again; the gateway's failure is a warning. It also
+  gives back the release's edge addresses, which piled up in `edge.yaml` until a small
+  `--edge-subnet` ran out.
+- An uninstall stopped after it removed its release left its operation running: an install of the
+  same name took it for interrupted. karga-server closes it when it starts.
+- A failed release whose upgrade stopped before its revision was recorded was resumed as deployed,
+  and the reconciler took it over; it stays failed. A resumed deployment pruned revisions by the
+  default instead of the request's `--history-max`.
 - A container that crashed right after each repair was restarted in a loop, each time as a
   `reconcile` operation, until the release's 200 kept operations held nothing else. A repair needed
   again within 10 minutes counts as failed: the pauses grow, and after 5 karga gives up.

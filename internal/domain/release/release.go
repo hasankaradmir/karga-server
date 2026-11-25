@@ -151,6 +151,8 @@ type Options struct {
 	Strategy      string
 	Timeout       time.Duration
 	KeepHistory   bool
+	// HistoryMax is the request's --history-max (nil: the default).
+	HistoryMax *int
 	// Restore is what a volume restore writes and how, kept until it is done so it can be resumed.
 	Restore *RestoreOptions
 }

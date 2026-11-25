@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +97,52 @@ func TestResumeBeforeTheRevisionWasRecorded(t *testing.T) {
 	}
 }
 
+// A failed release whose upgrade stopped before its revision was recorded stays failed: its status
+// was not changed yet (it is written with the revision), and the reconciler must not take it over.
+func TestResumeKeepsAFailedRelease(t *testing.T) {
+	e := newEnv(t)
+	must[*Result](t)(e.install())
+	e.crash("upgrade", 2, release.StatusFailed)
+	<-e.svc.Lifecycle.Resume(context.Background())
+	if r := e.release(); r.Status != release.StatusFailed {
+		t.Fatalf("release: %+v", r)
+	}
+}
+
+// An uninstall stopped after it removed its release is closed when karga-server starts: a new
+// install of the name is not taken for interrupted.
+func TestResumeClosesAnUninstallWhoseReleaseIsGone(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	must[*Result](t)(e.install())
+	e.crash("uninstall", 1, release.StatusUninstalling)
+	if err := e.svc.c.store.DeleteRelease(ctx, "cache"); err != nil {
+		t.Fatal(err)
+	}
+	<-e.svc.Lifecycle.Resume(ctx)
+	if ops := e.lastOps(1); ops[0].Type != "uninstall" || ops[0].Status != release.OperationSucceeded {
+		t.Fatalf("operation: %+v", ops[0])
+	}
+	if _, err := e.install(); err != nil {
+		t.Fatalf("install after: %v", err)
+	}
+}
+
+// A resumed deployment prunes as its request asked (--history-max), not by the default.
+func TestResumeKeepsHistoryMax(t *testing.T) {
+	e := newEnv(t)
+	must[*Result](t)(e.install())
+	must[*Result](t)(e.upgrade("image.tag=7.1"))
+	must[*Result](t)(e.upgrade("image.tag=7.2"))
+	keep := 1
+	e.crashWith("upgrade", 3, release.StatusUpgrading, release.Options{HistoryMax: &keep})
+	<-e.svc.Lifecycle.Resume(context.Background())
+	// The default (10) would keep all 3; 1 prunes to the current one and what is still in use.
+	if revs := must[[]release.Revision](t)(e.svc.c.store.ListRevisions(context.Background(), "cache")); len(revs) == 3 {
+		t.Fatalf("kept all %d revisions: the request's --history-max was not used", len(revs))
+	}
+}
+
 func TestResumeAbortsOtherOperationsAndUninstallsAgain(t *testing.T) {
 	e := newEnv(t)
 	must[*Result](t)(e.install())
@@ -160,5 +209,32 @@ func TestResumeWaitsForTheRuntime(t *testing.T) {
 	}
 	if r := e.release(); r.Status != release.StatusDeployed || r.CurrentRevision != 2 {
 		t.Fatalf("release: %+v", r)
+	}
+}
+
+// An uninstall that cannot remove a container keeps the release's files, which the container
+// mounts, and can be run again; one that finishes gives back the release's edge addresses (SA-05,
+// SA-14).
+func TestUninstallRemovesFilesLast(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	must[*Result](t)(e.install("service.enabled=true"))
+	edge := filepath.Join(e.svc.c.home, "edge.yaml")
+	if data, _ := os.ReadFile(edge); !strings.Contains(string(data), "cache") {
+		t.Fatalf("no edge addresses for cache: %s", data)
+	}
+	e.rt.Fail["DeleteWorkload:cache-redis"] = errors.New("device or resource busy")
+	if _, err := e.svc.Lifecycle.Uninstall(ctx, UninstallRequest{Name: "cache"}); err == nil {
+		t.Fatal("uninstall succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(e.svc.c.home, "releases", "cache")); err != nil {
+		t.Fatalf("the release's files went though its container stays: %v", err)
+	}
+	delete(e.rt.Fail, "DeleteWorkload:cache-redis")
+	if _, err := e.svc.Lifecycle.Uninstall(ctx, UninstallRequest{Name: "cache", Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(edge); strings.Contains(string(data), "cache") {
+		t.Fatalf("edge addresses kept after uninstall: %s", data)
 	}
 }
