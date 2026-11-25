@@ -6,6 +6,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
 ## [Unreleased]
 
 ### Added
+- README "Operating karga-server": updating, going back to an older version and removing
+  karga-server, watching it, a scheduled backup off the host (systemd timer), recovering a host.
+  The backup section says what `$KARGA_HOME` holds and that volume data is not in it.
 - The log has each operation's end (`operation finished`, with status and duration; a failed one at
   `warn`, with its error), and why Docker's event stream broke. `--log-format json` and
   `--log-level`. Docker must answer within 30 seconds at start; a daemon that hangs no longer holds

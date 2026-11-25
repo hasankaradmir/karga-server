@@ -373,9 +373,9 @@ fails later. A `tcp` check is an empty connection; services that penalize those 
   default capabilities unless the administrator allows more (`--allow-capabilities`). The gateway
   runs as root with only `NET_BIND_SERVICE` and `DAC_OVERRIDE`; release proxies drop every
   capability and run with `no-new-privileges`.
-- Packages cannot open ports: workloads publish nothing, release proxies publish only loopback
-  upstreams, and the gateway serves only the listeners the administrator defines, on `127.0.0.1`
-  unless told otherwise.
+- Packages cannot open ports: workloads and release proxies publish nothing (the gateway reaches
+  the proxies on the `karga-edge` network, D42), and the gateway serves only the listeners the
+  administrator defines, on `127.0.0.1` unless told otherwise.
 - Secret files are mounted read-only from a 0700 directory; secret values never appear in output,
   logs (the redactor learns every value it materializes, and at start the current revisions') or
   the state (only keyed digests); `writeOnly` values are stored as `<redacted>`, and a

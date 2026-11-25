@@ -67,8 +67,8 @@ $ karga version                          # the CLI's and the server's version an
   open `logs -f` streams and `exec` sessions end at once, and a second signal exits without
   waiting. When it starts it removes what an earlier process left under `tmp` and `restores`. Killed in
   the middle of one, it finishes the operation when it starts again (`resume` in `karga events`);
-  commands on that release wait for it, the others are served at once, and a Docker that is not up
-  yet is waited for. Every operation records the user of the CLI that asked for it, as
+  commands on that release wait for it, the others are served at once. Without Docker it exits,
+  saying so, and systemd starts it again every 5 seconds until Docker answers. Every operation records the user of the CLI that asked for it, as
   the kernel reports it on the socket.
 - **Capabilities:** a package may add only the Linux capabilities Docker gives containers by
   default (`CHOWN`, `NET_BIND_SERVICE`, `SETUID`, ...; usually after `capDrop: [ALL]`). Others give
@@ -76,6 +76,76 @@ $ karga version                          # the CLI's and the server's version an
   `--allow-capabilities NET_ADMIN,SYS_PTRACE` (`ALL` allows any).
 - **Repairs:** on Docker events and every reconcile interval the server brings each release back to
   its current revision, without a new revision; `karga pause <release>` stops that for maintenance.
+
+## Operating karga-server
+
+- **Update:** run `install.sh` again (with `KARGA_VERSION` for a given one). It replaces the binary
+  and the unit, and restarts the service only if either changed; the restart waits for running
+  operations (up to `--shutdown-grace`), and open `logs -f` and `exec` sessions end. Read the
+  release's CHANGELOG first: the CLI and the server must share the API major version.
+- **Go back to an older version:** back up `$KARGA_HOME` first (below). An older karga-server
+  refuses state written by a newer one in another format; restore the backup taken before the
+  update, then install the older version.
+- **Remove karga:** uninstall the releases first (`karga uninstall <release>`, `--delete-volumes`
+  for their data); the gateway goes with the last exposure. Then:
+
+  ```bash
+  sudo systemctl disable --now karga-server
+  sudo rm /etc/systemd/system/karga-server.service /usr/local/bin/karga-server && sudo systemctl daemon-reload
+  sudo userdel karga; sudo groupdel karga
+  sudo rm -rf /var/lib/karga                 # the state, its key, the revisions' files, restore points
+  ```
+
+  Volumes a release kept (`retention: retain`) stay in Docker: `docker volume ls --filter label=io.karga.managed=true`.
+- **Watch it:** `journalctl -u karga-server -p warning` lists failed operations, repairs karga gave
+  up on, a lost Docker connection and a release whose state cannot be read. `karga status
+  <release>` exits 6 when the release is not deployed and healthy: a cron job or monitoring check
+  can run it. There is no metrics endpoint.
+- **Back up on a schedule, off the host:** karga takes no backups on its own. A systemd timer can
+  (each backup stops the volume's writers for as long as the copy takes):
+
+  ```ini
+  # /etc/systemd/system/karga-backup.service
+  [Unit]
+  Description=Back up karga volumes
+  After=karga-server.service
+  Wants=karga-server.service
+
+  [Service]
+  Type=oneshot
+  ExecStart=/usr/local/sbin/karga-backup
+
+  # /etc/systemd/system/karga-backup.timer
+  [Unit]
+  Description=Back up karga volumes every night
+
+  [Timer]
+  OnCalendar=*-*-* 03:00:00
+  RandomizedDelaySec=30m
+  Persistent=true
+
+  [Install]
+  WantedBy=timers.target
+  ```
+
+  ```sh
+  #!/bin/sh
+  # /usr/local/sbin/karga-backup (0755): one line per volume; a week of them is kept.
+  set -eu
+  dir=/var/backups/karga
+  stamp=$(date +%Y%m%d-%H%M%S)
+  mkdir -p "$dir"
+  karga volume backup gitea db-data "$dir/gitea-db-data-$stamp.tar.gz"
+  find "$dir" -name '*.tar.gz' -mtime +7 -delete
+  # A backup on the host's disk does not survive the disk: copy it off.
+  rsync -a "$dir/" backup@backup-host:/srv/karga/
+  ```
+
+  `sudo systemctl enable --now karga-backup.timer`; `systemctl start karga-backup` runs it now.
+  Back up `$KARGA_HOME` too (below), after a change of releases or gateway settings.
+- **Recover a host:** the order is in the karga CLI's USAGE, section 12 (state first, then each
+  release's upgrade, then its volumes). karga-server does not create a release's volumes empty on its
+  own: until you restore them, `karga status` says so.
 
 ## Traffic through karga's Envoys
 
@@ -131,7 +201,10 @@ Everything karga knows is in YAML files under `$KARGA_HOME/state` (directories `
 `0600`): a directory per release with its revisions and applied resources, and each release's
 operations (ADR-0017). Only karga-server writes them; proxy and gateway configuration are rebuilt
 from them and from Docker. To back up, stop karga-server and copy `$KARGA_HOME` (the state, the
-`state.key`, the gateway settings in `gateway-settings/` and the revisions' Config and Secret files); restore by copying it back.
+`state.key`, the gateway settings in `gateway-settings/`, the revisions' Config and Secret files in
+`releases/`, and the volumes' restore points in `restore-points/`; `tmp/` and `restores/` hold work
+in progress); restore by copying it back. The volumes' data is not in `$KARGA_HOME` but in
+Docker: back it up with `karga volume backup` (above).
 karga-server refuses state written by a newer version.
 
 `karga volume backup <release> <volume> <file.tar.gz>` copies a volume's files through a workload
