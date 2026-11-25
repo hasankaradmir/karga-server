@@ -119,6 +119,12 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- Two gateway settings changes at once (`karga gateway listener add`, `set`, `apply`) could lose
+  one: the settings were read outside the gateway lock. Reading, writing, applying and reverting
+  run under it now.
+- One release's unreadable expose file or certificate stopped every gateway sync on the host; that
+  release is left out, with a warning, and the others are routed. An exposure the gateway refused
+  stayed, to be applied again by every later sync; it is taken back.
 - An uninstall removed the release's files though a container that mounts them could not be
   removed, and failed when the gateway could not drop its routes. Files go last, after the
   containers, so a failed uninstall can be run again; the gateway's failure is a warning. It also

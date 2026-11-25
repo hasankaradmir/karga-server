@@ -319,7 +319,11 @@ Services is refused.
   and pass WebSocket upgrades through; a stream idle for 5 minutes is closed. Against slow clients
   (Envoy's edge guidance) request headers must arrive within 10s, an idle connection closes after
   an hour and a connection buffers at most 32 KiB beyond a body limit; https is TLS 1.2 or newer.
-  `x-forwarded-for` is set to the client address alone, dropping what the client sent. Only connect
+  `x-forwarded-for` is set to the client address alone, dropping what the client sent. A release
+  whose expose file or certificate cannot be read is left out of the gateway with a warning; the
+  others are still routed. An exposure the gateway does not route with is taken back. A settings
+  change reads, writes, applies and reverts under the gateway lock, so changes at once all land.
+  Only connect
   failures are retried. A listener's options (the administrator's, in the gateway settings) change that:
   a route timeout, the idle timeout (HTTP stream or `tcp_proxy`), a body limit (the `buffer`
   filter, at most 16Mi as it holds the body in memory), a rate limit (`local_ratelimit`, one token

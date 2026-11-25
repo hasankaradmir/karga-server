@@ -29,7 +29,8 @@ import (
 )
 
 func TestGatewayReplaceWithoutLoss(t *testing.T) {
-	t.Parallel()
+	// Not parallel: it restarts the host's one gateway, which the parallel tests measuring
+	// downtime through it would see as their own outage. Go runs it before them, alone.
 	requireLinux(t)
 	ctx := context.Background()
 	name := releaseName("it-gw")

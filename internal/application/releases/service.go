@@ -137,14 +137,14 @@ func New(d Deps) (*Service, error) {
 	if d.Log == nil {
 		d.Log = slog.New(slog.DiscardHandler)
 	}
-	env := deployment.NewEnv(d.Host, deployment.EnvConfig{Home: d.Home, DigestKey: key, Redact: d.Redact, AllowedCaps: d.AllowedCaps})
+	env := deployment.NewEnv(d.Host, deployment.EnvConfig{Home: d.Home, DigestKey: key, Redact: d.Redact, AllowedCaps: d.AllowedCaps, Log: d.Log})
 	if d.Mask != nil {
 		d.Store = maskingStore{d.Store, d.Mask}
 	}
 	if d.Notify == nil {
 		d.Notify = func(string) {}
 	}
-	c := &core{store: d.Store, env: env, gw: gateway.New(d.Runtime, d.Host, d.Home), rt: d.Runtime, home: d.Home, redact: d.Redact, log: d.Log, now: time.Now,
+	c := &core{store: d.Store, env: env, gw: gateway.New(d.Runtime, d.Host, d.Home).WithLog(d.Log), rt: d.Runtime, home: d.Home, redact: d.Redact, log: d.Log, now: time.Now,
 		freeSpace: freeSpace, pid: os.Getpid(), hostname: hostname, notify: d.Notify}
 	return &Service{Lifecycle: &Lifecycle{c}, Reads: &Reads{c}, Containers: &Containers{c}, Volumes: &Volumes{c}, Gateway: &Gateway{c}, c: c}, nil
 }

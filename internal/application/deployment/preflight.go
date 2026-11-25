@@ -9,7 +9,6 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
-	"github.com/hasankaradmir/karga-server/internal/application/gateway"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
 
@@ -58,7 +57,7 @@ func (e *Env) Preflight(ctx context.Context, rt ports.Runtime, info ports.Runtim
 
 	if e.host.Supported() {
 		var gwErr error
-		warnings, gwErr = gateway.New(rt, e.host, e.home).Check(ctx, release, rs)
+		warnings, gwErr = e.gateway(rt).Check(ctx, release, rs)
 		errs = append(errs, gwErr)
 	}
 	return warnings, errors.Join(errs...)

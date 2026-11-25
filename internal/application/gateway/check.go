@@ -16,12 +16,12 @@ import (
 // already holds. It binds a listener nobody uses yet once, to see that no other process holds it.
 // What it cannot check, but does not stop a deployment, it returns as warnings.
 func (g *Gateway) Check(ctx context.Context, rel string, rs []resource.Resource) (warnings []string, err error) {
-	rt, h, home := g.rt, g.host, g.home
+	h, home := g.host, g.home
 	settings, err := ReadSettings(home)
 	if err != nil {
 		return nil, err
 	}
-	targets, err := findTargets(ctx, rt, home)
+	targets, err := g.findTargets(ctx)
 	if err != nil {
 		return nil, err
 	}

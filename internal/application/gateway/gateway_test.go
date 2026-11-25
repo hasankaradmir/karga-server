@@ -1,8 +1,10 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -238,7 +240,7 @@ func TestExposeChecksUnderTheLock(t *testing.T) {
 	svc := resource.Resource{Kind: resource.KindService, Metadata: resource.Metadata{Name: "s"}, Spec: &resource.ServiceSpec{
 		Workload: "w", Ports: []resource.ServicePort{{Name: "p", Port: 80, TargetPort: "p"}},
 		Expose: []resource.Exposure{{Port: "p", Listener: "http", Host: "a.example", Path: "/"}}}}
-	_, err := New(rt, h, home).Expose(ctx, "mine", "", []resource.Resource{svc},
+	_, _, err := New(rt, h, home).Expose(ctx, "mine", "", []resource.Resource{svc},
 		[]Route{{Service: "s", Port: 80, Listener: "http", Host: "a.example", Path: "/"}})
 	if err == nil || !strings.Contains(err.Error(), "already routed to other/web") {
 		t.Fatalf("Expose: %v", err)
@@ -349,7 +351,7 @@ func TestTargetsPickOneProxyPerRelease(t *testing.T) {
 		if err := writeExpose(home, "a", proxy, routes); err != nil {
 			t.Fatal(err)
 		}
-		targets, err := findTargets(ctx, rt, home)
+		targets, err := New(rt, nil, home).findTargets(ctx)
 		if err != nil || len(targets) != 1 || targets[0].Container != want {
 			t.Fatalf("expose names %q: %+v %v", proxy, targets, err)
 		}
@@ -553,7 +555,7 @@ func TestRoutePathAndTo(t *testing.T) {
 	home := t.TempDir()
 	rt := fakeruntime.New("img")
 	proxyOf(t, rt, home, "a", nil, []Route{{Service: "api", Port: 80, Listener: "http", Host: "a.example", Path: "/api", PathType: "prefix", To: "/"}})
-	targets, err := findTargets(ctx, rt, home)
+	targets, err := New(rt, nil, home).findTargets(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,5 +566,26 @@ func TestRoutePathAndTo(t *testing.T) {
 	routes, err := New(rt, nil, home).Routes(ctx)
 	if err != nil || len(routes) != 1 || routes[0].Route != "a.example/api → /" {
 		t.Fatalf("status routes: %+v %v", routes, err)
+	}
+}
+
+// One release's unreadable expose file leaves only that release out of the gateway, with a
+// warning; the others are still routed (SA-10).
+func TestUnreadableReleaseIsLeftOut(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	rt := fakeruntime.New("img")
+	proxyOf(t, rt, home, "a", nil, []Route{{Service: "web", Port: 80, Listener: "http", Host: "a.example", Path: "/"}})
+	proxyOf(t, rt, home, "b", nil, []Route{{Service: "web", Port: 80, Listener: "http", Host: "b.example", Path: "/"}})
+	if err := os.WriteFile(exposeFile(home, "b"), []byte("routes: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	targets, err := New(rt, nil, home).WithLog(slog.New(slog.NewTextHandler(&buf, nil))).findTargets(ctx)
+	if err != nil || len(targets) != 1 || targets[0].Release != "a" {
+		t.Fatalf("targets: %+v %v", targets, err)
+	}
+	if !strings.Contains(buf.String(), `msg="gateway: release left out" release=b`) {
+		t.Fatalf("log: %s", buf.String())
 	}
 }

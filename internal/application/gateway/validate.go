@@ -27,7 +27,7 @@ const validateTimeout = 30 * time.Second
 func (g *Gateway) validateEnvoy(ctx context.Context, settings Settings) (string, error) {
 	rt, h, home := g.rt, g.host.Proxies, g.home
 	c := h.Container()
-	targets, err := findTargets(ctx, rt, home)
+	targets, err := g.findTargets(ctx)
 	if err != nil {
 		return "", err
 	}

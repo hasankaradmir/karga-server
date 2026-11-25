@@ -53,7 +53,7 @@ func (e *Env) SyncGateway(ctx context.Context, rt ports.Runtime) error {
 	if e.home == "" || !e.host.Supported() {
 		return nil
 	}
-	_, err := gateway.New(rt, e.host, e.home).Sync(ctx)
+	_, err := e.gateway(rt).Sync(ctx)
 	return err
 }
 
