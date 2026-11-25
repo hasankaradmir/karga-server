@@ -3,8 +3,11 @@
 [Unit]
 Description=karga server (releases, desired state and reconciliation)
 Documentation=https://github.com/hasankaradmir/karga-server
+# Wants, not Requires: a Docker that starts late or fails does not fail karga-server's start for
+# good; karga-server waits for it (it exits until Docker answers, and is restarted).
 After=docker.service
-Requires=docker.service
+Wants=docker.service
+StartLimitIntervalSec=0
 
 [Service]
 User=karga
@@ -17,7 +20,7 @@ RuntimeDirectory=karga
 RuntimeDirectoryMode=0750
 UMask=0007
 Restart=on-failure
-RestartSec=2s
+RestartSec=5s
 # karga-server lets running operations finish for --shutdown-grace (5 minutes) when it stops:
 # keep this above it.
 TimeoutStopSec=330

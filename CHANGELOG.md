@@ -119,6 +119,12 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- `install.sh` left the karga-server binary owned by the user who ran it: the service runs it in
+  the docker group, so that user could run anything as root without sudo. It is root's (0755) now,
+  and goes in under a temporary name that is renamed, so a running service never meets half a file.
+- The systemd unit `Requires=docker.service`: a Docker that failed to start failed karga-server's
+  start for good, and `RestartSec=2s` hit systemd's start limit while Docker came up. It is `Wants=`
+  now, restarts every 5 seconds and has no start limit: karga-server starts once Docker answers.
 - An open `karga logs -f` held `systemctl stop` and `restart` (an update included) for the whole
   `--shutdown-grace`, 5 minutes, and the journal showed the stop as failed. Log streams and exec
   sessions end when the server stops; running operations are still waited for. A second signal

@@ -59,7 +59,16 @@ changed=1
 if [ -f "$bin_dir/karga-server" ] && [ "$(sha256sum "$bin_dir/karga-server" | cut -d' ' -f1)" = "$(sha256sum "$tmp/karga-server" | cut -d' ' -f1)" ]; then
   changed=0
 fi
-if [ -w "$bin_dir" ]; then mv "$tmp/karga-server" "$bin_dir/"; else as_root mv "$tmp/karga-server" "$bin_dir/"; fi
+# The service runs the binary as karga in the docker group: it is root's (0755), or whoever can
+# write it runs anything as root. It goes in under a temporary name next to it and is renamed, so
+# nothing ever runs half a file.
+if [ "${KARGA_SYSTEMD:-1}" = 1 ] || [ ! -w "$bin_dir" ]; then
+  as_root install -o root -g root -m 0755 "$tmp/karga-server" "$bin_dir/.karga-server.new"
+  as_root mv -f "$bin_dir/.karga-server.new" "$bin_dir/karga-server"
+else
+  install -m 0755 "$tmp/karga-server" "$bin_dir/.karga-server.new"
+  mv -f "$bin_dir/.karga-server.new" "$bin_dir/karga-server"
+fi
 echo "karga-server $version installed to $bin_dir/karga-server"
 
 # The service: a karga system user in the docker group owns /var/lib/karga; members of the karga
