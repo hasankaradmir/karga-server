@@ -119,6 +119,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- `karga status` of a release installed again under an earlier one's name showed that release's
+  last repair: the operations stay after an uninstall, and status took the newest repair among
+  them. It shows repairs since the release was created; `karga events` still lists every
+  operation, as documented now.
 - `install.sh` left the karga-server binary owned by the user who ran it: the service runs it in
   the docker group, so that user could run anything as root without sudo. It is root's (0755) now,
   and goes in under a temporary name that is renamed, so a running service never meets half a file.

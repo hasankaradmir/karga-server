@@ -161,7 +161,7 @@ The state is YAML files under `$KARGA_HOME/state` (ADR-0017), mode 0600 in 0700 
 | `releases/<r>/release.yaml` | name, package, status, current revision |
 | `releases/<r>/revisions/<n>.yaml` | immutable: package digest, values (writeOnly redacted), rendered manifest (secret values as digests), notes, status |
 | `releases/<r>/resources/<kind>_<name>.yaml` | what is applied now: runtime name, spec, digest |
-| `operations/<r>.yaml` | the release's newest 200 operations with their steps, PID, hostname and user |
+| `operations/<r>.yaml` | the release's newest 200 operations with their steps, PID, hostname and user; kept after an uninstall (an audit record), so a release installed again lists the earlier ones too, while its status counts repairs since it was created |
 
 Files are replaced atomically; a transaction writes the release file last, so a crash leaves at
 most unreferenced files. `version.yaml` holds the format version; a newer one is refused. A release
