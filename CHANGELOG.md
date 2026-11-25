@@ -119,6 +119,12 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- An open `karga logs -f` held `systemctl stop` and `restart` (an update included) for the whole
+  `--shutdown-grace`, 5 minutes, and the journal showed the stop as failed. Log streams and exec
+  sessions end when the server stops; running operations are still waited for. A second signal
+  exits at once.
+- Files an earlier process left under `$KARGA_HOME/tmp` (uploads, packages, backup copies) and
+  `restores` (kept backups no resume took) piled up; they are removed at start.
 - Two gateway settings changes at once (`karga gateway listener add`, `set`, `apply`) could lose
   one: the settings were read outside the gateway lock. Reading, writing, applying and reverting
   run under it now.

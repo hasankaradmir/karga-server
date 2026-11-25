@@ -43,8 +43,10 @@ operations it starts.
 **Operations and restarts.** Operations do not depend on the client's connection: a client that goes
 away loses only the progress. Each operation holds its release from reading its state to recording
 the outcome, so what it plans cannot go stale; others wait, and a reconciliation skips a busy
-release. On SIGTERM the server stops accepting requests and waits up to `--shutdown-grace` (5 minutes) for running
-operations. When it starts, it holds the releases it left an operation running on and resumes them
+release. On SIGTERM the server stops accepting requests, ends log streams and exec sessions, and
+waits up to `--shutdown-grace` (5 minutes) for running operations; a second signal exits at once
+(what was running resumes at the next start). At start it removes what an earlier process left in
+`$KARGA_HOME/tmp`, and, once the resumed restores took theirs, in `restores`. When it starts, it holds the releases it left an operation running on and resumes them
 in the background before it repairs anything (section 5); a command on such a release waits for its
 resume, the others are served at once.
 

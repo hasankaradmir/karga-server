@@ -490,7 +490,7 @@ func (r *Runtime) ListManaged(_ context.Context, release string) ([]ports.Object
 
 // Logs implements ports.Runtime: it writes the last tail lines of Output[name], or of Output under
 // the name without its digest suffix (follow ends at once).
-func (r *Runtime) Logs(_ context.Context, name string, tail int, _ bool, w io.Writer) error {
+func (r *Runtime) Logs(ctx context.Context, name string, tail int, follow bool, w io.Writer) error {
 	r.mu.Lock()
 	out, ok := r.Output[name]
 	if !ok {
@@ -509,6 +509,9 @@ func (r *Runtime) Logs(_ context.Context, name string, tail int, _ bool, w io.Wr
 		lines = lines[len(lines)-tail:]
 	}
 	_, err := io.WriteString(w, strings.Join(lines, ""))
+	if err == nil && follow { // as Docker's: it follows until the caller stops
+		<-ctx.Done()
+	}
 	return err
 }
 

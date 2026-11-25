@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -127,5 +128,63 @@ func TestClassify(t *testing.T) {
 		if got := classify(tc.err); !errors.Is(got, tc.want) || (tc.want == nil && got != nil) {
 			t.Errorf("classify(%v) = %v, want %v", tc.err, got, tc.want)
 		}
+	}
+}
+
+// A log stream left open does not hold the server's shutdown, which waits for operations only
+// (SI-03).
+func TestShutdownEndsLogStreams(t *testing.T) {
+	home := t.TempDir()
+	dir, err := os.MkdirTemp("", "ksrv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "karga.sock")
+	s, err := New(context.Background(), Config{Home: home, Socket: sock, ReconcileInterval: -1}, fakeruntime.New().WithGateway())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	l, err := s.Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, l, time.Minute) }()
+	c := api.NewClient(sock)
+	if _, err := c.Install(context.Background(), api.InstallRequest{CommonOptions: api.CommonOptions{Timeout: api.Duration(time.Second)},
+		Name: "cache", Package: redisPkg, Values: withValues()}, nil); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = c.Logs(context.Background(), api.LogsRequest{Release: "cache", Follow: true}, io.Discard) }()
+	time.Sleep(200 * time.Millisecond)
+	start := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil || time.Since(start) > 10*time.Second {
+			t.Fatalf("serve: %v after %s", err, time.Since(start))
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the shutdown waited for the log stream")
+	}
+}
+
+// What an earlier process left in tmp is removed at start.
+func TestStartRemovesLeftovers(t *testing.T) {
+	home := t.TempDir()
+	old := filepath.Join(home, "tmp", "karga-package-1")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(old, time.Now().Add(-time.Hour), time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	start(t, home)
+	time.Sleep(200 * time.Millisecond)
+	if _, err := os.Stat(old); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("leftover kept: %v", err)
 	}
 }

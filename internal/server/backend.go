@@ -24,11 +24,23 @@ type Backend struct {
 	containers *releases.Containers
 	volumes    *releases.Volumes
 	gateway    *releases.Gateway
+	streams    context.Context
 }
 
-// NewBackend serves svc.
-func NewBackend(svc *releases.Service) Backend {
-	return Backend{lifecycle: svc.Lifecycle, reads: svc.Reads, containers: svc.Containers, volumes: svc.Volumes, gateway: svc.Gateway}
+// NewBackend serves svc. Log streams and exec sessions end when streams does (the server stops):
+// they would hold its shutdown, which waits for running operations, for nothing.
+func NewBackend(svc *releases.Service, streams context.Context) Backend {
+	return Backend{lifecycle: svc.Lifecycle, reads: svc.Reads, containers: svc.Containers, volumes: svc.Volumes, gateway: svc.Gateway, streams: streams}
+}
+
+// stream is ctx, also canceled when the server stops.
+func (b Backend) stream(ctx context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	if b.streams == nil {
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(b.streams, cancel)
+	return ctx, func() { stop(); cancel() }
 }
 
 var _ api.Backend = Backend{}
@@ -154,12 +166,16 @@ func (b Backend) Resources(ctx context.Context, req api.ReleaseRequest) ([]api.A
 
 // Logs implements api.Backend.
 func (b Backend) Logs(ctx context.Context, req api.LogsRequest, w io.Writer) error {
+	ctx, stop := b.stream(ctx)
+	defer stop()
 	return b.containers.Logs(ctx, releases.LogsRequest{Release: req.Release, Workloads: req.Workloads, Proxy: req.Proxy, Gateway: req.Gateway,
 		Tail: req.Tail, Follow: req.Follow}, w)
 }
 
 // Exec implements api.Backend.
 func (b Backend) Exec(ctx context.Context, req api.ExecRequest) (int, error) {
+	ctx, stop := b.stream(ctx)
+	defer stop()
 	o := req.ExecOptions
 	return b.containers.Exec(ctx, req.Release, req.Workload, ports.ExecOptions{Cmd: o.Cmd, TTY: o.TTY, Stdin: o.Stdin, Stdout: o.Stdout, Stderr: o.Stderr,
 		Width: o.Width, Height: o.Height, Resize: o.Resize})
