@@ -183,7 +183,12 @@ func (s *Server) mask(v string) string {
 
 // Serve answers on l until ctx is done, then waits for running operations (at most grace).
 func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration) error {
-	hs := &http.Server{Handler: api.NewServer(NewBackend(s.svc), version.Current().Version, api.Options{TempDir: filepath.Join(s.cfg.Home, "tmp"), Classify: classify, Redact: s.mask}), ReadHeaderTimeout: 10 * time.Second,
+	started := time.Now()
+	// Nothing runs yet: what an earlier process left in tmp (uploads, packages, backup copies) goes.
+	s.removeLeftovers(filepath.Join(s.cfg.Home, "tmp"), started)
+	streams, endStreams := context.WithCancel(context.Background())
+	defer endStreams()
+	hs := &http.Server{Handler: api.NewServer(NewBackend(s.svc, streams), version.Current().Version, api.Options{TempDir: filepath.Join(s.cfg.Home, "tmp"), Classify: classify, Redact: s.mask}), ReadHeaderTimeout: 10 * time.Second,
 		// Operations record the user of the client process.
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context { return releases.WithActor(ctx, peerUser(c)) }}
 	// Secret values are masked in the log from the start, not only once a release is applied again.
@@ -202,6 +207,8 @@ func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration)
 		case <-ctx.Done():
 			return
 		}
+		// The resumed restores took the backups they kept; the others' are left over.
+		s.removeLeftovers(filepath.Join(s.cfg.Home, "restores"), started)
 		if s.loop != nil {
 			s.loop.Run(ctx)
 		}
@@ -214,6 +221,7 @@ func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration)
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
+	endStreams() // log streams and exec sessions end; operations are waited for
 	// Operations in progress finish (they do not depend on their clients), at most grace.
 	err := hs.Shutdown(shutdown)
 	for _, done := range []<-chan struct{}{loopDone, resumed} {
@@ -224,6 +232,26 @@ func (s *Server) Serve(ctx context.Context, l net.Listener, grace time.Duration)
 	}
 	_ = os.Remove(s.cfg.Socket)
 	return err
+}
+
+// removeLeftovers removes the files in dir older than before (an earlier process's), logging what
+// it cannot.
+func (s *Server) removeLeftovers(dir string, before time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return // none yet
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || !info.ModTime().Before(before) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			s.cfg.Log.Warn("remove leftover", "path", filepath.Join(dir, e.Name()), "error", err)
+		} else {
+			s.cfg.Log.Info("removed leftover", "path", filepath.Join(dir, e.Name()))
+		}
+	}
 }
 
 // Close releases the state.

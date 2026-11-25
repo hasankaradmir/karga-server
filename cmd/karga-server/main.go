@@ -66,6 +66,15 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		<-ctx.Done()
+		// A second signal does not wait for running operations: they resume at the next start.
+		again := make(chan os.Signal, 1)
+		signal.Notify(again, os.Interrupt, syscall.SIGTERM)
+		<-again
+		log.Warn("second signal: exiting without waiting for running operations")
+		os.Exit(1)
+	}()
 
 	rt, err := docker.New(ctx)
 	if err != nil {
