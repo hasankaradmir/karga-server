@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,6 +110,9 @@ type Loop struct {
 
 	mu      sync.Mutex
 	retries map[string]*time.Timer // repairs waiting out their backoff
+	// warned is the warning last logged per subject: one that repeats every pass (Docker down,
+	// a repair given up on) is logged once, and its end once.
+	warned map[string]string
 }
 
 // New returns a loop that takes releases from q, lists them with list and repairs them with
@@ -117,7 +121,30 @@ func New(q *Queue, list Lister, repair Repairer, events EventSource, o Options) 
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	return &Loop{q: q, list: list, repair: repair, events: events, interval: o.Interval, log: o.Log, only: o.Only, retries: map[string]*time.Timer{}}
+	return &Loop{q: q, list: list, repair: repair, events: events, interval: o.Interval, log: o.Log, only: o.Only,
+		retries: map[string]*time.Timer{}, warned: map[string]string{}}
+}
+
+// warn logs msg about subject at warn level, unless it is the warning last logged about it.
+func (l *Loop) warn(subject, msg, why string, args ...any) {
+	l.mu.Lock()
+	again := l.warned[subject] == why
+	l.warned[subject] = why
+	l.mu.Unlock()
+	if !again {
+		l.log.Warn(msg, append(args, "error", why)...)
+	}
+}
+
+// clear forgets subject's warning, logging msg if there was one (the problem is gone).
+func (l *Loop) clear(subject, msg string, args ...any) {
+	l.mu.Lock()
+	_, was := l.warned[subject]
+	delete(l.warned, subject)
+	l.mu.Unlock()
+	if was && msg != "" {
+		l.log.Info(msg, args...)
+	}
 }
 
 // Run reconciles until ctx is done: every release at start (after a reboot, say), after events
@@ -167,9 +194,10 @@ func (l *Loop) Run(ctx context.Context) {
 func (l *Loop) all(ctx context.Context) {
 	rels, err := l.list.List(ctx)
 	if err != nil {
-		l.log.Warn("reconcile: list releases", "error", err)
+		l.warn("list", "reconcile: list releases", err.Error())
 		return
 	}
+	l.clear("list", "reconcile: list releases works again")
 	for _, r := range rels {
 		if ctx.Err() != nil {
 			return
@@ -188,15 +216,23 @@ func (l *Loop) one(ctx context.Context, name string) {
 	case errors.Is(err, ports.ErrNotFound):
 		return // a container of another KARGA_HOME, or a release uninstalled meanwhile
 	case err != nil:
-		l.log.Warn("reconcile", "release", name, "error", err)
+		l.warn("release/"+name, "reconcile", err.Error(), "release", name)
 		return
 	case len(res.Actions) > 0:
 		for _, a := range res.Actions {
 			l.log.Info("reconciled", "release", name, "resource", a.Kind+"/"+a.Name, "action", a.Action, "status", a.Status, "error", a.Error)
 		}
 	}
+	l.clear("release/"+name, "reconcile works again", "release", name)
+	l.mu.Lock()
+	for subject := range l.warned { // what karga no longer gives up on (it tries again, or got repaired)
+		if what, ok := strings.CutPrefix(subject, "gaveup/"+name+"/"); ok && res.GaveUp[what] == "" {
+			delete(l.warned, subject)
+		}
+	}
+	l.mu.Unlock()
 	for what, why := range res.GaveUp {
-		l.log.Warn("reconcile gave up", "release", name, "resource", what, "error", why)
+		l.warn("gaveup/"+name+"/"+what, "reconcile gave up", why, "release", name, "resource", what)
 	}
 	// A repair waiting out its backoff is retried when it may run, events or not.
 	if at := l.repair.NextRepair(name); !at.IsZero() {
@@ -219,11 +255,17 @@ func (l *Loop) watch(ctx context.Context) {
 	for ctx.Err() == nil {
 		events, err := l.events.Events(ctx)
 		if err != nil {
-			l.log.Warn("reconcile: runtime events", "error", err)
+			l.warn("events", "reconcile: runtime events", err.Error())
 		} else {
+			began := time.Now()
 			for e := range events {
-				if e.Err != nil && ctx.Err() == nil {
-					l.log.Warn("reconcile: runtime events stopped", "error", e.Err)
+				if e.Err == nil {
+					l.clear("events", "reconcile: runtime events work again")
+				} else if ctx.Err() == nil {
+					if time.Since(began) > time.Minute {
+						l.clear("events", "") // a stream that ran a while: a new outage, not the same one
+					}
+					l.warn("events", "reconcile: runtime events stopped", e.Err.Error())
 				}
 				if e.Release != "" && e.Action != "start" {
 					l.q.Notify(e.Release)

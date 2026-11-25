@@ -68,8 +68,11 @@ reconciler`, the queue and the loop; `releases.Lifecycle.Repair`, the repairs) b
   what is missing waits until `karga reconcile --empty-volumes` (`RepairEmptyVolumes`) or an
   upgrade creates it. A repair waits at most a minute for what
   it recreated, so one release that does not come up holds up the others no longer than that.
-- *Backoff:* per resource, 10 s doubling to 5 min; after 5 failures in 10 minutes it gives up until
-  the user acts on the release or runs `karga reconcile`.
+- *Backoff:* per resource, 10 s doubling to 5 min. A repair the resource needs again within 10
+  minutes counted as failed (a crash loop), and the pause keeps growing until it stays up that long.
+  After 5 failures in 10 minutes it gives up; it tries again once they are older than that, or at
+  once when the user acts on the release or runs `karga reconcile`. A warning that repeats every
+  pass (Docker down, a repair given up on) is logged once, and its end once.
 - Every repair is an operation of type `reconcile`; `karga events` lists them.
 
 ```
