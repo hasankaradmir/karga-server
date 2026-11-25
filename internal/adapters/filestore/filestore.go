@@ -654,6 +654,7 @@ type optionsFile struct {
 	Strategy      string        `yaml:"strategy,omitempty"`
 	Timeout       time.Duration `yaml:"timeout,omitempty"`
 	KeepHistory   bool          `yaml:"keepHistory,omitempty"`
+	HistoryMax    *int          `yaml:"historyMax,omitempty"`
 	Restore       *restoreFile  `yaml:"restore,omitempty"`
 }
 
@@ -667,7 +668,7 @@ type restoreFile struct {
 }
 
 func optionsToFile(o release.Options) optionsFile {
-	f := optionsFile{DeleteVolumes: o.DeleteVolumes, Strategy: o.Strategy, Timeout: o.Timeout, KeepHistory: o.KeepHistory}
+	f := optionsFile{DeleteVolumes: o.DeleteVolumes, Strategy: o.Strategy, Timeout: o.Timeout, KeepHistory: o.KeepHistory, HistoryMax: o.HistoryMax}
 	if r := o.Restore; r != nil {
 		f.Restore = &restoreFile{Volume: r.Volume, From: r.From, Name: r.Name, Merge: r.Merge, NoRestorePoint: r.NoRestorePoint, Undo: r.Undo}
 	}
@@ -675,7 +676,7 @@ func optionsToFile(o release.Options) optionsFile {
 }
 
 func (f optionsFile) options() release.Options {
-	o := release.Options{DeleteVolumes: f.DeleteVolumes, Strategy: f.Strategy, Timeout: f.Timeout, KeepHistory: f.KeepHistory}
+	o := release.Options{DeleteVolumes: f.DeleteVolumes, Strategy: f.Strategy, Timeout: f.Timeout, KeepHistory: f.KeepHistory, HistoryMax: f.HistoryMax}
 	if r := f.Restore; r != nil {
 		o.Restore = &release.RestoreOptions{Volume: r.Volume, From: r.From, Name: r.Name, Merge: r.Merge, NoRestorePoint: r.NoRestorePoint, Undo: r.Undo}
 	}

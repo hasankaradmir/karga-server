@@ -175,7 +175,12 @@ left running, with the options recorded on the operation (`--delete-volumes`, `-
 `--timeout`, `--keep-history`): install, upgrade and rollback deploy their recorded revision again
 (the plan skips what is done; no new revision), uninstall runs again, a volume restore runs again
 from the backup it kept under `$KARGA_HOME/restores` (without taking its restore point again; if
-the backup is gone, the release is paused), others are aborted (ADR-0015). The finishing operation is recorded as `resume`. A failed apply
+the backup is gone, the release is paused), others are aborted (ADR-0015). The finishing operation is recorded as `resume`. A deployment stopped before its revision was
+recorded changed nothing, and its release keeps its status (a failed one stays failed); a resumed
+deployment prunes by the request's `--history-max`. An operation left running on a release that is
+gone (an uninstall stopped after it removed it) is closed. An uninstall removes the release's
+containers, networks and volumes first, and its files and edge addresses only once they are gone,
+so one that fails can be run again; a gateway that cannot drop its routes is a warning. A failed apply
 marks the revision failed; an install that failed before creating anything removes the release; if nothing that was running changed (an image that cannot be pulled, an
 unhealthy new container in a replace), the release keeps its status. Rollback re-applies a stored
 revision as a new revision. `--history-max` (default 10) prunes old revisions.

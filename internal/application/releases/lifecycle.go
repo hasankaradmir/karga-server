@@ -268,6 +268,10 @@ func (s *Lifecycle) uninstall(ctx context.Context, rt ports.Runtime, rel release
 		rel.Status = release.StatusFailed
 		return errors.Join(err, s.c.store.SaveRelease(bg, rel))
 	}
+	// The release is gone: a gateway that cannot drop its routes now does at its next sync.
+	if err := s.c.env.SyncGateway(ctx, rt); err != nil {
+		s.c.log.Warn("uninstall: sync the gateway", "release", req.Name, "error", err)
+	}
 	s.c.repairs.reset(req.Name) // what was repaired, or given up on, is no more
 	if req.DeleteVolumes {
 		// The volumes' restore points go with them.

@@ -150,7 +150,7 @@ func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 		opType = ResumeOperation
 	}
 	op, err := s.begin(ctx, in.Name, opType, in.Revision, in.Force,
-		release.Options{DeleteVolumes: in.DeleteVolumes, Strategy: in.Strategy, Timeout: in.Timeout})
+		release.Options{DeleteVolumes: in.DeleteVolumes, Strategy: in.Strategy, Timeout: in.Timeout, HistoryMax: in.HistoryMax})
 	if err != nil {
 		return nil, err
 	}

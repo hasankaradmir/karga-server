@@ -41,14 +41,20 @@ func (e *Env) Delete(ctx context.Context, rt ports.Runtime, release string, dele
 			}
 		}
 	}
-	if e.home != "" {
-		errs = append(errs, os.RemoveAll(filepath.Join(e.home, "releases", release)), os.RemoveAll(ProxyDir(e.home, release)))
-		if e.host.Supported() {
-			_, err := gateway.New(rt, e.host, e.home).Sync(ctx)
-			errs = append(errs, err)
-		}
+	if err := errors.Join(errs...); err != nil || e.home == "" {
+		return err // containers that are left keep the files they mount: a new uninstall finishes
 	}
-	return errors.Join(errs...)
+	return errors.Join(os.RemoveAll(filepath.Join(e.home, "releases", release)), os.RemoveAll(ProxyDir(e.home, release)),
+		gateway.ReleaseEdge(ctx, e.home, release))
+}
+
+// SyncGateway takes the routes of releases that are gone out of the gateway.
+func (e *Env) SyncGateway(ctx context.Context, rt ports.Runtime) error {
+	if e.home == "" || !e.host.Supported() {
+		return nil
+	}
+	_, err := gateway.New(rt, e.host, e.home).Sync(ctx)
+	return err
 }
 
 // deletesVolume reports whether an uninstall removes volume o.
