@@ -232,12 +232,14 @@ func TestWriteWaitsForClustersBeforeListeners(t *testing.T) {
 	next := sample
 	next.Clusters = append(slices.Clone(sample.Clusters), Cluster{Name: "new", Host: "127.0.0.1", Port: 1})
 	next.TCP = append(slices.Clone(sample.TCP), TCPListener{Address: "127.0.0.1", Port: 1, Cluster: "new"})
+	// A wait would last clusterWait; the bound leaves room for a slow disk's fsyncs.
+	clusterWait = 10 * time.Second
 	start = time.Now()
 	if err := Write(filepath.Dir(dir), next); err != nil {
 		t.Fatal(err)
 	}
-	if time.Since(start) > 200*time.Millisecond {
-		t.Fatal("waited although Envoy knew every cluster")
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("waited %s although Envoy knew every cluster", took)
 	}
 }
 
