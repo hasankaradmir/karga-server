@@ -269,3 +269,43 @@ func TestOperationEndIsLogged(t *testing.T) {
 		t.Fatalf("failed upgrade:\n%s", out)
 	}
 }
+
+// A container that stops again right after each repair is not restarted in a loop: each relapse
+// within the window counts as a failure, the pauses grow, and after five karga gives up (SA-04).
+func TestReconcileBacksOffACrashLoop(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	must[*Result](t)(e.install())
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	e.svc.c.now = func() time.Time { return now }
+	starts := 0
+	for range 20 {
+		if err := e.rt.StopWorkload(ctx, e.rt.Name("cache-redis"), 0); err != nil {
+			t.Fatal(err)
+		}
+		res := must[*ReconcileResult](t)(e.svc.Lifecycle.Repair(ctx, "cache", false))
+		if actionsOf(res) == "start:Workload/redis:done" {
+			starts++
+		}
+		if len(res.GaveUp) > 0 {
+			break
+		}
+		now = now.Add(15 * time.Second)
+	}
+	res := must[*ReconcileResult](t)(e.svc.Lifecycle.Repair(ctx, "cache", false))
+	if !strings.Contains(res.GaveUp["Workload/redis"], "failed again within 10m0s of its last repair") || starts > 6 {
+		t.Fatalf("after %d starts: %+v", starts, res)
+	}
+	// Up for longer than the window, a later failure is repaired at once again.
+	if err := e.svc.Lifecycle.Pause(ctx, "cache", false); err != nil { // forgets the failures, as karga resume does
+		t.Fatal(err)
+	}
+	must[*ReconcileResult](t)(e.svc.Lifecycle.Repair(ctx, "cache", false))
+	now = now.Add(11 * time.Minute)
+	if err := e.rt.StopWorkload(ctx, e.rt.Name("cache-redis"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if res := must[*ReconcileResult](t)(e.svc.Lifecycle.Repair(ctx, "cache", false)); actionsOf(res) != "start:Workload/redis:done" {
+		t.Fatalf("later failure: %s", actionsOf(res))
+	}
+}

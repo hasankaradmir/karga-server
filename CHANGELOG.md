@@ -119,6 +119,16 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- A container that crashed right after each repair was restarted in a loop, each time as a
+  `reconcile` operation, until the release's 200 kept operations held nothing else. A repair needed
+  again within 10 minutes counts as failed: the pauses grow, and after 5 karga gives up.
+- The gateway's repair backoff was keyed by the gateway, not the release: one release's failures
+  paused every release's gateway repairs, and `karga reconcile` did not forget them.
+- A repair's failure times were never trimmed.
+- With Docker down, the reconciler logged a warning per release on every pass and another every 5
+  seconds for the event stream; a repair given up on was logged on every pass. A repeated warning
+  is logged once, and its end once. The docs said karga gave up until `karga reconcile`; it tries
+  again after 10 minutes, as they say now.
 - The gateway took a client's `x-forwarded-for` and appended the real address: an application
   reading the first address saw one the client chose, past IP allowlists and rate limits. It is set
   to the client address alone.

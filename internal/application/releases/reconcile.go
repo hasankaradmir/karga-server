@@ -48,7 +48,8 @@ type repair struct {
 	delay    time.Duration
 	next     time.Time
 	lastErr  string
-	probes   int // consecutive failed tcp/http checks
+	probes   int       // consecutive failed tcp/http checks
+	fixed    time.Time // the last repair that succeeded
 }
 
 // repairs is the reconciler's memory per release/kind/name; it lives as long as the server.
@@ -109,12 +110,36 @@ func (r *repairs) done(key string, now time.Time, err error) {
 	defer r.mu.Unlock()
 	p := r.get(key)
 	if err == nil {
-		p.delay, p.next, p.probes = 0, time.Time{}, 0
+		// The pause keeps growing until it stays repaired (relapsed): a container that crashes
+		// again at once is not restarted in a loop.
+		p.next, p.probes, p.fixed = time.Time{}, 0, now
 		return
 	}
-	p.failures = append(p.failures, now)
+	r.fail(p, now, err.Error())
+}
+
+// fail counts a failure of p at now and pauses its next repair longer.
+func (r *repairs) fail(p *repair, now time.Time, why string) {
+	p.failures = append(slices.DeleteFunc(p.failures, func(t time.Time) bool { return now.Sub(t) >= repairWindow }), now)
 	p.delay = min(max(2*p.delay, repairFirstDelay), repairMaxDelay)
-	p.next, p.lastErr = now.Add(p.delay), err.Error()
+	p.next, p.lastErr = now.Add(p.delay), why
+}
+
+// relapsed is called when key needs a repair again: within repairWindow of the last one that
+// succeeded, that one counts as failed (it did not stay up), so a crash loop backs off and is given
+// up on; later, the pause starts over.
+func (r *repairs) relapsed(key string, now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p := r.get(key)
+	switch {
+	case p.fixed.IsZero():
+	case now.Sub(p.fixed) < repairWindow:
+		r.fail(p, now, "it failed again within "+repairWindow.String()+" of its last repair")
+	default:
+		p.delay = 0
+	}
+	p.fixed = time.Time{}
 }
 
 // probeFailed counts a failed tcp/http check and says whether retries is reached.
@@ -267,6 +292,7 @@ func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present 
 	now := s.c.now()
 	var todo []planned
 	add := func(p planned) {
+		s.c.repairs.relapsed(p.key, now)
 		ok, gaveUp, _ := s.c.repairs.allowed(p.key, now)
 		if ok && !gaveUp {
 			todo = append(todo, p)
@@ -328,10 +354,10 @@ func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present 
 		}
 	}
 	if exposed {
-		name, err := s.c.gw.Current(ctx)
+		gw, err := s.c.gw.Current(ctx)
 		if err == nil {
 			var st ports.WorkloadStatus
-			if st, err = s.c.rt.GetWorkload(ctx, name); err == nil && st.State != ports.StateRunning {
+			if st, err = s.c.rt.GetWorkload(ctx, gw); err == nil && st.State != ports.StateRunning {
 				err = errors.New("not running")
 			}
 		}

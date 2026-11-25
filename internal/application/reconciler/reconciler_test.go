@@ -142,3 +142,33 @@ func TestBrokenEventStreamIsLogged(t *testing.T) {
 		t.Fatalf("log:\n%s", out)
 	}
 }
+
+// failing is a Repairer whose repairs fail with err until it is nil.
+type failing struct{ err error }
+
+func (f *failing) Repair(context.Context, string, bool) (*releases.ReconcileResult, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &releases.ReconcileResult{}, nil
+}
+
+func (f *failing) NextRepair(string) time.Time { return time.Time{} }
+
+// A failure that repeats every pass (Docker down) is logged once, and its end once.
+func TestRepeatedFailureIsLoggedOnce(t *testing.T) {
+	var buf bytes.Buffer
+	f := &failing{err: errors.New("Cannot connect to the Docker daemon")}
+	l := New(NewQueue(time.Hour), nil, f, brokenStream{}, Options{Log: slog.New(slog.NewTextHandler(&buf, nil))})
+	ctx := context.Background()
+	for range 3 {
+		l.one(ctx, "cache")
+	}
+	f.err = nil
+	l.one(ctx, "cache")
+	l.one(ctx, "cache")
+	out := buf.String()
+	if strings.Count(out, "Cannot connect") != 1 || strings.Count(out, `msg="reconcile works again"`) != 1 {
+		t.Fatalf("log:\n%s", out)
+	}
+}
