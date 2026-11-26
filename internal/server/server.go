@@ -57,7 +57,7 @@ const DefaultReconcileInterval = 30 * time.Second
 // classify gives karga-server's errors their kind for the client; anything else is internal.
 func classify(err error) error {
 	switch {
-	case errors.Is(err, ports.ErrNotFound):
+	case errors.Is(err, ports.ErrNotFound), errors.Is(err, ports.ErrImageNotFound):
 		return api.ErrNotFound
 	case errors.Is(err, ports.ErrInvalid):
 		return api.ErrInvalid

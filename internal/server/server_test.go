@@ -118,6 +118,7 @@ func TestClassify(t *testing.T) {
 	}{
 		{fmt.Errorf("x: %w", ports.ErrNotFound), api.ErrNotFound},
 		{fmt.Errorf("x: %w", ports.ErrInvalid), api.ErrInvalid},
+		{fmt.Errorf("pull: %w", ports.ErrImageNotFound), api.ErrNotFound},
 		{releases.ErrLocked, api.ErrConflict},
 		{releases.ErrInterrupted, api.ErrConflict},
 		{releases.ErrExists, api.ErrConflict},
