@@ -299,6 +299,8 @@ func Run(t *testing.T, rt ports.Runtime, cfg Config) {
 		hostNetworkCase(t, rt, cfg, req)
 		req.Name = name("copy")
 		copyCase(t, rt, cfg, req)
+		req.Name = name("invalid")
+		invalidCase(t, rt, req)
 	})
 }
 
@@ -331,6 +333,31 @@ func copyCase(t *testing.T, rt ports.Runtime, cfg Config, req ports.WorkloadRequ
 		}
 	}
 	must(t, rt.DeleteWorkload(ctx, req.Name))
+}
+
+// invalidCase: a runtime refuses an invalid request (WorkloadRequest.Validate) with ErrInvalid and
+// creates nothing, so that the fake refuses what Docker refuses.
+func invalidCase(t *testing.T, rt ports.Runtime, req ports.WorkloadRequest) {
+	ctx := context.Background()
+	for what, change := range map[string]func(*ports.WorkloadRequest){
+		"unknown restart policy": func(r *ports.WorkloadRequest) { r.RestartPolicy = "sometimes" },
+		"port without protocol":  func(r *ports.WorkloadRequest) { r.Ports = []ports.PortBinding{{ContainerPort: 80}} },
+		"published without host IP": func(r *ports.WorkloadRequest) {
+			r.Ports = []ports.PortBinding{{ContainerPort: 80, HostPort: 18080, Protocol: "tcp"}}
+		},
+		"host network and networks": func(r *ports.WorkloadRequest) { r.HostNetwork = true },
+	} {
+		r := req
+		change(&r)
+		if err := rt.CreateWorkload(ctx, r); !errors.Is(err, ports.ErrInvalid) {
+			_ = rt.DeleteWorkload(ctx, r.Name)
+			t.Errorf("%s: %v, want ErrInvalid", what, err)
+			continue
+		}
+		if _, err := rt.GetWorkload(ctx, r.Name); !errors.Is(err, ports.ErrNotFound) {
+			t.Errorf("%s: a workload was created: %v", what, err)
+		}
+	}
 }
 
 // hostNetworkCase runs a workload in the host network namespace (the gateway's mode).

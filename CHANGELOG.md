@@ -35,6 +35,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- A runtime refuses an invalid workload request (unknown restart policy, a port without protocol,
+  a published port without a host IP, a host-network workload with networks or ports) with an
+  invalid-request error before it creates anything; the test runtime refuses the same requests as
+  Docker. Docker used to put a host-network workload with networks on its first network.
 - A volume restore replaces the volume's files: it removes the containers mounting it, removes and
   creates the volume again, writes the backup and creates the same containers (name, labels,
   revision, anonymous volumes). Before, it wrote over the files and kept those the backup did not
