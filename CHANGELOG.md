@@ -35,6 +35,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- A missing image (Docker cannot pull it) is reported to the client as not found, like a missing
+  release; it was an internal error. `karga` exits with 4 for it.
 - A volume restore replaces the volume's files: it removes the containers mounting it, removes and
   creates the volume again, writes the backup and creates the same containers (name, labels,
   revision, anonymous volumes). Before, it wrote over the files and kept those the backup did not
