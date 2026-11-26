@@ -211,8 +211,10 @@ func TestInvalidConfigRefusedBeforeWriting(t *testing.T) {
 }
 
 func TestWriteWaitsForClustersBeforeListeners(t *testing.T) {
-	known := `{"cluster_statuses":[]}`
-	dir := fakeAdmin(t, func() string { return known }, func() string { return "" })
+	// atomic: a poll of the first Write can still be in flight when known changes.
+	var known atomic.Value
+	known.Store(`{"cluster_statuses":[]}`)
+	dir := fakeAdmin(t, func() string { return known.Load().(string) }, func() string { return "" })
 	old := clusterWait
 	clusterWait = 300 * time.Millisecond
 	t.Cleanup(func() { clusterWait = old })
@@ -228,7 +230,7 @@ func TestWriteWaitsForClustersBeforeListeners(t *testing.T) {
 		t.Fatalf("listeners must be written after the wait anyway: %v", err)
 	}
 
-	known = `{"cluster_statuses":[{"name":"db_pg_p5432"},{"name":"web-p8080"},{"name":"new"}]}`
+	known.Store(`{"cluster_statuses":[{"name":"db_pg_p5432"},{"name":"web-p8080"},{"name":"new"}]}`)
 	next := sample
 	next.Clusters = append(slices.Clone(sample.Clusters), Cluster{Name: "new", Host: "127.0.0.1", Port: 1})
 	next.TCP = append(slices.Clone(sample.TCP), TCPListener{Address: "127.0.0.1", Port: 1, Cluster: "new"})
