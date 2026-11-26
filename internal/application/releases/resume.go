@@ -136,7 +136,7 @@ func (s *Lifecycle) resume(ctx context.Context, rel release.Release, op release.
 		_, err := s.uninstallRelease(ctx, UninstallRequest{Name: rel.Name, Force: true,
 			KeepHistory: op.Options.KeepHistory, DeleteVolumes: op.Options.DeleteVolumes})
 		return err
-	case "volume-restore":
+	case release.OpVolumeRestore:
 		return s.resumeRestore(ctx, rel, op)
 	}
 	op.Status, op.Error = release.OperationAborted, "interrupted: karga-server stopped"

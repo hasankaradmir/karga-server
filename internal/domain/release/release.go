@@ -113,15 +113,17 @@ const (
 	OperationAborted   OperationStatus = "aborted"
 )
 
-// Operation types: what a user's command (install, upgrade, rollback, uninstall) or karga-server
-// itself (reconcile, resume) does to a release.
+// Operation types: what a user's command (install, upgrade, rollback, uninstall, volume backup and
+// restore) or karga-server itself (reconcile, resume) does to a release.
 const (
-	OpInstall   = "install"
-	OpUpgrade   = "upgrade"
-	OpRollback  = "rollback"
-	OpUninstall = "uninstall"
-	OpReconcile = "reconcile"
-	OpResume    = "resume"
+	OpInstall       = "install"
+	OpUpgrade       = "upgrade"
+	OpRollback      = "rollback"
+	OpUninstall     = "uninstall"
+	OpReconcile     = "reconcile"
+	OpResume        = "resume"
+	OpVolumeBackup  = "volume-backup"
+	OpVolumeRestore = "volume-restore" // also an undo-restore
 )
 
 // Operation records a mutating command so an interrupted one can be detected.
