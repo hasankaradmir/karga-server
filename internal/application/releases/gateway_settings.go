@@ -113,16 +113,24 @@ func (s *Gateway) Diff(ctx context.Context, content []byte) (gateway.SettingsPla
 	return s.c.gw.PlanDocument(ctx, content)
 }
 
-// Apply applies a gateway document as a new revision; see applySettings.
-func (s *Gateway) Apply(ctx context.Context, content []byte, source string, confirmed bool) (int, error) {
+// Apply applies a gateway document as a new revision; see applySettings. It returns the revision
+// in force.
+func (s *Gateway) Apply(ctx context.Context, content []byte, source string, confirmed bool) (gateway.SettingsRevision, error) {
 	settings, err := gateway.ParseDocument(content)
 	if err != nil {
-		return 0, fmt.Errorf("%w: gateway document: %w", ports.ErrInvalid, err)
+		return gateway.SettingsRevision{}, fmt.Errorf("%w: gateway document: %w", ports.ErrInvalid, err)
 	}
 	if source == "" {
 		source = "apply"
 	}
-	return s.applySettings(ctx, source, confirmed, func() (gateway.Settings, error) { return settings, nil })
+	n, err := s.applySettings(ctx, source, confirmed, func() (gateway.Settings, error) { return settings, nil })
+	revs, herr := s.History()
+	for _, r := range revs {
+		if r.Revision == n {
+			return r, errors.Join(err, herr)
+		}
+	}
+	return gateway.SettingsRevision{Revision: n}, errors.Join(err, herr)
 }
 
 // Export returns revision n of the settings as a document (0: the one in force).
