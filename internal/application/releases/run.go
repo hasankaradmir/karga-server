@@ -114,15 +114,7 @@ func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 		return nil, err
 	}
 	rt := s.rt
-	recorded := applied
-	if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
-		return nil, err
-	}
-	anon, err := anonymousVolumes(ctx, rt, in.Name)
-	if err != nil {
-		return nil, err
-	}
-	plan, err := s.env.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
+	plan, anon, err := s.planLive(ctx, rt, in.Name, in.Resources, applied, in.Strategy)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +144,7 @@ func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	if plan, err = s.replan(ctx, rt, in, recorded, plan); err == nil {
+	if plan, err = s.replan(ctx, rt, in, applied, plan); err == nil {
 		res.Plan = plan.Summaries()
 		in.warn = func(w string) { res.Warnings = append(res.Warnings, w) }
 		err = s.run(ctx, rt, &op, in, plan)
@@ -297,14 +289,28 @@ func (s *core) replan(ctx context.Context, rt ports.Runtime, in deployInput, app
 	if applied, err = s.store.ListResources(ctx, in.Name); err != nil {
 		return plan, err
 	}
-	if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
-		return plan, err
-	}
-	anon, err := anonymousVolumes(ctx, rt, in.Name)
+	plan, _, err = s.planLive(ctx, rt, in.Name, in.Resources, applied, in.Strategy)
+	return plan, err
+}
+
+// planLive plans resources rs of release name against those of applied the runtime still has. It
+// returns the anonymous volumes found too.
+func (s *core) planLive(ctx context.Context, rt ports.Runtime, name string, rs []resource.Resource, applied []release.AppliedResource, strategy string) (deployment.Plan, deployment.Anonymous, error) {
+	live, err := existing(ctx, rt, name, applied)
 	if err != nil {
-		return plan, err
+		return deployment.Plan{}, nil, err
 	}
-	return s.env.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
+	return s.diffLive(ctx, rt, name, rs, live, strategy)
+}
+
+// diffLive plans resources rs of release name against live, the applied resources the runtime has.
+func (s *core) diffLive(ctx context.Context, rt ports.Runtime, name string, rs []resource.Resource, live []release.AppliedResource, strategy string) (deployment.Plan, deployment.Anonymous, error) {
+	anon, err := anonymousVolumes(ctx, rt, name)
+	if err != nil {
+		return deployment.Plan{}, nil, err
+	}
+	plan, err := s.env.Diff(name, rs, live, strategy, anon)
+	return plan, anon, err
 }
 
 // run records the release and its new revision, executes plan step by step (each step recorded as

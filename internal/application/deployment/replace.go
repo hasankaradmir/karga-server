@@ -187,48 +187,53 @@ func (e *Env) RepairReplace(ctx context.Context, rt ports.Runtime, rel string, a
 	if err != nil {
 		return nil, err
 	}
-	var repaired []release.AppliedResource
-	for _, a := range applied {
-		if a.Kind != resource.KindWorkload {
-			continue
-		}
-		recorded := false
-		var others []ports.Object
-		for _, o := range objs {
-			switch {
-			case o.Kind != ports.ObjectWorkload || o.Labels[ports.LabelKind] != resource.KindWorkload || o.Labels[ports.LabelName] != a.Name:
-			case o.Name == a.RuntimeName:
-				recorded = true
-			default:
-				others = append(others, o)
-			}
-		}
-		for _, o := range others {
-			if recorded && !e.routedTo(ctx, rt, rel, a.Name, o.Name) {
-				if err := proxyops.RemoveWorkload(ctx, rt, o.Name); err != nil { // the old one still serves
-					return nil, err
-				}
-				continue
-			}
-			if recorded {
-				if err := proxyops.RemoveWorkload(ctx, rt, a.RuntimeName); err != nil { // the proxy had switched
-					return nil, err
-				}
-			}
-			a.RuntimeName, a.Digest, recorded = o.Name, o.Labels[ports.LabelDigest], true
-			repaired = append(repaired, a)
-		}
+	workloads, err := keepRouted(applied, objs, replacement{
+		kind: resource.KindWorkload,
+		mine: func(a release.AppliedResource, o ports.Object) bool {
+			return o.Labels[ports.LabelKind] == resource.KindWorkload && o.Labels[ports.LabelName] == a.Name
+		},
+		routed: func(a release.AppliedResource, o ports.Object) bool { return e.routedTo(ctx, rt, rel, a.Name, o.Name) },
+		remove: func(name string) error { return proxyops.RemoveWorkload(ctx, rt, name) },
+	})
+	if err != nil {
+		return nil, err
 	}
 	// An interrupted proxy replace leaves two proxies: the one the gateway routes to is kept.
+	proxies, err := keepRouted(applied, objs, replacement{
+		kind:   KindProxy,
+		mine:   func(_ release.AppliedResource, o ports.Object) bool { return o.Labels[ports.LabelKind] == KindProxy },
+		routed: func(_ release.AppliedResource, o ports.Object) bool { return e.gatewayRoutesTo(o) },
+		remove: func(name string) error { return removeProxyContainer(ctx, rt, e.home, rel, name) },
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append(workloads, proxies...), nil
+}
+
+// replacement says how RepairReplace settles the containers of one kind: which are an applied
+// resource's, which one traffic goes to, and how one is removed.
+type replacement struct {
+	kind   string
+	mine   func(a release.AppliedResource, o ports.Object) bool
+	routed func(a release.AppliedResource, o ports.Object) bool
+	remove func(name string) error
+}
+
+// keepRouted settles, for each applied resource of r.kind, the containers an interrupted replace
+// left: while the recorded one is what traffic goes to, the others go; once traffic went to
+// another, the recorded one goes and that one is recorded. It returns the resources to record anew.
+func keepRouted(applied []release.AppliedResource, objs []ports.Object, r replacement) ([]release.AppliedResource, error) {
+	var repaired []release.AppliedResource
 	for _, a := range applied {
-		if a.Kind != KindProxy {
+		if a.Kind != r.kind {
 			continue
 		}
 		recorded := false
 		var others []ports.Object
 		for _, o := range objs {
 			switch {
-			case o.Kind != ports.ObjectWorkload || o.Labels[ports.LabelKind] != KindProxy:
+			case o.Kind != ports.ObjectWorkload || !r.mine(a, o):
 			case o.Name == a.RuntimeName:
 				recorded = true
 			default:
@@ -236,14 +241,14 @@ func (e *Env) RepairReplace(ctx context.Context, rt ports.Runtime, rel string, a
 			}
 		}
 		for _, o := range others {
-			if recorded && !e.gatewayRoutesTo(o) {
-				if err := removeProxyContainer(ctx, rt, e.home, rel, o.Name); err != nil {
+			if recorded && !r.routed(a, o) {
+				if err := r.remove(o.Name); err != nil { // the old one still serves
 					return nil, err
 				}
 				continue
 			}
 			if recorded {
-				if err := removeProxyContainer(ctx, rt, e.home, rel, a.RuntimeName); err != nil {
+				if err := r.remove(a.RuntimeName); err != nil { // traffic had switched
 					return nil, err
 				}
 			}
