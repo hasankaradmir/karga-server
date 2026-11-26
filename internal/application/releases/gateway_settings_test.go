@@ -101,11 +101,11 @@ func TestGatewayDocuments(t *testing.T) {
 	if err != nil || len(plan.Problems) != 0 || len(plan.Changes) != 1 || plan.Changes[0].Fields[0] != "timeout: - -> 30s" || plan.Risk != "" {
 		t.Fatalf("plan: %+v %v", plan, err)
 	}
-	if rev, err := svc.Gateway.Apply(ctx, doc(listeners(", timeout: 30s")), "", false); err != nil || rev != 2 {
-		t.Fatalf("apply: %d %v", rev, err)
+	if rev, err := svc.Gateway.Apply(ctx, doc(listeners(", timeout: 30s")), "", false); err != nil || rev.Revision != 2 {
+		t.Fatalf("apply: %d %v", rev.Revision, err)
 	}
-	if rev, err := svc.Gateway.Apply(ctx, doc(listeners(", timeout: 30s")), "", false); err != nil || rev != 2 {
-		t.Fatalf("apply without a change: %d %v", rev, err)
+	if rev, err := svc.Gateway.Apply(ctx, doc(listeners(", timeout: 30s")), "", false); err != nil || rev.Revision != 2 {
+		t.Fatalf("apply without a change: %d %v", rev.Revision, err)
 	}
 	if l := current().Listeners[0]; l.Timeout != "30s" {
 		t.Fatalf("in force: %+v", l)
@@ -161,8 +161,8 @@ func TestGatewayDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rev, err := svc.Gateway.Apply(ctx, old, "rollback 2", true); err != nil || rev != 5 {
-		t.Fatalf("rollback: %d %v", rev, err)
+	if rev, err := svc.Gateway.Apply(ctx, old, "rollback 2", true); err != nil || rev.Revision != 5 {
+		t.Fatalf("rollback: %d %v", rev.Revision, err)
 	}
 	if s := current(); len(s.Listeners) != 2 || s.Listeners[0].Timeout != "30s" || s.AccessLog || len(s.Listen) != 1 {
 		t.Fatalf("after the rollback: %+v", s)

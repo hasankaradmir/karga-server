@@ -131,11 +131,11 @@ func (b Backend) Status(ctx context.Context, req api.ReleaseRequest) (*api.Statu
 	if rep == nil {
 		return nil, err
 	}
-	out := &api.StatusReport{Release: wireRelease(rep.Release), Resources: []api.ResourceStatus{}, Orphans: rep.Orphans, Interrupted: rep.Interrupted}
-	for _, r := range rep.Resources {
-		out.Resources = append(out.Resources, api.ResourceStatus{Kind: r.Kind, Name: r.Name, RuntimeName: r.RuntimeName, Revision: r.Revision,
-			Desired: r.Desired, Actual: r.Actual, Health: r.Health, Backend: r.Backend, Restarts: r.Restarts, OOMKilled: r.OOMKilled})
-	}
+	out := &api.StatusReport{Release: wireRelease(rep.Release), Orphans: rep.Orphans, Interrupted: rep.Interrupted,
+		Resources: wireAllEmpty(rep.Resources, func(r releases.ResourceStatus) api.ResourceStatus {
+			return api.ResourceStatus{Kind: r.Kind, Name: r.Name, RuntimeName: r.RuntimeName, Revision: r.Revision,
+				Desired: r.Desired, Actual: r.Actual, Health: r.Health, Backend: r.Backend, Restarts: r.Restarts, OOMKilled: r.OOMKilled}
+		})}
 	if rc := rep.Reconcile; rc != nil {
 		out.Reconcile = &api.ReconcileStatus{Last: rc.Last, Status: rc.Status, Error: rc.Error, GaveUp: rc.GaveUp}
 	}
@@ -148,12 +148,10 @@ func (b Backend) Diff(ctx context.Context, req api.DiffRequest) (*api.RevisionDi
 	if d == nil {
 		return nil, err
 	}
-	out := &api.RevisionDiff{Release: d.Release, From: d.From, To: d.To, Package: wireFields(d.Package), Values: wireFields(d.Values),
-		Resources: []api.ResourceDiff{}}
-	for _, r := range d.Resources {
-		out.Resources = append(out.Resources, api.ResourceDiff{Kind: r.Kind, Name: r.Name, Action: r.Action, Fields: wireFields(r.Fields)})
-	}
-	return out, err
+	return &api.RevisionDiff{Release: d.Release, From: d.From, To: d.To, Package: wireFields(d.Package), Values: wireFields(d.Values),
+		Resources: wireAllEmpty(d.Resources, func(r deployment.ResourceDiff) api.ResourceDiff {
+			return api.ResourceDiff{Kind: r.Kind, Name: r.Name, Action: r.Action, Fields: wireFields(r.Fields)}
+		})}, err
 }
 
 // Resources implements api.Backend.
@@ -259,26 +257,19 @@ func (b Backend) GatewayHealth(ctx context.Context) (api.State, error) {
 // DiffGateway implements api.Backend.
 func (b Backend) DiffGateway(ctx context.Context, doc api.GatewayDocument) (api.GatewayPlan, error) {
 	p, err := b.gateway.Diff(ctx, doc.Content)
-	out := api.GatewayPlan{Changes: []api.GatewayChange{}, Problems: p.Problems, Risk: p.Risk}
-	for _, c := range p.Changes {
-		out.Changes = append(out.Changes, api.GatewayChange{Kind: c.Kind, Name: c.Name, Action: c.Action, Fields: c.Fields})
-	}
-	return out, err
+	return api.GatewayPlan{Problems: p.Problems, Risk: p.Risk,
+		Changes: wireAllEmpty(p.Changes, func(c gateway.SettingsChange) api.GatewayChange {
+			return api.GatewayChange{Kind: c.Kind, Name: c.Name, Action: c.Action, Fields: c.Fields}
+		})}, err
 }
 
 // ApplyGateway implements api.Backend.
 func (b Backend) ApplyGateway(ctx context.Context, req api.GatewayApplyRequest) (api.GatewayRevision, error) {
-	n, err := b.gateway.Apply(ctx, req.Content, req.Source, req.Confirmed)
+	rev, err := b.gateway.Apply(ctx, req.Content, req.Source, req.Confirmed)
 	if err != nil {
 		return api.GatewayRevision{}, err
 	}
-	revs, err := b.gateway.History()
-	for _, r := range revs {
-		if r.Revision == n {
-			return gatewayRevision(r), err
-		}
-	}
-	return api.GatewayRevision{Revision: n}, err
+	return gatewayRevision(rev), nil
 }
 
 // ExportGateway implements api.Backend.
@@ -290,11 +281,7 @@ func (b Backend) ExportGateway(_ context.Context, req api.GatewayExportRequest) 
 // GatewayHistory implements api.Backend.
 func (b Backend) GatewayHistory(context.Context) ([]api.GatewayRevision, error) {
 	revs, err := b.gateway.History()
-	out := []api.GatewayRevision{}
-	for _, r := range revs {
-		out = append(out, gatewayRevision(r))
-	}
-	return out, err
+	return wireAllEmpty(revs, gatewayRevision), err
 }
 
 func gatewayRevision(r gateway.SettingsRevision) api.GatewayRevision {
@@ -304,12 +291,10 @@ func gatewayRevision(r gateway.SettingsRevision) api.GatewayRevision {
 // GatewaySettings implements api.Backend.
 func (b Backend) GatewaySettings(ctx context.Context) (api.Settings, map[string][]string, error) {
 	g, users, err := b.gateway.Settings(ctx)
-	out := api.Settings{Listen: g.Listen, AccessLog: g.AccessLog, Listeners: []api.Listener{}}
-	for _, l := range g.Listeners {
-		out.Listeners = append(out.Listeners, api.Listener{Name: l.Name, Port: l.Port, Protocol: l.Protocol,
-			ListenerOptions: api.ListenerOptions(l.ListenerOptions)})
-	}
-	return out, users, err
+	return api.Settings{Listen: g.Listen, AccessLog: g.AccessLog,
+		Listeners: wireAllEmpty(g.Listeners, func(l gateway.Listener) api.Listener {
+			return api.Listener{Name: l.Name, Port: l.Port, Protocol: l.Protocol, ListenerOptions: api.ListenerOptions(l.ListenerOptions)}
+		})}, users, err
 }
 
 // SetGatewayAccessLog implements api.Backend.
@@ -342,13 +327,11 @@ func wireResult(r *releases.Result) *api.Result {
 	if r == nil {
 		return nil
 	}
-	out := &api.Result{Release: r.Release, Revision: r.Revision, From: r.From, Status: r.Status, DryRun: r.DryRun, NoOp: r.NoOp,
-		Plan: api.Plan{Changes: []api.Change{}}, Warnings: r.Warnings, Notes: r.Notes}
-	for _, c := range r.Plan {
-		out.Plan.Changes = append(out.Plan.Changes, api.Change{Kind: c.Kind, Name: c.Name, Action: c.Action, Fields: wireFields(c.Fields),
-			Strategy: c.Strategy, StrategyReason: c.StrategyReason, Notice: c.Notice})
-	}
-	return out
+	return &api.Result{Release: r.Release, Revision: r.Revision, From: r.From, Status: r.Status, DryRun: r.DryRun, NoOp: r.NoOp,
+		Warnings: r.Warnings, Notes: r.Notes, Plan: api.Plan{Changes: wireAllEmpty(r.Plan, func(c deployment.Summary) api.Change {
+			return api.Change{Kind: c.Kind, Name: c.Name, Action: c.Action, Fields: wireFields(c.Fields),
+				Strategy: c.Strategy, StrategyReason: c.StrategyReason, Notice: c.Notice}
+		})}}
 }
 
 func wireFields(fs []deployment.FieldChange) []api.FieldChange {
@@ -370,6 +353,15 @@ func wireRevision(r release.Revision) api.Revision {
 
 func wireStep(s release.Step) api.Step {
 	return api.Step{Kind: s.Kind, Name: s.Name, Action: s.Action, Status: s.Status, Error: s.Error}
+}
+
+// wireAllEmpty maps a list that JSON shows as [] when it is empty, never null.
+func wireAllEmpty[T, W any](in []T, f func(T) W) []W {
+	out := make([]W, 0, len(in))
+	for _, v := range in {
+		out = append(out, f(v))
+	}
+	return out
 }
 
 // wireAll maps a list; nil stays nil so empty JSON lists keep their meaning.
