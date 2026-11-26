@@ -175,7 +175,7 @@ func (s *Lifecycle) redeploy(ctx context.Context, rel release.Release, op releas
 			s.c.discard(ctx, rel.Name)
 			return nil
 		}
-		if !slices.Contains(inProgress, rel.Status) {
+		if !rel.Status.InProgress() {
 			return nil // a failed release stays failed: the reconciler leaves it to the user
 		}
 		rel.Status, rel.UpdatedAt = release.StatusDeployed, s.c.now() // its current revision runs
