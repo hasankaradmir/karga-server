@@ -161,7 +161,11 @@ func (s *Lifecycle) Rollback(ctx context.Context, req RollbackRequest, progress 
 	}
 	target := req.Revision
 	if target == 0 {
-		if target, err = s.rollbackTarget(ctx, existing); err != nil {
+		revs, err := s.c.store.ListRevisions(ctx, req.Name)
+		if err != nil {
+			return nil, err
+		}
+		if target, err = release.RollbackTarget(*existing, revs); err != nil {
 			return nil, err
 		}
 	}
@@ -189,24 +193,6 @@ func (s *Lifecycle) Rollback(ctx context.Context, req RollbackRequest, progress 
 		Package: p, PackageDigest: rev.PackageDigest, Overrides: rev.Values, Values: rev.ValuesAll,
 		Resources: rs, Revision: number, Existing: existing, Strategy: req.Strategy, Notes: rev.Notes,
 	})
-}
-
-// rollbackTarget picks the revision to return to: after a failure the last good one (the current
-// revision), otherwise the last deployed revision before the current one.
-func (s *Lifecycle) rollbackTarget(ctx context.Context, rel *release.Release) (int, error) {
-	if rel.Status == release.StatusFailed && rel.CurrentRevision > 0 {
-		return rel.CurrentRevision, nil
-	}
-	revs, err := s.c.store.ListRevisions(ctx, rel.Name)
-	if err != nil {
-		return 0, err
-	}
-	for i := len(revs) - 1; i >= 0; i-- {
-		if revs[i].Number < rel.CurrentRevision && revs[i].Status == release.RevisionDeployed {
-			return revs[i].Number, nil
-		}
-	}
-	return 0, fmt.Errorf("release %s has no earlier deployed revision to roll back to", rel.Name)
 }
 
 // Uninstall removes the release's workloads and networks; volumes are kept unless DeleteVolumes or
@@ -253,9 +239,7 @@ func (s *Lifecycle) uninstallRelease(ctx context.Context, req UninstallRequest) 
 }
 
 func (s *Lifecycle) uninstall(ctx context.Context, rt ports.Runtime, rel release.Release, req UninstallRequest) error {
-	if rel.Status != release.StatusDeployed && rel.Status != release.StatusFailed {
-		rel.Status = release.StatusFailed // interrupted operation that begin just aborted
-	}
+	rel.ClearInterrupted()
 	if err := release.Transition(rel.Status, release.StatusUninstalling); err != nil {
 		return err
 	}

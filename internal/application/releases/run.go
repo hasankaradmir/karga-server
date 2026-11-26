@@ -107,8 +107,6 @@ func (s *core) nextRevision(ctx context.Context, name string) (int, error) {
 	return revs[len(revs)-1].Number + 1, nil
 }
 
-var inProgress = []release.Status{release.StatusPending, release.StatusDeploying, release.StatusUpgrading, release.StatusUninstalling}
-
 // deploy plans the desired revision against the applied state and executes it.
 func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	applied, err := s.store.ListResources(ctx, in.Name)
@@ -315,22 +313,17 @@ func (s *core) run(ctx context.Context, rt ports.Runtime, op *release.Operation,
 	now := s.now()
 	rel := release.Release{Name: in.Name, PackageName: in.Package.Name, PackageVersion: in.Package.Version,
 		Status: release.StatusPending, CreatedAt: now, UpdatedAt: now}
-	target := release.StatusDeploying
+	upgrade := false
 	if in.Existing != nil {
 		rel = *in.Existing
-		if slices.Contains(inProgress, rel.Status) {
-			// Left behind by an operation that begin just aborted.
-			rel.Status = release.StatusFailed
-		}
-		if in.Type != release.OpInstall {
-			target = release.StatusUpgrading
-		}
+		rel.ClearInterrupted()
+		upgrade = in.Type != release.OpInstall
 	}
-	if err := release.Transition(rel.Status, target); err != nil {
+	previous, err := rel.StartDeploy(upgrade)
+	if err != nil {
 		return err
 	}
-	previous := rel.Status
-	rel.Status, rel.UpdatedAt = target, now
+	rel.UpdatedAt = now
 	manifest, manifestDigest, err := s.encodeManifest(in.Resources)
 	if err != nil {
 		return err
@@ -370,17 +363,12 @@ func (s *core) run(ctx context.Context, rt ports.Runtime, op *release.Operation,
 	bg := context.WithoutCancel(ctx)
 	rel.UpdatedAt = s.now()
 	if execErr != nil {
-		rel.Status = release.StatusFailed
-		// A failed replace that touched nothing leaves the release as it was (D18).
 		var ee *deployment.ExecError
-		if errors.As(execErr, &ee) && !ee.Disrupted && in.Existing != nil {
-			rel.Status = previous
-		}
+		rel.DeployFailed(previous, errors.As(execErr, &ee) && !ee.Disrupted && in.Existing != nil)
 		desc := fmt.Sprintf("%s failed: %v", titled(in.Type), execErr)
 		return errors.Join(execErr, s.settle(bg, rel, in.Revision, release.RevisionFailed, desc))
 	}
-	rel.Status, rel.CurrentRevision = release.StatusDeployed, in.Revision
-	rel.PackageName, rel.PackageVersion = in.Package.Name, in.Package.Version
+	rel.Deployed(in.Revision, in.Package.Name, in.Package.Version)
 	return s.settle(bg, rel, in.Revision, release.RevisionDeployed, in.Description)
 }
 

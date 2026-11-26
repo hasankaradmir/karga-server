@@ -269,13 +269,7 @@ func (s *Lifecycle) repair(ctx context.Context, name string, force, emptyVolumes
 // operation running on it.
 func (s *Lifecycle) skipReason(ctx context.Context, rel release.Release) (string, error) {
 	s.c.recordUnfinished(ctx, rel.Name)
-	why := ""
-	switch {
-	case rel.Paused:
-		why = "paused"
-	case rel.Status != release.StatusDeployed || rel.CurrentRevision == 0:
-		why = fmt.Sprintf("the release is %s; karga reconciles deployed releases only", rel.Status)
-	}
+	why := rel.Unreconcilable()
 	if _, err := s.c.store.RunningOperation(ctx, rel.Name); err == nil {
 		why = "an operation is running"
 	} else if !errors.Is(err, ports.ErrNotFound) {
