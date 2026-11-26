@@ -193,11 +193,41 @@ func (r *repairs) gaveUp(rel string, now time.Time) map[string]string {
 	return out
 }
 
-// planned is one repair the observation found.
+// planned is one repair the observation found: do makes it, as one step named action. A recreate
+// goes through the plan instead (recreate), which records its own steps.
 type planned struct {
-	key, kind, name, action, container string
+	key, kind, name, action string
+	do                      func(ctx context.Context) error
+	recreate                bool
 	// failed is the applied state of a workload whose last apply failed (its digest is empty).
 	failed *release.AppliedResource
+}
+
+// startRepair, restartRepair and syncGateway are repairs of one step.
+func (s *Lifecycle) startRepair(container string) func(context.Context) error {
+	return func(ctx context.Context) error { return s.c.rt.StartWorkload(ctx, container) }
+}
+
+func (s *Lifecycle) restartRepair(container string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := s.c.rt.StopWorkload(ctx, container, 0); err != nil {
+			return err
+		}
+		return s.c.rt.StartWorkload(ctx, container)
+	}
+}
+
+func (s *Lifecycle) syncGateway(ctx context.Context) error {
+	_, err := s.c.gw.Sync(ctx)
+	return err
+}
+
+// lostVolume is the repair of a Volume gone from Docker: it fails, saying what the user can do.
+func lostVolume(rel, vol string) func(context.Context) error {
+	return func(context.Context) error {
+		return fmt.Errorf("volume %s is missing in Docker, so its files are gone; karga does not create it empty on its own. "+
+			"'karga reconcile %s --empty-volumes' creates it, then 'karga volume restore %s %s <backup>' puts a backup back", vol, rel, rel, vol)
+	}
 }
 
 // Repair brings release name's runtime back to its current revision. force forgets earlier
@@ -302,9 +332,9 @@ func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present 
 	for _, a := range applied {
 		if !slices.ContainsFunc(present, func(p release.AppliedResource) bool { return p.Kind == a.Kind && p.Name == a.Name }) {
 			if a.Kind == resource.KindVolume && !emptyVolumes {
-				lost = append(lost, planned{key: name + "/" + a.Kind + "/" + a.Name, kind: a.Kind, name: a.Name, action: "create"})
+				lost = append(lost, planned{key: name + "/" + a.Kind + "/" + a.Name, kind: a.Kind, name: a.Name, action: "create", do: lostVolume(name, a.Name)})
 			}
-			create = []planned{{key: name + "/plan", action: "create"}}
+			create = []planned{{key: name + "/plan", action: "create", recreate: true}}
 		}
 	}
 	if len(lost) > 0 {
@@ -337,9 +367,9 @@ func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present 
 		}
 		switch {
 		case st.State != ports.StateRunning:
-			add(planned{key, a.Kind, a.Name, "start", a.RuntimeName, failed})
+			add(planned{key: key, kind: a.Kind, name: a.Name, action: "start", do: s.startRepair(a.RuntimeName), failed: failed})
 		case st.Health == ports.HealthUnhealthy:
-			add(planned{key, a.Kind, a.Name, "restart", a.RuntimeName, failed})
+			add(planned{key: key, kind: a.Kind, name: a.Name, action: "restart", do: s.restartRepair(a.RuntimeName), failed: failed})
 		case a.Kind == resource.KindWorkload:
 			r, err := resource.DecodeStored(a.Spec)
 			w, ok := r.Spec.(*resource.WorkloadSpec)
@@ -349,7 +379,7 @@ func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present 
 			if s.c.env.ProbeHealth(ctx, st, w) != ports.HealthUnhealthy {
 				s.c.repairs.probeOK(key)
 			} else if s.c.repairs.probeFailed(key, deployment.ProbeRetries(w.HealthCheck)) {
-				add(planned{key, a.Kind, a.Name, "restart", a.RuntimeName, failed})
+				add(planned{key: key, kind: a.Kind, name: a.Name, action: "restart", do: s.restartRepair(a.RuntimeName), failed: failed})
 			}
 		}
 	}
@@ -362,7 +392,7 @@ func (s *Lifecycle) diagnose(ctx context.Context, name string, applied, present 
 			}
 		}
 		if err != nil {
-			add(planned{key: name + "/gateway", kind: "Gateway", name: gateway.ContainerName, action: "sync"})
+			add(planned{key: name + "/gateway", kind: "Gateway", name: gateway.ContainerName, action: "sync", do: s.syncGateway})
 		}
 	}
 	return todo
@@ -386,31 +416,16 @@ func (s *Lifecycle) act(ctx context.Context, op *release.Operation, rel release.
 		}
 	}
 	for _, p := range todo {
-		switch p.action {
-		case "start":
-			step(p, rt.StartWorkload(ctx, p.container))
-		case "restart":
-			err := rt.StopWorkload(ctx, p.container, 0)
-			if err == nil {
-				err = rt.StartWorkload(ctx, p.container)
-			}
-			step(p, err)
-		case "sync":
-			_, err := s.c.gw.Sync(ctx)
-			step(p, err)
-		case "create":
-			if p.kind == resource.KindVolume {
-				step(p, fmt.Errorf("volume %s is missing in Docker, so its files are gone; karga does not create it empty on its own. "+
-					"'karga reconcile %s --empty-volumes' creates it, then 'karga volume restore %s %s <backup>' puts a backup back", p.name, rel.Name, rel.Name, p.name))
-				continue
-			}
-			steps, err := s.recreate(ctx, rt, op, rel, present)
-			res.Actions = append(res.Actions, steps...)
-			if err != nil {
-				errs = append(errs, err)
-			}
-			s.c.repairs.done(p.key, s.c.now(), err)
+		if !p.recreate {
+			step(p, p.do(ctx))
+			continue
 		}
+		steps, err := s.recreate(ctx, rt, op, rel, present)
+		res.Actions = append(res.Actions, steps...)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		s.c.repairs.done(p.key, s.c.now(), err)
 	}
 	return errors.Join(errs...)
 }
