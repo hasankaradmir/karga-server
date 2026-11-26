@@ -243,7 +243,7 @@ func (s *Volumes) stopped(ctx context.Context, req VolumeBackupRequest, w io.Wri
 	if err != nil {
 		return err
 	}
-	op, err := s.c.begin(ctx, req.Release, "volume-backup", rel.CurrentRevision, false, release.Options{})
+	op, err := s.c.begin(ctx, req.Release, release.OpVolumeBackup, rel.CurrentRevision, false, release.Options{})
 	if err != nil {
 		return err
 	}
@@ -410,7 +410,7 @@ func (s *Volumes) restore(ctx context.Context, in restoreInput, emit func(kind, 
 			return nil, err
 		}
 	}
-	op, err := s.c.begin(ctx, in.Release, "volume-restore", rel.CurrentRevision, resumed, release.Options{Restore: &release.RestoreOptions{
+	op, err := s.c.begin(ctx, in.Release, release.OpVolumeRestore, rel.CurrentRevision, resumed, release.Options{Restore: &release.RestoreOptions{
 		Volume: in.Volume, From: in.From, Name: in.Name, Merge: in.Merge, NoRestorePoint: in.NoRestorePoint, Undo: in.Undo}})
 	if err != nil {
 		return nil, err
