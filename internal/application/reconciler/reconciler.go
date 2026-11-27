@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/releases"
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
@@ -223,7 +224,10 @@ func (l *Loop) one(ctx context.Context, name string) {
 			l.log.Info("reconciled", "release", name, "resource", a.Kind+"/"+a.Name, "action", a.Action, "status", a.Status, "error", a.Error)
 		}
 	}
-	l.clear("release/"+name, "reconcile works again", "release", name)
+	// A pass whose repair failed is not the problem gone: each failed action was just logged.
+	if !slices.ContainsFunc(res.Actions, func(a release.Step) bool { return a.Status == deployment.StepFailed }) {
+		l.clear("release/"+name, "reconcile works again", "release", name)
+	}
 	l.mu.Lock()
 	for subject := range l.warned { // what karga no longer gives up on (it tries again, or got repaired)
 		if what, ok := strings.CutPrefix(subject, "gaveup/"+name+"/"); ok && res.GaveUp[what] == "" {

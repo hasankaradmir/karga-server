@@ -13,8 +13,10 @@ import (
 
 	"github.com/hasankaradmir/karga-sdk/packages"
 
+	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/infrastructure/hostnet"
 
+	"github.com/hasankaradmir/karga-server/internal/application/deployment"
 	"github.com/hasankaradmir/karga-server/internal/application/proxyops"
 
 	"github.com/hasankaradmir/karga-server/internal/adapters/fakeruntime"
@@ -143,12 +145,18 @@ func TestBrokenEventStreamIsLogged(t *testing.T) {
 	}
 }
 
-// failing is a Repairer whose repairs fail with err until it is nil.
-type failing struct{ err error }
+// failing is a Repairer whose repairs fail with err until it is nil, then return res (if set).
+type failing struct {
+	err error
+	res *releases.ReconcileResult
+}
 
 func (f *failing) Repair(context.Context, string, bool) (*releases.ReconcileResult, error) {
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.res != nil {
+		return f.res, nil
 	}
 	return &releases.ReconcileResult{}, nil
 }
@@ -169,6 +177,26 @@ func TestRepeatedFailureIsLoggedOnce(t *testing.T) {
 	l.one(ctx, "cache")
 	out := buf.String()
 	if strings.Count(out, "Cannot connect") != 1 || strings.Count(out, `msg="reconcile works again"`) != 1 {
+		t.Fatalf("log:\n%s", out)
+	}
+}
+
+// A pass whose repair action failed does not count as the problem gone.
+func TestFailedRepairActionIsNotWorkingAgain(t *testing.T) {
+	var buf bytes.Buffer
+	f := &failing{err: errors.New("Cannot connect to the Docker daemon")}
+	l := New(NewQueue(time.Hour), nil, f, brokenStream{}, Options{Log: slog.New(slog.NewTextHandler(&buf, nil))})
+	ctx := context.Background()
+	l.one(ctx, "cache")
+	f.err = nil
+	f.res = &releases.ReconcileResult{Actions: []release.Step{{Kind: "Workload", Name: "redis", Action: "start", Status: deployment.StepFailed, Error: "boom"}}}
+	l.one(ctx, "cache")
+	if out := buf.String(); strings.Contains(out, "works again") {
+		t.Fatalf("a failed repair logged as working again:\n%s", out)
+	}
+	f.res = nil
+	l.one(ctx, "cache")
+	if out := buf.String(); strings.Count(out, `msg="reconcile works again"`) != 1 {
 		t.Fatalf("log:\n%s", out)
 	}
 }

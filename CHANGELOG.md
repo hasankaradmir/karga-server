@@ -35,6 +35,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- A replace whose proxy cannot be asked whether the old container's connections ended says that
+  traffic already goes to the new container and that the old one keeps running; it gave only the
+  proxy's error. The reconciler no longer logs "reconcile works again" after a pass whose repair
+  failed.
 - A Docker error that says `permission denied` (an entrypoint that is not executable, a bind mount
   the container may not read) is shown as Docker gives it, without the hint "is your user allowed
   to use the Docker socket?", which was wrong for these. Failing to reach the socket itself keeps
