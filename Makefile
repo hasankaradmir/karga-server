@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/hasankaradmir/karga-server/internal/version.Version=$(VERSION)
 
-.PHONY: build dist test test-integration test-e2e test-linux lint fmt envoy-image
+.PHONY: build dist test test-integration test-e2e scenario test-linux lint fmt envoy-image
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/karga-server ./cmd/karga-server
@@ -31,6 +31,11 @@ test-integration:
 # against Docker.
 test-e2e:
 	go test -tags e2e -count=1 ./tests/e2e/...
+
+# Drives karga-server and the karga CLI (KARGA_CLI_SRC, default ../karga-cli) through installs,
+# upgrades, backups, repairs, a crash and its resume against Docker (Linux: make test-linux TARGETS=scenario).
+scenario:
+	scripts/scenario.sh
 
 lint:
 	golangci-lint run
