@@ -137,6 +137,8 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- An upgrade or rollback that deletes a `retention: delete` volume removes its restore point too: a
+  volume of that name added again could be undone (`undo-restore`) to the deleted one's files.
 - A volume restore without a restore point (`--no-restore-point`) removes the volume's older one:
   `undo-restore` put back the files of before an earlier restore and lost what was written since.
 - Secret values of a failed revision were not masked after karga-server restarted: at start the
