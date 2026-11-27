@@ -420,6 +420,12 @@ func (s *core) record(ctx context.Context, op *release.Operation, in deployInput
 	case st.Status == deployment.StepKept:
 		// The change failed before touching anything; the previous state is still what runs.
 	case st.Status == deployment.StepDone && c.Action == deployment.ActionDelete:
+		if c.DeletesVolume() {
+			// The volume's files are gone: a volume of that name added again is not undone to them.
+			if err := os.Remove(restorePointPath(s.home, in.Name, c.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
 		return s.store.DeleteResource(ctx, in.Name, c.Kind, c.Name)
 	case st.Status == deployment.StepDone:
 		return s.store.SaveResource(ctx, in.Name, applied)

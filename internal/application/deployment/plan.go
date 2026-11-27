@@ -347,14 +347,15 @@ func eligible(w *resource.WorkloadSpec, anon []string) (string, string) {
 func (p Plan) DeletedVolumes() []string {
 	var out []string
 	for _, c := range p.Changes {
-		if c.deletesVolume() {
+		if c.DeletesVolume() {
 			out = append(out, c.Name)
 		}
 	}
 	return out
 }
 
-func (c Change) deletesVolume() bool {
+// DeletesVolume reports whether c deletes a volume and its data (retention delete).
+func (c Change) DeletesVolume() bool {
 	return c.Action == ActionDelete && c.Kind == resource.KindVolume && c.Applied != nil && volumeRetention(c.Applied.Spec) == "delete"
 }
 
@@ -363,7 +364,7 @@ func (c Change) note() string {
 	switch {
 	case c.Action != ActionDelete || c.Kind != resource.KindVolume:
 		return ""
-	case c.deletesVolume():
+	case c.DeletesVolume():
 		return "its data is deleted"
 	default:
 		return "kept in the runtime: retention retain"
