@@ -335,6 +335,42 @@ func TestVolumeRestoreResumes(t *testing.T) {
 	}
 }
 
+// A resumed restore that fails before it begins (here: its free-space check) keeps the backup: the
+// operation stays running, and the next start resumes it from that backup.
+func TestVolumeRestoreResumeKeepsBackupOnEarlyError(t *testing.T) {
+	e := installVolApp(t)
+	ctx := context.Background()
+	put(t, e, "a")
+	from, err := e.svc.Volumes.keep(liveBackup(t, e))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.c.begin(ctx, "vol", "volume-restore", 1, false, release.Options{Restore: &release.RestoreOptions{Volume: "data", From: from, Name: "b.tgz"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.c.freeSpace = func(string) (uint64, error) { return 0, errors.New("statfs: input/output error") }
+	if err := e.svc.Lifecycle.resumeRelease(ctx, "vol"); err == nil {
+		t.Fatal("resume did not fail")
+	}
+	if _, err := os.Stat(from); err != nil {
+		t.Fatalf("the kept backup is gone: %v", err)
+	}
+	if op, err := e.svc.c.store.RunningOperation(ctx, "vol"); err != nil || op.Type != "volume-restore" {
+		t.Fatalf("the restore is not left running: %+v %v", op, err)
+	}
+
+	e.svc.c.freeSpace = freeSpace
+	if err := e.svc.Lifecycle.resumeRelease(ctx, "vol"); err != nil {
+		t.Fatal(err)
+	}
+	if got := volumeFiles(e); !slices.Equal(got, []string{"a"}) {
+		t.Fatalf("after resume: %v", got)
+	}
+	if _, err := os.Stat(from); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the kept backup is still there: %v", err)
+	}
+}
+
 // Without its backup an interrupted restore cannot be finished: the release is paused, so the
 // reconciler does not start the workloads on a half-written volume.
 func TestVolumeRestoreResumeWithoutBackup(t *testing.T) {

@@ -129,6 +129,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- A volume restore resumed when karga-server starts that fails before it begins (a free-space
+  check that cannot read the disk, say) keeps the backup it was resuming from, so the next start
+  resumes it again. The backup was removed, and the next start paused the release.
 - `karga status` of a release installed again under an earlier one's name showed that release's
   last repair: the operations stay after an uninstall, and status took the newest repair among
   them. It shows repairs since the release was created; `karga events` still lists every
