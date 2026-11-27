@@ -88,6 +88,10 @@ for _ in $(seq 30); do [ "$(psql 'select v from t')" = "before" ] && break; slee
 expect 0 "volume undo-restore" k volume undo-restore scn-pg postgres-data --yes
 for _ in $(seq 30); do [ "$(psql 'select v from t')" = "after" ] && break; sleep 1; done
 [ "$(psql 'select v from t')" = "after" ] && pass "undo-restore put back the restore point" || bad "after undo-restore: $(psql 'select v from t')"
+expect 0 "volume restore --no-restore-point" k volume restore scn-pg postgres-data "$W/b.tgz" --yes --no-restore-point
+has "the restore says there is no restore point now" "no restore point now"
+expect 4 "undo-restore after it has nothing to put back" k volume undo-restore scn-pg postgres-data --yes
+for _ in $(seq 30); do [ "$(psql 'select v from t')" = "before" ] && break; sleep 1; done
 expect 0 "events scn-pg" k events scn-pg
 has "events record volume-backup" "volume-backup"
 has "events record volume-restore" "volume-restore"

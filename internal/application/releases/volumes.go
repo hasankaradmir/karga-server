@@ -401,6 +401,11 @@ func (s *Volumes) restore(ctx context.Context, in restoreInput, emit func(kind, 
 		}
 	} else if in.pointTaken {
 		res.RestorePoint = restorePointPath(s.c.home, in.Release, in.Volume)
+	} else if !in.Undo {
+		// An older restore point would undo to the files of before an earlier restore.
+		if err := os.Remove(restorePointPath(s.c.home, in.Release, in.Volume)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return res, err
+		}
 	}
 	if !in.Merge {
 		if err := s.c.env.RecreateVolume(deployment.WithProgress(ctx, toEvent(emit)), rt, in.Release, vol, recreate); err != nil {
