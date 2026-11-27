@@ -3,6 +3,7 @@ package deployment
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
@@ -167,7 +168,8 @@ func (e *Env) replaceWorkload(ctx context.Context, rt ports.Runtime, req ExecReq
 		}
 		progress(ctx, c.Kind, c.Name, PhaseDrain, "waiting up to %s for connections to %s to finish", drain, c.Applied.RuntimeName)
 		if _, err := e.host.Proxies.WaitDrained(ctx, ProxyAdminDir(e.home, req.Release, proxy), proxyClusters(svcs, c.Name), drain); err != nil {
-			return true, err
+			return true, fmt.Errorf("traffic already goes to %s, but whether connections to %s ended could not be checked, so %s keeps running: %w",
+				next, c.Applied.RuntimeName, c.Applied.RuntimeName, err)
 		}
 	}
 	old := c.Applied.RuntimeName

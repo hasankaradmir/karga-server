@@ -147,6 +147,23 @@ func TestRollbackTarget(t *testing.T) {
 	}
 }
 
+func TestStatusBefore(t *testing.T) {
+	rel := Release{Status: StatusUpgrading, CurrentRevision: 2}
+	for name, tc := range map[string]struct {
+		revs []Revision
+		rev  int
+		want Status
+	}{
+		"upgrade of a deployed release": {[]Revision{{Number: 1}, {Number: 2}, {Number: 3}}, 3, StatusDeployed},
+		"not recorded yet":              {[]Revision{{Number: 1}, {Number: 2}}, 3, StatusDeployed},
+		"after a failed upgrade":        {[]Revision{{Number: 2}, {Number: 3, Status: RevisionFailed}, {Number: 4}}, 4, StatusFailed},
+	} {
+		if got := StatusBefore(rel, tc.revs, tc.rev); got != tc.want {
+			t.Errorf("%s: %s", name, got)
+		}
+	}
+}
+
 func TestUnreconcilable(t *testing.T) {
 	for name, tc := range map[string]struct {
 		rel  Release

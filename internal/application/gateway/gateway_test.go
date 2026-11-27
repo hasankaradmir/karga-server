@@ -205,26 +205,11 @@ func TestSyncFollowsExposures(t *testing.T) {
 
 // testHost is a host whose runtime can run karga's proxies (or not), with fake proxies.
 func testHost(supported bool) *proxyops.Host {
-	h := &proxyops.Host{Proxies: &fakeProxies{}, Net: hostnet.Net{}}
+	h := &proxyops.Host{Proxies: fakeruntime.Proxies{}, Net: hostnet.Net{}}
 	if supported {
 		h.UseRuntime(ports.RuntimeInfo{Capabilities: []string{ports.CapHostGateway}})
 	}
 	return h
-}
-
-// fakeProxies writes real configuration files and reports every proxy ready and drained.
-type fakeProxies struct{ fakeruntime.Proxies }
-
-func (f *fakeProxies) Write(dir string, cfg ports.ProxyConfig) error {
-	return envoy.Write(dir, cfg)
-}
-
-func (f *fakeProxies) WaitReady(context.Context, string, map[string]string, time.Duration) error {
-	return nil
-}
-
-func (f *fakeProxies) WaitDrained(context.Context, string, []string, time.Duration) (bool, error) {
-	return true, nil
 }
 
 // Expose checks again under the gateway lock: what another release took meanwhile is refused and

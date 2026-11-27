@@ -90,6 +90,18 @@ func (r *Release) ClearInterrupted() {
 	}
 }
 
+// StatusBefore is the status r had before the operation on revision rev began, when an interrupted
+// operation left r in progress: deployed if rev follows its current revision directly, failed if a
+// revision between them (a failed upgrade) came first.
+func StatusBefore(r Release, revs []Revision, rev int) Status {
+	for _, v := range revs {
+		if v.Number > r.CurrentRevision && v.Number < rev {
+			return StatusFailed
+		}
+	}
+	return StatusDeployed
+}
+
 // StartDeploy moves r to deploying, or upgrading when upgrade, and returns the status it had.
 func (r *Release) StartDeploy(upgrade bool) (Status, error) {
 	target := StatusDeploying

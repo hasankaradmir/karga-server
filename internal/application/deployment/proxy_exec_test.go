@@ -30,6 +30,7 @@ type fakeProxies struct {
 	rt       *fakeruntime.Runtime
 	home     string
 	notReady map[string]bool // by kind
+	drainErr error           // WaitDrained's error, if set
 }
 
 func (f *fakeProxies) kind(dir string) string {
@@ -73,7 +74,7 @@ func (f *fakeProxies) WaitReady(_ context.Context, dir string, want map[string]s
 
 func (f *fakeProxies) WaitDrained(_ context.Context, dir string, _ []string, _ time.Duration) (bool, error) {
 	f.log("WaitDrained:" + f.kind(dir))
-	return true, nil
+	return f.drainErr == nil, f.drainErr
 }
 
 // newProxyRequest installs replaceManifest with Service redis exposed on tcp listener pg.
@@ -282,6 +283,24 @@ func TestReplaceRevertsWhenProxyNotReady(t *testing.T) {
 		if n != old && r.rt.Workloads[n].State != ports.StateExited {
 			t.Fatalf("the failed new container should be stopped and kept: %+v", r.rt.Workloads[n])
 		}
+	}
+}
+
+// When the drain cannot be checked, traffic already goes to the new container: the error says so,
+// and the old one keeps running rather than be stopped under connections that may be open.
+func TestReplaceDrainCheckFails(t *testing.T) {
+	r, px := newProxyRequest(t)
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	px.drainErr = errors.New("admin API: connection refused")
+	old := r.rt.Name("cache-redis")
+	err := r.upgrade(2)
+	if err == nil || !strings.Contains(err.Error(), "traffic already goes to") || !strings.Contains(err.Error(), old+" keeps running") {
+		t.Fatalf("error: %v", err)
+	}
+	if slices.Contains(r.rt.Raw, "StopWorkload:"+old) {
+		t.Fatalf("old container stopped: %v", r.rt.Raw)
 	}
 }
 

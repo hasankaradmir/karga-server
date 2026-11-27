@@ -44,8 +44,9 @@ What karga does not do yet, what it does with known limits, and the open questio
   is not the gateway's refuses to expose anything (and never removes the other's gateway); remove
   it with Docker when moving to another home
   (`docker rm -f $(docker ps -aq --filter label=io.karga.component=gateway)`).
-- **Repairs** recreate a removed volume empty; settings changed inside a running container (not in
-  its spec) are not detected.
+- **Repairs** do not recreate a removed volume: the repair fails and says so (D46), and
+  `karga reconcile --empty-volumes` or an upgrade creates it empty, for a backup to be restored.
+  Settings changed inside a running container (not in its spec) are not detected.
 - **Linux only.** Services need the gateway and the release proxy, which need Linux with a local
   Docker daemon; elsewhere a plan with Services is refused.
 - **Gateway.** One container serves every release's outside traffic; it restarts automatically but

@@ -253,8 +253,14 @@ make test               # unit tests
 make lint               # golangci-lint
 make test-integration   # Linux with Docker: adapter contract and deployments
 make test-e2e           # Linux with Docker: builds karga-server and the CLI, runs the lifecycle
+make scenario           # Linux with Docker: the real-run scenario (scripts/scenario.sh)
 make test-linux         # both in a Linux VM (OrbStack or Lima; KARGA_VM names it, default karga-linux)
 ```
+
+`make scenario` drives the built binaries through what a user does: a replace upgrade, a volume
+backup, restore and undo-restore, repairs, a rollback, a server killed mid-upgrade and its resume,
+the host gateway, gateway documents and uninstalls, and leaves nothing behind. Run it before a
+merge that changes behavior; from macOS, `make test-linux TARGETS=scenario`.
 
 The e2e tests drive the karga CLI: `KARGA_CLI` names a binary, otherwise it is built from
 `KARGA_CLI_SRC` (default: a checkout of [karga](https://github.com/hasankaradmir/karga-cli) next to

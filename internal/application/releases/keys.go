@@ -79,8 +79,8 @@ func writeNewFile(path string, data []byte) error {
 	return fsutil.SyncDir(filepath.Dir(path))
 }
 
-// RegisterSecrets gives the log redactor the Secret values of every release's current revision,
-// as Materialize wrote them. karga-server calls it when it starts, so values are masked before
+// RegisterSecrets gives the log redactor the Secret values of every revision of every release kept
+// on disk, as Materialize wrote them. karga-server calls it when it starts, so values are masked before
 // any release is applied again. A revision without secret files (none, or pruned) is skipped.
 func (s *Service) RegisterSecrets(ctx context.Context) { s.c.registerSecrets(ctx) }
 
@@ -91,10 +91,10 @@ func (s *core) registerSecrets(ctx context.Context) {
 		return
 	}
 	for _, rel := range rels {
-		if rel.CurrentRevision == 0 {
-			continue
-		}
-		files, _ := filepath.Glob(filepath.Join(deployment.RevisionDir(s.home, rel.Name, rel.CurrentRevision), "secrets", "*", "*"))
+		// Every revision on disk, not only the current one: a failed upgrade's values may be in its
+		// errors and logs too.
+		revisions := filepath.Dir(deployment.RevisionDir(s.home, rel.Name, 1))
+		files, _ := filepath.Glob(filepath.Join(revisions, "*", "secrets", "*", "*"))
 		for _, f := range files {
 			b, err := os.ReadFile(f)
 			if err != nil {

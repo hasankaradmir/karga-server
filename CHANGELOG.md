@@ -35,6 +35,14 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- A replace whose proxy cannot be asked whether the old container's connections ended says that
+  traffic already goes to the new container and that the old one keeps running; it gave only the
+  proxy's error. The reconciler no longer logs "reconcile works again" after a pass whose repair
+  failed.
+- A Docker error that says `permission denied` (an entrypoint that is not executable, a bind mount
+  the container may not read) is shown as Docker gives it, without the hint "is your user allowed
+  to use the Docker socket?", which was wrong for these. Failing to reach the socket itself keeps
+  its own message.
 - A missing image (its registry does not have it, or it is not present locally with pullPolicy
   never) is reported to the client as not found, like a missing release; it was an internal error.
   `karga` exits with 4 for it. A registry that cannot be reached is still an internal error.
@@ -129,6 +137,15 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- Secret values of a failed revision were not masked after karga-server restarted: at start the
+  log redactor learned only the current revision's values, and none of a release whose first
+  install failed. It learns those of every revision kept on disk.
+- An upgrade resumed when karga-server starts that fails before it changes anything (its image
+  cannot be pulled, say) leaves the release as it was before the upgrade: deployed, its current
+  revision serving and repaired by the reconciler. It was left failed, and the reconciler skipped it.
+- A volume restore resumed when karga-server starts that fails before it begins (a free-space
+  check that cannot read the disk, say) keeps the backup it was resuming from, so the next start
+  resumes it again. The backup was removed, and the next start paused the release.
 - `karga status` of a release installed again under an earlier one's name showed that release's
   last repair: the operations stay after an uninstall, and status took the newest repair among
   them. It shows repairs since the release was created; `karga events` still lists every
