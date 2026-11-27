@@ -771,6 +771,35 @@ func TestRegisterSecretsAfterRestart(t *testing.T) {
 	}
 }
 
+// The Secret values of a revision newer than the current one (a failed upgrade) are masked after a
+// restart too: its files stay until the history drops it, and so may its values in logs and errors.
+func TestRegisterSecretsOfAFailedRevision(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	install := func(pw string) error {
+		_, err := e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: common(), Name: "db", Package: "../../../tests/testdata/postgres", Install: true,
+			Values: Values{Sets: packages.Sets([]string{"service.enabled=false", "database.password=" + pw}...)}}, nil)
+		return err
+	}
+	if err := install("hunter2-current"); err != nil {
+		t.Fatal(err)
+	}
+	e.rt.Fail["StartWorkload:db-postgres"] = errors.New("boom")
+	if err := install("hunter2-failed"); err == nil {
+		t.Fatal("upgrade did not fail")
+	}
+	var got []string
+	restarted, err := New(Deps{Store: e.svc.c.store, Runtime: e.svc.c.rt, Host: e.svc.c.env.Host(), Home: e.svc.c.home,
+		Redact: func(v string) { got = append(got, v) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.RegisterSecrets(ctx)
+	if !slices.Contains(got, "hunter2-current") || !slices.Contains(got, "hunter2-failed") {
+		t.Fatalf("registered %d values, not both passwords", len(got))
+	}
+}
+
 // A variable set from a Secret is visible through docker inspect: the plan says so, and the
 // warnings of a successful deployment keep it.
 func TestEnvironmentFromWarns(t *testing.T) {

@@ -377,9 +377,9 @@ fails later. A `tcp` check is an empty connection; services that penalize those 
   the proxies on the `karga-edge` network, D42), and the gateway serves only the listeners the
   administrator defines, on `127.0.0.1` unless told otherwise.
 - Secret files are mounted read-only from a 0700 directory; secret values never appear in output,
-  logs (the redactor learns every value it materializes, and at start the current revisions') or
-  the state (only keyed digests); `writeOnly` values are stored as `<redacted>`, and a
-  package that uses one outside a Secret is refused.
+  logs (the redactor learns every value it materializes, and at start those of every revision
+  kept on disk) or the state (only keyed digests); `writeOnly` values are stored as
+  `<redacted>`, and a package that uses one outside a Secret is refused.
 - Config and Secret directories are updated in place: running containers keep seeing them.
 - A package cannot exhaust the server: rendering is bounded in depth, time and output, and archives
   in size and number of files.

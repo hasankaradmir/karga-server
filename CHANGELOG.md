@@ -129,6 +129,9 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   value is set when the container is created, and a new value recreates the container.
 
 ### Fixed
+- Secret values of a failed revision were not masked after karga-server restarted: at start the
+  log redactor learned only the current revision's values, and none of a release whose first
+  install failed. It learns those of every revision kept on disk.
 - An upgrade resumed when karga-server starts that fails before it changes anything (its image
   cannot be pulled, say) leaves the release as it was before the upgrade: deployed, its current
   revision serving and repaired by the reconciler. It was left failed, and the reconciler skipped it.
