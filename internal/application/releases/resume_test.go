@@ -84,6 +84,54 @@ func TestResumeFinishesAnInterruptedUpgrade(t *testing.T) {
 	}
 }
 
+// A resumed upgrade that fails before it changes anything leaves the release as it was before the
+// upgrade: deployed, its current revision still serving, so the reconciler keeps it running.
+func TestResumedUpgradeFailingWithoutChangeKeepsDeployed(t *testing.T) {
+	e := newEnv(t)
+	must[*Result](t)(e.install())
+	must[*Result](t)(e.upgrade("image.tag=7.2"))
+	// Stopped mid-replace; the resumed upgrade cannot pull its image.
+	e.crash("upgrade", 2, release.StatusUpgrading)
+	delete(e.rt.Workloads, e.rt.Name("cache-redis"))
+	e.rt.Fail["EnsureImage:redis:7.2"] = errors.New("registry unreachable")
+
+	<-e.svc.Lifecycle.Resume(context.Background())
+
+	r := e.release()
+	if r.Status != release.StatusDeployed || r.CurrentRevision != 1 || r.Unreconcilable() != "" {
+		t.Fatalf("release: %+v", r)
+	}
+	if rev := must[release.Revision](t)(e.svc.c.store.GetRevision(context.Background(), "cache", 2)); rev.Status != release.RevisionFailed {
+		t.Fatalf("revision: %+v", rev)
+	}
+}
+
+// The same for a release whose previous upgrade had failed: it stays failed.
+func TestResumedUpgradeOfAFailedReleaseStaysFailed(t *testing.T) {
+	e := newEnv(t)
+	must[*Result](t)(e.install())
+	e.rt.Fail["StartWorkload:cache-redis"] = errors.New("boom")
+	if _, err := e.upgrade("image.tag=7.2"); err == nil {
+		t.Fatal("upgrade did not fail")
+	}
+	delete(e.rt.Fail, "StartWorkload:cache-redis")
+	must[*Result](t)(e.upgrade("image.tag=7.3"))
+	e.crash("upgrade", 3, release.StatusUpgrading)
+	rel := e.release() // revision 2 failed: 1 is still the current one
+	rel.CurrentRevision = 1
+	if err := e.svc.c.store.SaveRelease(context.Background(), rel); err != nil {
+		t.Fatal(err)
+	}
+	delete(e.rt.Workloads, e.rt.Name("cache-redis"))
+	e.rt.Fail["EnsureImage:redis:7.3"] = errors.New("registry unreachable")
+
+	<-e.svc.Lifecycle.Resume(context.Background())
+
+	if r := e.release(); r.Status != release.StatusFailed {
+		t.Fatalf("release: %+v", r)
+	}
+}
+
 func TestResumeBeforeTheRevisionWasRecorded(t *testing.T) {
 	e := newEnv(t)
 	must[*Result](t)(e.install())

@@ -195,6 +195,15 @@ func (s *Lifecycle) redeploy(ctx context.Context, rel release.Release, op releas
 		return errors.Join(err, s.c.store.FinishOperation(ctx, op), s.c.store.UpdateRevisionStatus(ctx, rel.Name, rev.Number, release.RevisionFailed, "Interrupted: "+err.Error()),
 			s.c.store.SaveRelease(ctx, rel))
 	}
+	if rel.CurrentRevision > 0 && rel.Status.InProgress() {
+		// Deployed again as from the status the release had before: a resumed upgrade that fails
+		// without changing anything leaves its current revision serving, not the release failed.
+		revs, err := s.c.store.ListRevisions(ctx, rel.Name)
+		if err != nil {
+			return err
+		}
+		rel.Status = release.StatusBefore(rel, revs, rev.Number)
+	}
 	p := pkgOf(rev)
 	_, err = s.c.deploy(ctx, deployInput{
 		// The request's own choices: a volume it was not allowed to delete is not deleted now either.
