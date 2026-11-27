@@ -107,8 +107,6 @@ func (s *core) nextRevision(ctx context.Context, name string) (int, error) {
 	return revs[len(revs)-1].Number + 1, nil
 }
 
-var inProgress = []release.Status{release.StatusPending, release.StatusDeploying, release.StatusUpgrading, release.StatusUninstalling}
-
 // deploy plans the desired revision against the applied state and executes it.
 func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	applied, err := s.store.ListResources(ctx, in.Name)
@@ -116,15 +114,7 @@ func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 		return nil, err
 	}
 	rt := s.rt
-	recorded := applied
-	if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
-		return nil, err
-	}
-	anon, err := anonymousVolumes(ctx, rt, in.Name)
-	if err != nil {
-		return nil, err
-	}
-	plan, err := s.env.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
+	plan, anon, err := s.planLive(ctx, rt, in.Name, in.Resources, applied, in.Strategy)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +144,7 @@ func (s *core) deploy(ctx context.Context, in deployInput) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	if plan, err = s.replan(ctx, rt, in, recorded, plan); err == nil {
+	if plan, err = s.replan(ctx, rt, in, applied, plan); err == nil {
 		res.Plan = plan.Summaries()
 		in.warn = func(w string) { res.Warnings = append(res.Warnings, w) }
 		err = s.run(ctx, rt, &op, in, plan)
@@ -299,14 +289,28 @@ func (s *core) replan(ctx context.Context, rt ports.Runtime, in deployInput, app
 	if applied, err = s.store.ListResources(ctx, in.Name); err != nil {
 		return plan, err
 	}
-	if applied, err = existing(ctx, rt, in.Name, applied); err != nil {
-		return plan, err
-	}
-	anon, err := anonymousVolumes(ctx, rt, in.Name)
+	plan, _, err = s.planLive(ctx, rt, in.Name, in.Resources, applied, in.Strategy)
+	return plan, err
+}
+
+// planLive plans resources rs of release name against those of applied the runtime still has. It
+// returns the anonymous volumes found too.
+func (s *core) planLive(ctx context.Context, rt ports.Runtime, name string, rs []resource.Resource, applied []release.AppliedResource, strategy string) (deployment.Plan, deployment.Anonymous, error) {
+	live, err := existing(ctx, rt, name, applied)
 	if err != nil {
-		return plan, err
+		return deployment.Plan{}, nil, err
 	}
-	return s.env.Diff(in.Name, in.Resources, applied, in.Strategy, anon)
+	return s.diffLive(ctx, rt, name, rs, live, strategy)
+}
+
+// diffLive plans resources rs of release name against live, the applied resources the runtime has.
+func (s *core) diffLive(ctx context.Context, rt ports.Runtime, name string, rs []resource.Resource, live []release.AppliedResource, strategy string) (deployment.Plan, deployment.Anonymous, error) {
+	anon, err := anonymousVolumes(ctx, rt, name)
+	if err != nil {
+		return deployment.Plan{}, nil, err
+	}
+	plan, err := s.env.Diff(name, rs, live, strategy, anon)
+	return plan, anon, err
 }
 
 // run records the release and its new revision, executes plan step by step (each step recorded as
@@ -315,22 +319,17 @@ func (s *core) run(ctx context.Context, rt ports.Runtime, op *release.Operation,
 	now := s.now()
 	rel := release.Release{Name: in.Name, PackageName: in.Package.Name, PackageVersion: in.Package.Version,
 		Status: release.StatusPending, CreatedAt: now, UpdatedAt: now}
-	target := release.StatusDeploying
+	upgrade := false
 	if in.Existing != nil {
 		rel = *in.Existing
-		if slices.Contains(inProgress, rel.Status) {
-			// Left behind by an operation that begin just aborted.
-			rel.Status = release.StatusFailed
-		}
-		if in.Type != release.OpInstall {
-			target = release.StatusUpgrading
-		}
+		rel.ClearInterrupted()
+		upgrade = in.Type != release.OpInstall
 	}
-	if err := release.Transition(rel.Status, target); err != nil {
+	previous, err := rel.StartDeploy(upgrade)
+	if err != nil {
 		return err
 	}
-	previous := rel.Status
-	rel.Status, rel.UpdatedAt = target, now
+	rel.UpdatedAt = now
 	manifest, manifestDigest, err := s.encodeManifest(in.Resources)
 	if err != nil {
 		return err
@@ -370,17 +369,12 @@ func (s *core) run(ctx context.Context, rt ports.Runtime, op *release.Operation,
 	bg := context.WithoutCancel(ctx)
 	rel.UpdatedAt = s.now()
 	if execErr != nil {
-		rel.Status = release.StatusFailed
-		// A failed replace that touched nothing leaves the release as it was (D18).
 		var ee *deployment.ExecError
-		if errors.As(execErr, &ee) && !ee.Disrupted && in.Existing != nil {
-			rel.Status = previous
-		}
+		rel.DeployFailed(previous, errors.As(execErr, &ee) && !ee.Disrupted && in.Existing != nil)
 		desc := fmt.Sprintf("%s failed: %v", titled(in.Type), execErr)
 		return errors.Join(execErr, s.settle(bg, rel, in.Revision, release.RevisionFailed, desc))
 	}
-	rel.Status, rel.CurrentRevision = release.StatusDeployed, in.Revision
-	rel.PackageName, rel.PackageVersion = in.Package.Name, in.Package.Version
+	rel.Deployed(in.Revision, in.Package.Name, in.Package.Version)
 	return s.settle(bg, rel, in.Revision, release.RevisionDeployed, in.Description)
 }
 

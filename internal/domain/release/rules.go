@@ -71,3 +71,76 @@ func Prunable(revs []Revision, current int, applied []int, keep int) []int {
 	}
 	return out
 }
+
+// InProgress reports whether s is the status of an operation that has not ended. A stored release in
+// such a status was left behind by an interrupted operation.
+func (s Status) InProgress() bool {
+	switch s {
+	case StatusPending, StatusDeploying, StatusUpgrading, StatusUninstalling:
+		return true
+	}
+	return false
+}
+
+// ClearInterrupted marks r failed when an interrupted operation left it in progress: the operation
+// that begins next has just aborted that one.
+func (r *Release) ClearInterrupted() {
+	if r.Status.InProgress() {
+		r.Status = StatusFailed
+	}
+}
+
+// StartDeploy moves r to deploying, or upgrading when upgrade, and returns the status it had.
+func (r *Release) StartDeploy(upgrade bool) (Status, error) {
+	target := StatusDeploying
+	if upgrade {
+		target = StatusUpgrading
+	}
+	if err := Transition(r.Status, target); err != nil {
+		return "", err
+	}
+	previous := r.Status
+	r.Status = target
+	return previous, nil
+}
+
+// DeployFailed records a failed deploy of r. One that changed nothing on an existing release leaves
+// it with the status it had before (previous) (D18); otherwise r failed.
+func (r *Release) DeployFailed(previous Status, changedNothing bool) {
+	r.Status = StatusFailed
+	if changedNothing {
+		r.Status = previous
+	}
+}
+
+// Deployed records that revision of package name and version runs now.
+func (r *Release) Deployed(revision int, name, version string) {
+	r.Status, r.CurrentRevision = StatusDeployed, revision
+	r.PackageName, r.PackageVersion = name, version
+}
+
+// RollbackTarget picks the revision to return r to: after a failure the last good one (the current
+// revision), otherwise the last deployed revision before the current one. revs are r's revisions,
+// ascending.
+func RollbackTarget(r Release, revs []Revision) (int, error) {
+	if r.Status == StatusFailed && r.CurrentRevision > 0 {
+		return r.CurrentRevision, nil
+	}
+	for i := len(revs) - 1; i >= 0; i-- {
+		if revs[i].Number < r.CurrentRevision && revs[i].Status == RevisionDeployed {
+			return revs[i].Number, nil
+		}
+	}
+	return 0, fmt.Errorf("release %s has no earlier deployed revision to roll back to", r.Name)
+}
+
+// Unreconcilable says why the reconciler leaves r alone ("" if it does not): paused, or not deployed.
+func (r Release) Unreconcilable() string {
+	switch {
+	case r.Paused:
+		return "paused"
+	case r.Status != StatusDeployed || r.CurrentRevision == 0:
+		return fmt.Sprintf("the release is %s; karga reconciles deployed releases only", r.Status)
+	}
+	return ""
+}

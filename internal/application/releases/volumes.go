@@ -1,22 +1,15 @@
 package releases
 
 import (
-	"archive/tar"
 	"cmp"
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
-	"time"
-
-	"go.yaml.in/yaml/v3"
 
 	"github.com/hasankaradmir/karga-sdk/resource"
 
@@ -24,20 +17,6 @@ import (
 	"github.com/hasankaradmir/karga-server/internal/domain/release"
 	"github.com/hasankaradmir/karga-server/internal/ports"
 )
-
-// A volume backup is a gzipped tar: a manifest entry, then the volume's files below "data/".
-const (
-	backupManifest = "karga-backup.yaml"
-	backupRoot     = "data"
-)
-
-// BackupManifest describes a volume backup file.
-type BackupManifest struct {
-	Release   string    `yaml:"release"`
-	Volume    string    `yaml:"volume"`
-	MountPath string    `yaml:"mountPath"`
-	Created   time.Time `yaml:"created"`
-}
 
 type mounter struct {
 	name, runtime, path string
@@ -243,7 +222,7 @@ func (s *Volumes) stopped(ctx context.Context, req VolumeBackupRequest, w io.Wri
 	if err != nil {
 		return err
 	}
-	op, err := s.c.begin(ctx, req.Release, "volume-backup", rel.CurrentRevision, false, release.Options{})
+	op, err := s.c.begin(ctx, req.Release, release.OpVolumeBackup, rel.CurrentRevision, false, release.Options{})
 	if err != nil {
 		return err
 	}
@@ -263,33 +242,6 @@ func (s *Volumes) stopped(ctx context.Context, req VolumeBackupRequest, w io.Wri
 	return err
 }
 
-// write copies the volume, through the workload src that mounts it, to w as a backup archive.
-func (s *Volumes) write(ctx context.Context, req VolumeBackupRequest, src mounter, w io.Writer) error {
-	rt := s.c.rt
-	gz := gzip.NewWriter(w)
-	tw := tar.NewWriter(gz)
-	man, _ := yaml.Marshal(BackupManifest{Release: req.Release, Volume: req.Volume, MountPath: src.path, Created: s.c.now().UTC()})
-	if err := tw.WriteHeader(&tar.Header{Name: backupManifest, Mode: 0o600, Size: int64(len(man)), ModTime: s.c.now()}); err != nil {
-		return err
-	}
-	if _, err := tw.Write(man); err != nil {
-		return err
-	}
-	pr, pw := io.Pipe()
-	exported := make(chan struct{})
-	go func() { defer close(exported); pw.CloseWithError(rt.ExportPath(ctx, src.runtime, src.path, pw)) }()
-	// The export ends before this returns: closing the reader makes a write it is blocked on fail.
-	defer func() { _ = pr.Close(); <-exported }()
-	if err := retar(tar.NewReader(pr), tw, path.Base(src.path), backupRoot); err != nil {
-		_ = pr.CloseWithError(err)
-		return fmt.Errorf("copy volume %s: %w", req.Volume, err)
-	}
-	if err := tw.Close(); err != nil {
-		return err
-	}
-	return gz.Close()
-}
-
 // restoreInput is one restore: of an uploaded backup, of a restore point (undo), or of either again
 // after an interruption.
 type restoreInput struct {
@@ -302,14 +254,6 @@ type restoreInput struct {
 	// from a volume that may be half written.
 	pointTaken bool
 }
-
-// restorePointPath is where a restore keeps a volume's previous files.
-func restorePointPath(home, rel, vol string) string {
-	return filepath.Join(home, "restore-points", rel, vol+".tar.gz")
-}
-
-// restorePointStep marks, in a restore's steps, that its restore point was kept.
-const restorePointStep = "restore-point"
 
 // Restore replaces req.Volume's files with the backup read from r (Merge writes it over them). The
 // workloads mounting it, and those that depend on them, are stopped meanwhile and start again, in
@@ -410,7 +354,7 @@ func (s *Volumes) restore(ctx context.Context, in restoreInput, emit func(kind, 
 			return nil, err
 		}
 	}
-	op, err := s.c.begin(ctx, in.Release, "volume-restore", rel.CurrentRevision, resumed, release.Options{Restore: &release.RestoreOptions{
+	op, err := s.c.begin(ctx, in.Release, release.OpVolumeRestore, rel.CurrentRevision, resumed, release.Options{Restore: &release.RestoreOptions{
 		Volume: in.Volume, From: in.From, Name: in.Name, Merge: in.Merge, NoRestorePoint: in.NoRestorePoint, Undo: in.Undo}})
 	if err != nil {
 		return nil, err
@@ -467,84 +411,6 @@ func toEvent(emit func(kind, name, phase, detail string)) func(deployment.Event)
 	return func(e deployment.Event) { emit(e.Kind, e.Name, e.Phase, e.Detail) }
 }
 
-// checkBackup refuses a file that is not a karga volume backup, or one of another volume without Force.
-func (s *Volumes) checkBackup(in restoreInput) error {
-	f, err := os.Open(in.From)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	// Read to the end before the volume is emptied: a file cut short fails its gzip check here.
-	if gz, err := gzip.NewReader(f); err == nil {
-		_, err = io.Copy(io.Discard, gz)
-		if err != nil {
-			return fmt.Errorf("%s is cut short or damaged: %w: %w", in.Name, ports.ErrInvalid, err)
-		}
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	man, _, err := openBackup(f, in.Name)
-	if err != nil {
-		return err
-	}
-	if (man.Release != in.Release || man.Volume != in.Volume) && !in.Force {
-		return fmt.Errorf("%s is a backup of volume %q of release %s; use --from-other-volume to restore it into %q of %s: %w",
-			in.Name, man.Volume, man.Release, in.Volume, in.Release, ports.ErrInvalid)
-	}
-	return nil
-}
-
-// openBackup reads a backup's manifest and returns the reader of the files after it.
-func openBackup(r io.Reader, name string) (BackupManifest, *tar.Reader, error) {
-	gz, err := gzip.NewReader(r)
-	if err != nil {
-		return BackupManifest{}, nil, fmt.Errorf("%s is not a karga volume backup: %w: %w", name, ports.ErrInvalid, err)
-	}
-	tr := tar.NewReader(gz)
-	h, err := tr.Next()
-	if err != nil || h.Name != backupManifest {
-		return BackupManifest{}, nil, fmt.Errorf("%s is not a karga volume backup: %w", name, ports.ErrInvalid)
-	}
-	var man BackupManifest
-	if err := yaml.NewDecoder(tr).Decode(&man); err != nil {
-		return BackupManifest{}, nil, fmt.Errorf("%s: manifest: %w: %w", name, ports.ErrInvalid, err)
-	}
-	return man, tr, nil
-}
-
-// importBackup writes the backup's files into the volume, through dst (stopped or created). It
-// writes at the mount itself, not its parent: that works with a read-only root filesystem too.
-func (s *Volumes) importBackup(ctx context.Context, in restoreInput, dst mounter) error {
-	f, err := os.Open(in.From)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	_, tr, err := openBackup(f, in.Name)
-	if err != nil {
-		return err
-	}
-	pr, pw := io.Pipe()
-	converted := make(chan struct{})
-	// The conversion ends before this returns, even if the import stopped reading early.
-	defer func() { _ = pr.Close(); <-converted }()
-	go func() {
-		defer close(converted)
-		tw := tar.NewWriter(pw)
-		err := retar(tr, tw, backupRoot, ".")
-		if err == nil {
-			err = tw.Close()
-		}
-		pw.CloseWithError(err)
-	}()
-	if err := s.c.rt.ImportPath(ctx, dst.runtime, dst.path, pr); err != nil {
-		_ = pr.CloseWithError(err)
-		return err
-	}
-	return nil
-}
-
 // recreatePlan is what emptying the volume recreates: its Docker volume as applied, and the
 // workloads mounting it as applied, with their revisions' files.
 func (s *Volumes) recreatePlan(ctx context.Context, rel, volume string) (ports.VolumeRequest, []deployment.Mounter, error) {
@@ -597,51 +463,6 @@ func (s *Volumes) revisionFiles(ctx context.Context, rel string, revision int) (
 	return deployment.Materialize(s.c.home, rel, revision, rs, s.c.redact)
 }
 
-// roomForRestorePoint refuses a restore whose restore point (about as large as the backup) would not
-// fit under KARGA_HOME.
-func (s *Volumes) roomForRestorePoint(from string) error {
-	st, err := os.Stat(from)
-	if err != nil {
-		return err
-	}
-	need := uint64(st.Size()) + uint64(st.Size())/10 //nolint:gosec // a file size is not negative
-	free, err := s.c.freeSpace(s.c.home)
-	if err != nil {
-		return err
-	}
-	if free < need {
-		return fmt.Errorf("not enough space under %s for a restore point (%d MB free, about %d MB needed): free some, or restore with --no-restore-point: %w",
-			s.c.home, free>>20, need>>20, ports.ErrInvalid)
-	}
-	return nil
-}
-
-// saveRestorePoint copies the volume, through src, to its restore point, replacing the last one only
-// once the copy is complete.
-func (s *Volumes) saveRestorePoint(ctx context.Context, in restoreInput, src mounter) (string, error) {
-	dst := restorePointPath(s.c.home, in.Release, in.Volume)
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return "", err
-	}
-	f, err := os.OpenFile(dst+".tmp", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return "", err
-	}
-	err = s.write(ctx, VolumeBackupRequest{Release: in.Release, Volume: in.Volume}, src, f)
-	err = errors.Join(err, f.Sync(), f.Close())
-	if err == nil {
-		err = os.Rename(dst+".tmp", dst)
-	}
-	if err != nil {
-		_ = os.Remove(dst + ".tmp")
-		if errors.Is(err, syscall.ENOSPC) {
-			return "", fmt.Errorf("not enough space under %s for a restore point: free some, or restore with --no-restore-point: %w", s.c.home, err)
-		}
-		return "", fmt.Errorf("restore point: %w", err)
-	}
-	return dst, nil
-}
-
 // keepStopped handles a restore that failed writing the volume, err: the volume may be empty or half
 // written, so its workloads stay stopped and the release is paused, which keeps the reconciler from
 // starting them, as an interrupted restore that cannot be finished does (resumeRestore).
@@ -654,44 +475,4 @@ func (s *Volumes) keepStopped(ctx context.Context, rel release.Release, in resto
 	err = fmt.Errorf("%w; volume %s may be empty or half written, so %s stay stopped and %s is paused: %s, then 'karga resume %s'",
 		err, in.Volume, strings.Join(res.Stopped, ", "), in.Release, again, in.Release)
 	return errors.Join(err, s.c.store.SaveRelease(context.WithoutCancel(ctx), rel))
-}
-
-// errWrite marks a restore that failed changing the volume: it did not restore anything to report.
-var errWrite = errors.New("writing the backup failed")
-
-// retar copies tar entries below from/ to below to/ (the entry from itself becomes to).
-func retar(tr *tar.Reader, tw *tar.Writer, from, to string) error {
-	rename := func(name string) (string, bool) {
-		name = strings.TrimPrefix(name, "./")
-		if name == from || name == from+"/" {
-			return to + "/", true
-		}
-		rest, ok := strings.CutPrefix(name, from+"/")
-		return to + "/" + rest, ok
-	}
-	for {
-		h, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		name, ok := rename(h.Name)
-		if !ok {
-			continue
-		}
-		h.Name = name
-		if h.Typeflag == tar.TypeLink {
-			if h.Linkname, ok = rename(h.Linkname); !ok {
-				continue
-			}
-		}
-		if err := tw.WriteHeader(h); err != nil {
-			return err
-		}
-		if _, err := io.Copy(tw, tr); err != nil {
-			return err
-		}
-	}
 }

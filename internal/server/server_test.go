@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -118,6 +119,7 @@ func TestClassify(t *testing.T) {
 	}{
 		{fmt.Errorf("x: %w", ports.ErrNotFound), api.ErrNotFound},
 		{fmt.Errorf("x: %w", ports.ErrInvalid), api.ErrInvalid},
+		{fmt.Errorf("pull: %w", ports.ErrImageNotFound), api.ErrNotFound},
 		{releases.ErrLocked, api.ErrConflict},
 		{releases.ErrInterrupted, api.ErrConflict},
 		{releases.ErrExists, api.ErrConflict},
@@ -186,5 +188,18 @@ func TestStartRemovesLeftovers(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if _, err := os.Stat(old); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("leftover kept: %v", err)
+	}
+}
+
+// An empty list goes out as [], not null: clients range over it.
+func TestWireAllEmpty(t *testing.T) {
+	for _, in := range [][]int{nil, {}} {
+		b, err := json.Marshal(wireAllEmpty(in, func(int) int { return 0 }))
+		if err != nil || string(b) != "[]" {
+			t.Fatalf("%v: %s %v", in, b, err)
+		}
+	}
+	if got := wireAllEmpty([]int{1, 2}, func(i int) int { return i * 10 }); len(got) != 2 || got[1] != 20 {
+		t.Fatalf("%v", got)
 	}
 }

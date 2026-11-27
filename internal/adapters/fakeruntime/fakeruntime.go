@@ -333,6 +333,9 @@ func (r *Runtime) CreateWorkload(_ context.Context, req ports.WorkloadRequest) e
 	if err := r.call("CreateWorkload", req.Name); err != nil {
 		return err
 	}
+	if err := req.Validate(); err != nil {
+		return err
+	}
 	if _, ok := r.Workloads[req.Name]; ok {
 		return fmt.Errorf("workload %s: %w", req.Name, ports.ErrConflict)
 	}

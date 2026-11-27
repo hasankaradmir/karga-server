@@ -116,9 +116,34 @@ var restartModes = map[string]container.RestartPolicyMode{
 func (r *Runtime) CreateWorkload(ctx context.Context, req ports.WorkloadRequest) error {
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	opts, err := createOptions(req)
+	if err != nil {
+		return err
+	}
+	if _, err := r.c.ContainerCreate(ctx, opts); err != nil {
+		return wrap(err, "create workload "+req.Name)
+	}
+	for _, n := range req.Networks[min(1, len(req.Networks)):] {
+		if _, err := r.c.NetworkConnect(ctx, n, client.NetworkConnectOptions{
+			Container: req.Name, EndpointConfig: &network.EndpointSettings{Aliases: req.Aliases},
+		}); err != nil {
+			// Do not leave a half-configured container behind.
+			_ = r.DeleteWorkload(ctx, req.Name)
+			return wrap(err, fmt.Sprintf("connect workload %s to network %s", req.Name, n))
+		}
+	}
+	return nil
+}
+
+// createOptions is what Docker is asked to create for req: the container, its host settings and
+// its first network (the others are connected after). req is valid (Validate).
+func createOptions(req ports.WorkloadRequest) (client.ContainerCreateOptions, error) {
 	mode, ok := restartModes[req.RestartPolicy]
 	if !ok {
-		return fmt.Errorf("create workload %s: unknown restart policy %q", req.Name, req.RestartPolicy)
+		return client.ContainerCreateOptions{}, fmt.Errorf("create workload %s: unknown restart policy %q", req.Name, req.RestartPolicy)
 	}
 	cfg := &container.Config{
 		Image:        req.Image,
@@ -151,7 +176,7 @@ func (r *Runtime) CreateWorkload(ctx context.Context, req ports.WorkloadRequest)
 	for _, p := range req.Ports {
 		port, ok := network.PortFrom(uint16(p.ContainerPort), network.IPProtocol(p.Protocol))
 		if !ok {
-			return fmt.Errorf("create workload %s: invalid port %d/%s", req.Name, p.ContainerPort, p.Protocol)
+			return client.ContainerCreateOptions{}, fmt.Errorf("create workload %s: invalid port %d/%s", req.Name, p.ContainerPort, p.Protocol)
 		}
 		cfg.ExposedPorts[port] = struct{}{}
 		if p.HostPort == 0 {
@@ -159,7 +184,7 @@ func (r *Runtime) CreateWorkload(ctx context.Context, req ports.WorkloadRequest)
 		}
 		ip, err := netip.ParseAddr(p.HostIP)
 		if err != nil {
-			return fmt.Errorf("create workload %s: host IP %q: %w", req.Name, p.HostIP, err)
+			return client.ContainerCreateOptions{}, fmt.Errorf("create workload %s: host IP %q: %w", req.Name, p.HostIP, err)
 		}
 		host.PortBindings[port] = append(host.PortBindings[port], network.PortBinding{HostIP: ip, HostPort: strconv.Itoa(p.HostPort)})
 	}
@@ -189,29 +214,13 @@ func (r *Runtime) CreateWorkload(ctx context.Context, req ports.WorkloadRequest)
 	var netCfg *network.NetworkingConfig
 	if req.HostNetwork {
 		host.NetworkMode = network.NetworkHost
-	}
-	if len(req.Networks) > 0 {
+	} else if len(req.Networks) > 0 {
 		host.NetworkMode = container.NetworkMode(req.Networks[0])
 		netCfg = &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{
 			req.Networks[0]: {Aliases: req.Aliases},
 		}}
 	}
-
-	if _, err := r.c.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Name: req.Name, Config: cfg, HostConfig: host, NetworkingConfig: netCfg,
-	}); err != nil {
-		return wrap(err, "create workload "+req.Name)
-	}
-	for _, n := range req.Networks[min(1, len(req.Networks)):] {
-		if _, err := r.c.NetworkConnect(ctx, n, client.NetworkConnectOptions{
-			Container: req.Name, EndpointConfig: &network.EndpointSettings{Aliases: req.Aliases},
-		}); err != nil {
-			// Do not leave a half-configured container behind.
-			_ = r.DeleteWorkload(ctx, req.Name)
-			return wrap(err, fmt.Sprintf("connect workload %s to network %s", req.Name, n))
-		}
-	}
-	return nil
+	return client.ContainerCreateOptions{Name: req.Name, Config: cfg, HostConfig: host, NetworkingConfig: netCfg}, nil
 }
 
 func envList(env map[string]string) []string {
