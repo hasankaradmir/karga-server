@@ -318,8 +318,15 @@ func (s *Volumes) keep(r io.Reader) (string, error) {
 // left running.
 func (s *Volumes) restore(ctx context.Context, in restoreInput, emit func(kind, name, phase, detail string), resumed bool) (res *VolumeResult, err error) {
 	res = &VolumeResult{}
+	begun := false
 	if !in.Undo {
-		defer func() { _ = os.Remove(in.From) }() // a crash leaves it for the resume
+		defer func() {
+			// A crash leaves it for the resume, and so does a resume that fails before it begins:
+			// the interrupted operation is still running, and the next start resumes it from here.
+			if !resumed || begun {
+				_ = os.Remove(in.From)
+			}
+		}()
 	}
 	ms, err := s.mounters(ctx, in.Release, in.Volume)
 	if err != nil {
@@ -359,6 +366,7 @@ func (s *Volumes) restore(ctx context.Context, in restoreInput, emit func(kind, 
 	if err != nil {
 		return nil, err
 	}
+	begun = true
 	defer func() { op.Downtime = res.Downtime; s.c.finish(ctx, op, err) }()
 	rt := s.c.rt
 	began := s.c.now()
