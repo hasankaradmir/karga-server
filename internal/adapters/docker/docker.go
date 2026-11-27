@@ -90,7 +90,7 @@ func wrap(err error, what string) error {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "permission denied"):
-		return fmt.Errorf("%s: %w (is your user allowed to use the Docker socket?): %w", what, err, ports.ErrPermission)
+		return fmt.Errorf("%s: %w: %w", what, err, ports.ErrPermission)
 	case client.IsErrConnectionFailed(err):
 		return fmt.Errorf("%s: %w (is the Docker daemon running?): %w", what, err, ports.ErrUnavailable)
 	case cerrdefs.IsNotFound(err):

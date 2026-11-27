@@ -35,6 +35,10 @@ All notable changes are listed here, newest first ([Keep a Changelog](https://ke
   the gateway. `SetGatewayListener` changes them on an existing listener.
 
 ### Changed
+- A Docker error that says `permission denied` (an entrypoint that is not executable, a bind mount
+  the container may not read) is shown as Docker gives it, without the hint "is your user allowed
+  to use the Docker socket?", which was wrong for these. Failing to reach the socket itself keeps
+  its own message.
 - A missing image (its registry does not have it, or it is not present locally with pullPolicy
   never) is reported to the client as not found, like a missing release; it was an internal error.
   `karga` exits with 4 for it. A registry that cannot be reached is still an internal error.
