@@ -241,21 +241,10 @@ func (g *Gateway) Current(ctx context.Context) (string, error) {
 }
 
 func (g *Gateway) syncLocked(ctx context.Context, self string) ([]Target, error) {
-	rt, h, home := g.rt, g.host, g.home
-	c := h.Proxies.Container()
-	targets, err := g.findTargets(ctx)
+	rt, home := g.rt, g.home
+	targets, err := g.targetsOf(ctx, self)
 	if err != nil {
 		return nil, err
-	}
-	// Another release's certificate that cannot be read leaves its routes out; self's fails.
-	for i := range targets {
-		if err := readableCerts(targets[i]); err != nil {
-			if targets[i].Release == self {
-				return nil, err
-			}
-			g.leftOut(targets[i].Release, err)
-			targets[i].Routes, targets[i].Ports = nil, nil
-		}
 	}
 	dir := Dir(home)
 	exposed := slices.ContainsFunc(targets, func(t Target) bool { return len(t.Routes) > 0 })
@@ -288,23 +277,10 @@ func (g *Gateway) syncLocked(ctx context.Context, self string) ([]Target, error)
 	if err != nil {
 		return nil, err
 	}
-	// Certificates go first: a listener referencing a missing file would be rejected.
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := g.writeConfig(dir, settings, targets); err != nil {
 		return nil, err
 	}
-	if err := syncCerts(dir, targets, false); err != nil {
-		return nil, err
-	}
-	cfg := buildConfig(settings, targets, c.MountPath)
-	cfg.AccessLog = settings.AccessLog
-	// The socket is created by root in the 0700 directory, which keeps other users out.
-	if err := h.Proxies.Write(dir, cfg); err != nil {
-		return nil, err
-	}
-	if err := syncCerts(dir, targets, true); err != nil {
-		return nil, err
-	}
-	want := request(h.Proxies, dir)
+	want := request(g.host.Proxies, dir)
 	var old []string
 	have := false
 	for _, o := range gws {
@@ -315,13 +291,7 @@ func (g *Gateway) syncLocked(ctx context.Context, self string) ([]Target, error)
 		}
 	}
 	if !have {
-		if err := rt.EnsureImage(ctx, c.Image, "if-not-present", nil); err != nil {
-			return nil, err
-		}
-		if err := h.Proxies.WriteInstance(dir, instance(want.Name), "gateway", 0o666); err != nil {
-			return nil, err
-		}
-		if err := rt.CreateWorkload(ctx, want); err != nil {
+		if err := g.create(ctx, want); err != nil {
 			return nil, err
 		}
 	}
@@ -333,22 +303,77 @@ func (g *Gateway) syncLocked(ctx context.Context, self string) ([]Target, error)
 	if len(old) == 0 {
 		return targets, nil
 	}
-	// Another image or limits (D38): the new gateway binds the same ports (SO_REUSEPORT) and takes
-	// traffic once it routes; the old one stops accepting, its connections finish, and it goes.
-	all := Want(settings, targets, func(t Target) bool { return len(t.Routes) > 0 })
-	if err := h.Proxies.WaitReady(ctx, adminDir(home, want.Name), all, proxyops.ProxyReadyTimeout); err != nil {
-		if !have {
-			err = errors.Join(err, removeGateway(ctx, rt, home, want.Name))
-		}
-		return targets, err
+	return targets, g.handOver(ctx, settings, targets, want.Name, have, old)
+}
+
+// targetsOf is what the gateway routes to. Another release's certificate that cannot be read leaves
+// its routes out; self's fails.
+func (g *Gateway) targetsOf(ctx context.Context, self string) ([]Target, error) {
+	targets, err := g.findTargets(ctx)
+	if err != nil {
+		return nil, err
 	}
-	for _, name := range old {
-		_, _ = h.Proxies.Drain(ctx, adminDir(home, name), false, proxyops.ProxyDrainTimeout) // a gone one is drained
-		if err := removeGateway(ctx, rt, home, name); err != nil {
-			return targets, err
+	for i := range targets {
+		if err := readableCerts(targets[i]); err != nil {
+			if targets[i].Release == self {
+				return nil, err
+			}
+			g.leftOut(targets[i].Release, err)
+			targets[i].Routes, targets[i].Ports = nil, nil
 		}
 	}
 	return targets, nil
+}
+
+// writeConfig writes the gateway's configuration and certificates into dir. Certificates go first:
+// a listener referencing a missing file would be rejected.
+func (g *Gateway) writeConfig(dir string, settings Settings, targets []Target) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := syncCerts(dir, targets, false); err != nil {
+		return err
+	}
+	cfg := buildConfig(settings, targets, g.host.Proxies.Container().MountPath)
+	cfg.AccessLog = settings.AccessLog
+	// The socket is created by root in the 0700 directory, which keeps other users out.
+	if err := g.host.Proxies.Write(dir, cfg); err != nil {
+		return err
+	}
+	return syncCerts(dir, targets, true)
+}
+
+// create creates the gateway container want, with its own Envoy instance of the gateway's directory.
+func (g *Gateway) create(ctx context.Context, want ports.WorkloadRequest) error {
+	if err := g.rt.EnsureImage(ctx, g.host.Proxies.Container().Image, "if-not-present", nil); err != nil {
+		return err
+	}
+	if err := g.host.Proxies.WriteInstance(Dir(g.home), instance(want.Name), "gateway", 0o666); err != nil {
+		return err
+	}
+	return g.rt.CreateWorkload(ctx, want)
+}
+
+// handOver moves traffic from the old gateways to name. Another image or limits (D38): the new
+// gateway binds the same ports (SO_REUSEPORT) and takes traffic once it routes; the old one stops
+// accepting, its connections finish, and it goes. A new gateway (not have) that does not get ready
+// is removed.
+func (g *Gateway) handOver(ctx context.Context, settings Settings, targets []Target, name string, have bool, old []string) error {
+	rt, home := g.rt, g.home
+	all := Want(settings, targets, func(t Target) bool { return len(t.Routes) > 0 })
+	if err := g.host.Proxies.WaitReady(ctx, adminDir(home, name), all, proxyops.ProxyReadyTimeout); err != nil {
+		if !have {
+			err = errors.Join(err, removeGateway(ctx, rt, home, name))
+		}
+		return err
+	}
+	for _, o := range old {
+		_, _ = g.host.Proxies.Drain(ctx, adminDir(home, o), false, proxyops.ProxyDrainTimeout) // a gone one is drained
+		if err := removeGateway(ctx, rt, home, o); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // removeGateway deletes a gateway container and its instance directory.
