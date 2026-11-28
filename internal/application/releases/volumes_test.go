@@ -221,6 +221,34 @@ func TestVolumeRestoreMergeKeepsOtherFiles(t *testing.T) {
 	}
 }
 
+// A restore without a restore point removes the older one: undoing to it would put back the files of
+// before an earlier restore, and lose what was written since.
+func TestRestoreWithoutPointRemovesTheOldOne(t *testing.T) {
+	e := installVolApp(t)
+	ctx := context.Background()
+	put(t, e, "a")
+	first := liveBackup(t, e)
+	put(t, e, "b")
+	if _, err := e.svc.Volumes.Restore(ctx, VolumeRestoreRequest{Release: "vol", Volume: "data", Name: "a.tgz"}, first, nil); err != nil {
+		t.Fatal(err)
+	}
+	point := restorePointPath(e.svc.c.home, "vol", "data")
+	if _, err := os.Stat(point); err != nil {
+		t.Fatalf("no restore point after the first restore: %v", err)
+	}
+	put(t, e, "c")
+	second := liveBackup(t, e)
+	if _, err := e.svc.Volumes.Restore(ctx, VolumeRestoreRequest{Release: "vol", Volume: "data", Name: "c.tgz", NoRestorePoint: true}, second, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(point); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the older restore point is still there: %v", err)
+	}
+	if _, err := e.svc.Volumes.UndoRestore(ctx, "vol", "data", nil); !errors.Is(err, ports.ErrNotFound) {
+		t.Fatalf("undo after a restore without a restore point: %v", err)
+	}
+}
+
 // Without room for the restore point nothing is touched.
 func TestVolumeRestoreNoRoom(t *testing.T) {
 	e := installVolApp(t)

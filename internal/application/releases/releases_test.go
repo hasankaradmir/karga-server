@@ -549,6 +549,32 @@ func TestUpgradeDeletingVolumeNeedsFlag(t *testing.T) {
 	}
 }
 
+// A volume karga deletes (retention delete) takes its restore point along: a volume of that name
+// added again must not be undone to the old one's files. Other restore points stay.
+func TestDeletedVolumeLosesItsRestorePoint(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	pkgDir := scratchPkg(t)
+	must[*Result](t)(e.svc.Lifecycle.Install(ctx, InstallRequest{CommonOptions: common(), Name: "s", Package: pkgDir}, nil))
+	point, other := restorePointPath(e.svc.c.home, "s", "scratch"), restorePointPath(e.svc.c.home, "s", "kept")
+	for _, p := range []string{point, other} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("old files"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must[*Result](t)(e.svc.Lifecycle.Upgrade(ctx, UpgradeRequest{CommonOptions: CommonOptions{Timeout: time.Second, DeleteVolumes: true}, Name: "s", Package: pkgDir,
+		Values: Values{Sets: packages.Sets([]string{"scratch=false"}...)}}, nil))
+	if _, err := os.Stat(point); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the deleted volume's restore point is still there: %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("another volume's restore point is gone: %v", err)
+	}
+}
+
 // Commands on one release run one after the other, from planning to the end: each gets its own
 // revision and plans against what the previous one applied.
 func TestConcurrentUpgradesSerialize(t *testing.T) {
